@@ -1,0 +1,19 @@
+{{- if .Values.icebergCatalog.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "capiba.icebergCatalog.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "iceberg-catalog" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.icebergCatalog.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.icebergCatalog.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "capiba.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: iceberg-catalog
+{{- end }}

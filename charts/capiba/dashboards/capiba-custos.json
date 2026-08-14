@@ -1,0 +1,65 @@
+{
+  "uid": "capiba-custos",
+  "title": "Capiba — Custos (uso × requests)",
+  "description": "Uso real de CPU/memória por pod vs os requests declarados no values.yaml, e ociosidade. Fontes: marts gold pod_usage_hourly e platform_cost_daily (dbt).",
+  "tags": ["capiba", "custos"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {"from": "now-30d", "to": "now"},
+  "refresh": "5m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Sobre",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "Uso real coletado pelo pipeline `hourly_pod_usage` (metrics-server) → bronze `raw_pod_usage` → mart `pod_usage_hourly`. Os requests vêm da seed dbt `requests.csv`, gerada a partir do values.yaml — **regerar a seed sempre que os requests do chart mudarem**. Ociosidade = 1 − (uso médio ÷ request); valores altos indicam requests superdimensionados."
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Uso real × request — memória (MiB, por dia/pod)",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "trino-datasource", "uid": "trino"},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT dt, pod, round(avg_memory_bytes / 1048576.0, 1) AS avg_mib, round(max_memory_bytes / 1048576.0, 1) AS max_mib, round(request_memory_bytes / 1048576.0, 1) AS request_mib, round(memory_idle_ratio * 100, 1) AS idle_pct FROM gold.capiba.platform_cost_daily ORDER BY dt DESC, pod"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Uso real × request — CPU (millicores, por dia/pod)",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "trino-datasource", "uid": "trino"},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT dt, pod, round(avg_cpu_millicores, 1) AS avg_mc, request_cpu_millicores AS request_mc, round(cpu_idle_ratio * 100, 1) AS idle_pct FROM gold.capiba.platform_cost_daily ORDER BY dt DESC, pod"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Uso horário por pod (mart pod_usage_hourly)",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 14},
+      "datasource": {"type": "trino-datasource", "uid": "trino"},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT hour, pod, round(avg_cpu_millicores, 1) AS avg_mc, max_cpu_millicores AS max_mc, round(avg_memory_bytes / 1048576.0, 1) AS avg_mib, round(max_memory_bytes / 1048576.0, 1) AS max_mib, samples FROM gold.capiba.pod_usage_hourly ORDER BY hour DESC, pod"
+        }
+      ]
+    }
+  ]
+}

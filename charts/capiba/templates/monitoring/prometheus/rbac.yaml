@@ -1,0 +1,47 @@
+{{- if .Values.prometheus.enabled }}
+# Minimal RBAC for the scrapes: kubelet/cAdvisor via the node HTTPS endpoint
+# (requires nodes/metrics + nodes/proxy; pod discovery for the Kepler scrape).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "capiba.prometheus.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "prometheus" "context" .) | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "capiba.prometheus.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "prometheus" "context" .) | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - nodes/metrics
+      - nodes/proxy
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "capiba.prometheus.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "prometheus" "context" .) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "capiba.prometheus.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "capiba.prometheus.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

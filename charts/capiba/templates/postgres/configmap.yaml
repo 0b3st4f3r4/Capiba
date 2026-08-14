@@ -1,0 +1,18 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.postgresql.fullname" . }}-init
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "postgresql" "context" .) | nindent 4 }}
+data:
+  init.sql: |
+    {{ if .Values.airflow.enabled }}
+    CREATE DATABASE {{ .Values.airflow.database.dbname }};
+    CREATE USER {{ .Values.airflow.database.username }} WITH ENCRYPTED PASSWORD '{{ .Values.airflow.database.password }}';
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.airflow.database.dbname }} TO {{ .Values.airflow.database.username }};
+    \c {{ .Values.airflow.database.dbname }}
+    GRANT ALL ON SCHEMA public TO {{ .Values.airflow.database.username }};
+    {{ end }}
+{{- end }}

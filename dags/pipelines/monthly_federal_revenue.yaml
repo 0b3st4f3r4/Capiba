@@ -1,0 +1,16 @@
+# Monthly Federal Revenue (CNPJ) reference dump crawl (declarative
+# equivalent of the legacy monthly_federal_revenue DAG): downloads the
+# configured dump files of the previous reference month, lands the ZIPs
+# under federal_revenue/files/ in the bronze bucket and records a manifest
+# in the raw_federal_revenue Iceberg table. An empty manifest fails the run.
+name: monthly_federal_revenue
+description: Monthly Federal Revenue (CNPJ) reference dump crawl
+schedule: "23 5 2 * *" # 2nd of the month, 05:23 UTC (previous month's dump)
+window: previous_month # the dump published in a month refers to the previous one
+sources:
+  - name: federal_revenue
+    # params.files/params.base_url override the FEDERAL_REVENUE_FILES /
+    # FEDERAL_REVENUE_BASE_URL config defaults when declared.
+formula: file_dump
+destinations:
+  - lake_bronze # manifest recorded in the bronze layer

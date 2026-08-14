@@ -1,0 +1,56 @@
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+
+WORKDIR /app
+
+# Install Python 3.13, build tools and system dependencies.
+# Ubuntu 24.04 does not ship 3.13 by default, so we use the deadsnakes PPA.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.13 \
+    python3.13-dev \
+    python3.13-venv \
+    python3-pip \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create and activate a virtual environment; this avoids the
+# externally-managed-environment restriction on the system pip.
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3.13 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Upgrade pip inside the venv (cached independently of code)
+RUN pip install --no-cache-dir -U pip
+
+# Copy only package metadata and the requirements extractor so dependency
+# installation can be cached even when src/ changes.
+COPY pyproject.toml README.md scripts/extract_requirements.py ./
+
+# Install PyTorch with GPU support (CUDA 12.4/12.6 compatible).
+# The default pip wheel already includes CUDA 12.4 binaries; no special index needed.
+RUN pip install --no-cache-dir torch
+
+# Extract declared dependencies from pyproject.toml and install them.
+RUN python extract_requirements.py /tmp/requirements.txt && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copy source code and install the Capiba package itself without reinstalling deps.
+COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps .
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8000
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "capiba.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

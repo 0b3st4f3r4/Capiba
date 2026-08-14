@@ -1,0 +1,40 @@
+version: 2
+
+sources:
+  - name: lake_silver
+    # Trino catalog of the silver warehouse (Lakekeeper Iceberg REST)
+    database: silver
+    schema: capiba
+    tables:
+      - name: contracts
+        description: >-
+          Normalized public contracts (silver Iceberg table written by the
+          ingestion pipeline).
+        # Freshness: the daily_ingestion DAG appends to this table once a
+        # day; alert when the latest ingested_at gets stale.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: id
+            description: Contract identifier in the source system
+            tests:
+              - not_null
+
+  - name: lake_bronze
+    # Trino catalog of the bronze warehouse (Lakekeeper Iceberg REST)
+    database: bronze
+    schema: capiba
+    tables:
+      - name: raw_pod_usage
+        description: >-
+          Raw pod usage snapshots collected by the hourly_pod_usage
+          pipeline (payload_json is a JSON array of per-container records:
+          pod, container, cpu_millicores, memory_bytes, collected_at).
+        # Freshness: the hourly_pod_usage DAG appends hourly; alert when
+        # the latest ingested_at gets stale.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 4, period: hour}

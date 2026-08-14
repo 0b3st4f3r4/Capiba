@@ -1,0 +1,27 @@
+{{- if .Values.marquez.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "capiba.marquez.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "marquez" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.marquez.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.marquez.service.apiPort }}
+      targetPort: http
+      protocol: TCP
+    - name: admin
+      port: {{ .Values.marquez.service.adminPort }}
+      targetPort: admin
+      protocol: TCP
+    - name: web
+      port: {{ .Values.marquez.service.webPort }}
+      targetPort: web
+      protocol: TCP
+  selector:
+    {{- include "capiba.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: marquez
+{{- end }}

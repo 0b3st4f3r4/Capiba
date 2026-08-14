@@ -1,0 +1,124 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/capiba"]
+
+[project]
+name = "capiba"
+version = "0.1.0"
+description = "Cruzamento e Análise de Padrões e Indícios em Bases Abertas"
+readme = "README.md"
+license = {text = "AGPL-3.0-or-later WITH Capiba-Public-Availability-Clause"}
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "python-arango",
+    "pandas",
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "spacy",
+    "sentence-transformers",
+    "redis",
+    "minio",
+    "aiosmtplib",
+    "jinja2",
+    "apscheduler",
+    "aiohttp",
+    "requests",
+    "pyyaml",
+    "python-dotenv",
+    "pyiceberg[pyarrow,s3fs,sql-sqlite]>=0.11.1",
+    "dbt-trino",
+    "authlib",
+    "itsdangerous",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-bdd",
+    "pytest-cov",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+    "basedpyright",
+    "scipy-stubs",
+    "pyarrow-stubs",
+    "httpx",
+    "pandas-stubs",
+    "bandit",
+    "pre-commit",
+    "isort"
+]
+airflow = [
+    # Floor matches the metadata DB alembic head already applied in the cluster
+    "apache-airflow>=3.3.1",
+    # FAB auth manager (OAuth/SSO via Keycloak) — not pulled by the metapackage
+    "apache-airflow-providers-fab",
+    "psycopg2-binary",
+    "asyncpg",
+    "apache-airflow-providers-amazon",
+    # Emits lineage events to Marquez (OPENLINEAGE_URL in the airflow configmap)
+    "apache-airflow-providers-openlineage",
+]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+src_paths = ["src", "tests", "scripts"]
+known_first_party = ["capiba"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
+# authlib ships no type stubs
+[[tool.mypy.overrides]]
+module = ["authlib", "authlib.*"]
+ignore_missing_imports = true
+
+# Third-party libraries without type stubs
+[[tool.mypy.overrides]]
+module = ["scipy", "scipy.*", "sklearn.*", "apscheduler.*", "yaml"]
+ignore_missing_imports = true
+
+[tool.basedpyright]
+include = ["src"]
+pythonVersion = "3.13"
+# Report diagnostics as warnings so the tool surfaces issues without failing CI.
+typeCheckingMode = "standard"
+reportMissingTypeStubs = "warning"
+
+[tool.coverage.run]
+source = ["src/capiba"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

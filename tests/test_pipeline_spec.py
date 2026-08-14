@@ -1,0 +1,349 @@
+"""Tests for the declarative pipeline spec (YAML) model.
+
+Responsibility: Validate loading, shorthand syntax, schema errors and
+cross-validation against the capability registries.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from capiba.pipeline.spec import PipelineSpec, SpecError, load_spec
+
+VALID_SPEC = """\
+name: test_pipeline
+schedule: "0 6 * * *"
+window: previous_day
+sources:
+  - name: mock_pncp
+  - name: mock_transparency
+    window: current_month
+formula: contracts_default
+validate:
+  ruleset: contract_rules
+destinations:
+  - lake_bronze
+  - lake_silver
+post_steps:
+  - dbt_run
+  - detect
+"""
+
+
+def _write(tmp_path: Path, content: str) -> Path:
+    path = tmp_path / "spec.yaml"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+class TestLoadSpec:
+    """Tests for load_spec happy paths."""
+
+    def test_load_valid_spec(self, tmp_path: Path) -> None:
+        """A valid YAML spec loads with all fields parsed."""
+        spec = load_spec(_write(tmp_path, VALID_SPEC))
+
+        assert spec.name == "test_pipeline"
+        assert spec.schedule == "0 6 * * *"
+        assert spec.window == "previous_day"
+        assert [s.name for s in spec.sources] == ["mock_pncp", "mock_transparency"]
+        assert spec.sources[1].window == "current_month"
+        assert spec.formula == "contracts_default"
+        assert spec.validation is not None
+        assert spec.validation.ruleset == "contract_rules"
+        assert [d.name for d in spec.destinations] == ["lake_bronze", "lake_silver"]
+        assert spec.post_steps == ["dbt_run", "detect"]
+
+    def test_load_real_pipeline_yamls(self) -> None:
+        """The shipped dags/pipelines specs must load cleanly."""
+        pipelines_dir = Path(__file__).resolve().parent.parent / "dags" / "pipelines"
+        specs = {p.stem: load_spec(p) for p in sorted(pipelines_dir.glob("*.yaml"))}
+
+        assert set(specs) == {
+            "daily_contracts",
+            "monthly_federal_revenue",
+            "hourly_pod_usage",
+        }
+        daily = specs["daily_contracts"]
+        assert daily.name == "daily_ingestion"
+        assert daily.schedule == "0 6 * * *"
+        assert daily.window == "previous_day"
+        transparency = next(s for s in daily.sources if s.name == "transparency")
+        assert transparency.window == "current_month"
+        assert specs["monthly_federal_revenue"].window == "previous_month"
+        hourly = specs["hourly_pod_usage"]
+        assert hourly.schedule == "7 * * * *"
+        assert hourly.formula == "metrics_collect"
+        assert [s.name for s in hourly.sources] == ["pod_usage"]
+
+    def test_string_shorthand(self, tmp_path: Path) -> None:
+        """Plain strings are accepted as shorthand for name-only entries."""
+        spec = load_spec(
+            _write(
+                tmp_path,
+                """\
+name: minimal
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [lake_silver]
+""",
+            )
+        )
+
+        assert spec.sources[0].name == "mock_pncp"
+        assert spec.window == "previous_day"  # default
+        assert spec.schedule is None
+        assert spec.validation is None
+
+    def test_source_params(self, tmp_path: Path) -> None:
+        """Free-form source params are preserved."""
+        spec = load_spec(
+            _write(
+                tmp_path,
+                """\
+name: with_params
+sources:
+  - name: pncp
+    params:
+      agency_cnpj: "12345678000190"
+formula: contracts_default
+destinations: [lake_bronze]
+""",
+            )
+        )
+
+        assert spec.sources[0].params == {"agency_cnpj": "12345678000190"}
+
+
+class TestLoadSpecErrors:
+    """Tests for load_spec validation errors."""
+
+    def test_invalid_yaml(self, tmp_path: Path) -> None:
+        """Malformed YAML fails with a clear error."""
+        path = _write(tmp_path, "name: [unclosed")
+
+        with pytest.raises(SpecError, match="Invalid YAML"):
+            load_spec(path)
+
+    def test_non_mapping_yaml(self, tmp_path: Path) -> None:
+        """A YAML document that is not a mapping fails clearly."""
+        path = _write(tmp_path, "- just\n- a\n- list\n")
+
+        with pytest.raises(SpecError, match="must be a YAML mapping"):
+            load_spec(path)
+
+    def test_unknown_source(self, tmp_path: Path) -> None:
+        """An unknown source name fails listing the known ones."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_source
+sources: [fonte_inexistente]
+formula: contracts_default
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="unknown source 'fonte_inexistente'"):
+            load_spec(path)
+
+    def test_unknown_formula(self, tmp_path: Path) -> None:
+        """An unknown formula name fails listing the known ones."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_formula
+sources: [mock_pncp]
+formula: formula_inexistente
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="unknown formula 'formula_inexistente'"):
+            load_spec(path)
+
+    def test_unknown_destination(self, tmp_path: Path) -> None:
+        """An unknown destination name fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_dest
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [planilha_excel]
+""",
+        )
+
+        with pytest.raises(SpecError, match="unknown destination 'planilha_excel'"):
+            load_spec(path)
+
+    def test_unknown_ruleset(self, tmp_path: Path) -> None:
+        """An unknown validation ruleset fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_ruleset
+sources: [mock_pncp]
+formula: contracts_default
+validate:
+  ruleset: regras_inexistentes
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="unknown ruleset 'regras_inexistentes'"):
+            load_spec(path)
+
+    def test_unknown_transformation(self, tmp_path: Path) -> None:
+        """An unknown transformation fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_transform
+sources: [mock_pncp]
+formula: contracts_default
+transformations: [transformacao_inexistente]
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(
+            SpecError, match="unknown transformation 'transformacao_inexistente'"
+        ):
+            load_spec(path)
+
+    def test_known_transformation_from_package(self, tmp_path: Path) -> None:
+        """Transformations resolve from the capiba.transformations package."""
+        path = _write(
+            tmp_path,
+            """\
+name: good_transform
+sources: [mock_pncp]
+formula: contracts_default
+transformations:
+  - name: filter_by_min_value
+    params:
+      min_value: 1000
+destinations: [lake_silver]
+""",
+        )
+
+        spec = load_spec(path)
+
+        assert spec.transformations[0].params == {"min_value": 1000}
+
+    def test_invalid_window(self, tmp_path: Path) -> None:
+        """An unknown window name fails schema validation."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_window
+window: last_week
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="Invalid pipeline spec"):
+            load_spec(path)
+
+    def test_invalid_post_step(self, tmp_path: Path) -> None:
+        """An unknown post step fails schema validation."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_post
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [lake_silver]
+post_steps: [spark_submit]
+""",
+        )
+
+        with pytest.raises(SpecError, match="Invalid pipeline spec"):
+            load_spec(path)
+
+    def test_dump_formula_requires_dump_source(self, tmp_path: Path) -> None:
+        """file_dump with a record-only source fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_dump
+sources: [mock_pncp]
+formula: file_dump
+destinations: [lake_bronze]
+""",
+        )
+
+        with pytest.raises(SpecError, match="has no dump downloader"):
+            load_spec(path)
+
+    def test_contracts_formula_requires_record_source(self, tmp_path: Path) -> None:
+        """contracts_default with a dump-only source fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_contracts
+sources: [federal_revenue]
+formula: contracts_default
+destinations: [lake_bronze]
+""",
+        )
+
+        with pytest.raises(SpecError, match="has no record fetcher"):
+            load_spec(path)
+
+    def test_name_pattern(self, tmp_path: Path) -> None:
+        """DAG-unsafe names fail schema validation."""
+        path = _write(
+            tmp_path,
+            """\
+name: "Bad Name!"
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="Invalid pipeline spec"):
+            load_spec(path)
+
+
+class TestPipelineSpecModel:
+    """Direct model-level tests."""
+
+    def test_multiple_errors_aggregated(self, tmp_path: Path) -> None:
+        """All registry errors are reported at once."""
+        path = _write(
+            tmp_path,
+            """\
+name: multi_error
+sources: [fonte_a]
+formula: formula_b
+destinations: [destino_c]
+""",
+        )
+
+        with pytest.raises(SpecError) as exc_info:
+            load_spec(path)
+
+        message = str(exc_info.value)
+        assert "unknown source 'fonte_a'" in message
+        assert "unknown formula 'formula_b'" in message
+        assert "unknown destination 'destino_c'" in message
+
+    def test_extra_fields_forbidden(self) -> None:
+        """Unknown YAML keys fail schema validation."""
+        with pytest.raises(Exception, match="extra"):
+            PipelineSpec.model_validate(
+                {
+                    "name": "x",
+                    "sources": ["mock_pncp"],
+                    "formula": "contracts_default",
+                    "destinations": ["lake_silver"],
+                    "surprise": True,
+                }
+            )

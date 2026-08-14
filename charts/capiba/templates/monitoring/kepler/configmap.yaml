@@ -1,0 +1,29 @@
+{{- if .Values.kepler.enabled }}
+# Kepler runtime configuration (subset of the upstream v0.11.x defaults):
+# host sysfs/procfs come from the hostPath mounts, Prometheus exporter on
+# the metrics port, pod discovery via the kubelet informer.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.kepler.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "kepler" "context" .) | nindent 4 }}
+data:
+  config.yaml: |
+    log:
+      level: info
+      format: text
+    host:
+      sysfs: /host/sys
+      procfs: /host/proc
+    exporter:
+      prometheus:
+        enabled: true
+    web:
+      listenAddresses:
+        - :{{ .Values.kepler.service.port }}
+    kube:
+      podInformer:
+        mode: kubelet
+{{- end }}

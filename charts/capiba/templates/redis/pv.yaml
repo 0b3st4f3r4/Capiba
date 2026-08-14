@@ -1,0 +1,20 @@
+{{- if and .Values.redis.enabled .Values.redis.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "capiba.redis.fullname" . }}-data-pv
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "redis" "context" .) | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.redis.persistence.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  volumeMode: Filesystem
+  hostPath:
+    path: {{ printf "%s/redis" .Values.global.servicesDataPath | quote }}
+    type: DirectoryOrCreate
+{{- end }}

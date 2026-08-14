@@ -1,0 +1,67 @@
+{
+  "uid": "capiba-energia",
+  "title": "Capiba — Energia (Kepler)",
+  "description": "Potência (Watts) e energia (Joules) estimadas por pod do namespace capiba, exportadas pelo Kepler.",
+  "tags": ["capiba", "energia", "kepler"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Sobre as estimativas",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "Métricas do [Kepler](https://sustainable-computing.io/) (eBPF). **Em VM ou notebook sem contadores RAPL acessíveis, os valores vêm do power model do Kepler (estimativa por utilização de CPU) e podem ser zero** — trate como ordem de grandeza para comparar pods entre si, não como medição de tomada. Métricas: `kepler_pod_cpu_watts` (gauge) e `kepler_pod_cpu_joules_total` (counter)."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Watts estimados por pod",
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "watt"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod_name) (kepler_pod_cpu_watts{pod_namespace=\"capiba\"})",
+          "legendFormat": "{{pod_name}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Watts totais do namespace",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "watt"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kepler_pod_cpu_watts{pod_namespace=\"capiba\"})"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Energia por pod (Joules/hora)",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "joule"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod_name) (increase(kepler_pod_cpu_joules_total{pod_namespace=\"capiba\"}[1h]))",
+          "legendFormat": "{{pod_name}}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{{- if and .Values.arangodb.enabled .Values.arangodb.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "capiba.arangodb.fullname" . }}-data-pv
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "arangodb" "context" .) | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.arangodb.persistence.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  volumeMode: Filesystem
+  hostPath:
+    path: {{ printf "%s/arangodb" .Values.global.servicesDataPath | quote }}
+    type: DirectoryOrCreate
+{{- end }}

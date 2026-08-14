@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  # Serving layer: copies of the gold marts materialized in the PostgreSQL
+  # DWH (Trino catalog `dwh`, database config on each model). Cross-catalog
+  # CTAS is supported by dbt-trino/Trino; if a future Trino version ever
+  # restricts it, the fallback is to keep these models in the gold catalog
+  # and sync them to PostgreSQL with a Trino CLI step in the pipeline.
+  - name: serving_supplier_stats
+    description: Supplier contract history served from the PostgreSQL DWH
+    columns:
+      - name: supplier_id
+        description: Supplier identifier (CNPJ or CPF)
+        tests:
+          - not_null
+          - unique
+
+  - name: serving_municipality_daily
+    description: Daily contract volumes per buying municipality/UF
+    columns:
+      # The key is the composite (dt, municipality, uf): not_null on each
+      # part (dbt has no built-in composite unique test).
+      - name: dt
+        description: Ingestion date partition
+        tests:
+          - not_null
+      - name: municipality
+        description: City of the buying agency
+        tests:
+          - not_null
+      - name: uf
+        description: State of the buying agency
+        tests:
+          - not_null

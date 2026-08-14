@@ -1,0 +1,53 @@
+{
+  "id": "D-01",
+  "description": "Calibracao dos sinais estatisticos (benford, hhi, duracao) sobre contratos sinteticos com verdade plantada. Ver docs/preregistrations/PR-D-01.md.",
+  "seeds": [11, 22, 33, 44, 55, 66, 77, 88, 99, 110],
+  "suppliers": {
+    "control": {
+      "count": 40,
+      "contracts_per_supplier": 20,
+      "amounts": {"distribution": "log_uniform", "min": 1000.0, "max": 10000000.0}
+    },
+    "planted_benford": {
+      "count": 40,
+      "contracts_per_supplier": 20,
+      "amounts": {
+        "mixture": [
+          {"weight": 0.6, "distribution": "leading_digit", "digit": 9, "exponent_range": [3, 6]},
+          {"weight": 0.4, "distribution": "log_uniform", "min": 1000.0, "max": 10000000.0}
+        ]
+      }
+    }
+  },
+  "buyers": [
+    {
+      "id": "EQ4",
+      "contracts": 12,
+      "supplier_shares": [0.25, 0.25, 0.25, 0.25],
+      "expected_hhi": 0.25
+    },
+    {
+      "id": "C721",
+      "contracts": 10,
+      "supplier_shares": [0.7, 0.2, 0.1],
+      "expected_hhi": 0.54
+    }
+  ],
+  "durations": {
+    "control": {"distribution": "uniform", "min_days": 300, "max_days": 430},
+    "planted": {
+      "supplier_id": "DUR-OUT",
+      "contracts": 20,
+      "outlier_contracts": 6,
+      "outlier_days": 1
+    }
+  },
+  "expectations": {
+    "benford_fp_threshold": 0.95,
+    "benford_fp_band": [6, 34],
+    "benford_power_min": 380,
+    "hhi_exact": {"EQ4": 0.25, "C721": 0.54},
+    "duration_share_exact": 0.3,
+    "duration_control_signals": 0
+  }
+}

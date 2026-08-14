@@ -1,0 +1,132 @@
+{{- if .Values.icebergCatalog.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "capiba.icebergCatalog.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "iceberg-catalog" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.icebergCatalog.replicaCount }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: iceberg-catalog
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: iceberg-catalog
+    spec:
+      initContainers:
+        # Creates the Lakekeeper database/user in the Capiba PostgreSQL.
+        # Idempotent: covers existing installs where the initdb scripts
+        # (which only run on a fresh PGDATA) never created them.
+        - name: create-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          env:
+            - name: PGHOST
+              value: {{ include "capiba.postgresql.fullname" . }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.service.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_PASSWORD
+            - name: LAKEKEEPER_DB
+              value: {{ .Values.icebergCatalog.database.dbname | quote }}
+            - name: LAKEKEEPER_USER
+              value: {{ .Values.icebergCatalog.database.username | quote }}
+            - name: LAKEKEEPER_PASSWORD
+              value: {{ .Values.icebergCatalog.database.password | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until pg_isready -q; do sleep 2; done
+              psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${LAKEKEEPER_USER}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE USER ${LAKEKEEPER_USER} WITH ENCRYPTED PASSWORD '${LAKEKEEPER_PASSWORD}'"
+              psql -tAc "SELECT 1 FROM pg_database WHERE datname='${LAKEKEEPER_DB}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${LAKEKEEPER_DB} OWNER ${LAKEKEEPER_USER}"
+        # Applies the catalog schema migrations (serve does not run them).
+        - name: migrate
+          image: "{{ .Values.icebergCatalog.image.repository }}:{{ .Values.icebergCatalog.image.tag }}"
+          imagePullPolicy: {{ .Values.icebergCatalog.image.pullPolicy }}
+          args: ["migrate"]
+          envFrom:
+            - secretRef:
+                name: {{ include "capiba.icebergCatalog.fullname" . }}-secrets
+      containers:
+        - name: iceberg-catalog
+          image: "{{ .Values.icebergCatalog.image.repository }}:{{ .Values.icebergCatalog.image.tag }}"
+          imagePullPolicy: {{ .Values.icebergCatalog.image.pullPolicy }}
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.icebergCatalog.service.port }}
+              protocol: TCP
+          env:
+            - name: LAKEKEEPER__LISTEN_PORT
+              value: {{ .Values.icebergCatalog.service.port | quote }}
+            # NOTE: LAKEKEEPER__BASE_URI is intentionally unset — when set,
+            # the catalog advertises it as a URI override, which breaks
+            # clients reaching it through a port-forward.
+            # SSO: authentication via Keycloak (realm capiba). The issuer is
+            # the pinned HTTPS ingress URL; it resolves in-cluster via the
+            # CoreDNS rewrite (cluster.sh) to the Traefik ClusterIP:8443, and
+            # the pod trusts the self-signed cert via the mounted capiba-tls
+            # CA below. allowall authz stays: any authenticated user has
+            # full access (local dev).
+            - name: LAKEKEEPER__OPENID_PROVIDER_URI
+              value: "https://keycloak.{{ .Values.ingress.domain }}:8443/realms/{{ .Values.keycloak.realm }}"
+            # rustls-native-certs (via openssl-probe) honors SSL_CERT_FILE.
+            - name: SSL_CERT_FILE
+              value: /etc/capiba-tls/tls.crt
+            - name: LAKEKEEPER__UI__OPENID_CLIENT_ID
+              value: lakekeeper-ui
+            - name: LAKEKEEPER__ALLOW_ORIGIN
+              value: {{ join "," .Values.icebergCatalog.cors.allowedOrigins | quote }}
+            - name: LAKEKEEPER__AUTHZ_BACKEND
+              value: allowall
+            - name: LAKEKEEPER__ENABLE_DEFAULT_PROJECT
+              value: "true"
+          envFrom:
+            - secretRef:
+                name: {{ include "capiba.icebergCatalog.fullname" . }}-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.icebergCatalog.resources | nindent 12 }}
+          volumeMounts:
+            - name: capiba-tls-ca
+              mountPath: /etc/capiba-tls
+              readOnly: true
+      volumes:
+        - name: capiba-tls-ca
+          secret:
+            secretName: capiba-tls
+            items:
+              - key: tls.crt
+                path: tls.crt
+{{- end }}

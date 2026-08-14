@@ -1,0 +1,102 @@
+{
+  "uid": "capiba-infra",
+  "title": "Capiba — Infra (namespace capiba)",
+  "description": "CPU/memória por pod do namespace capiba (cAdvisor do kubelet k3s via Prometheus) e memória total do namespace vs RAM da máquina. Uso vs requests fica no dashboard Capiba — Custos (seed dbt com os requests do values.yaml).",
+  "tags": ["capiba", "infra"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Sobre",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "Uso real de CPU/memória dos pods do namespace `capiba` coletado do cAdvisor do kubelet (k3s). O orçamento duro da plataforma é para o cluster inteiro — o painel de memória total compara o uso do namespace com a memória da máquina (`machine_memory_bytes`). A comparação uso × requests está no dashboard **Capiba — Custos** (requests vêm da seed dbt `requests.csv`, gerada a partir do values.yaml)."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "CPU por pod (cores)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "cores"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"capiba\", image!=\"\"}[5m]))",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Memória por pod (working set)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"capiba\", image!=\"\"})",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Memória do namespace vs máquina",
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"capiba\", image!=\"\"})",
+          "legendFormat": "namespace capiba"
+        },
+        {
+          "refId": "B",
+          "expr": "machine_memory_bytes",
+          "legendFormat": "máquina ({{instance}})"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Uso de memória do namespace (% da máquina)",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 60},
+              {"color": "red", "value": 85}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(container_memory_working_set_bytes{namespace=\"capiba\", image!=\"\"}) / max(machine_memory_bytes)"
+        }
+      ]
+    }
+  ]
+}

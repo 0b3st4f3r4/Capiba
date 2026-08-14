@@ -1,0 +1,524 @@
+# Default values for the Capiba chart.
+# Optimized for Rancher Desktop with 8 CPUs and 16 GB of RAM.
+# Resource requests/limits are calibrated to the measured steady-state usage
+# of the local cluster (~4 Gi of requests, ~10 Gi of limits in the worst
+# case), so the whole stack fits machine alongside the OS + k3s.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Global configuration
+global:
+  environment: "local"
+  imagePullPolicy: IfNotPresent
+  storageClass: ""
+  # Base path on the host where volume data will be stored.
+  # Empty by default: scripts/helm-upgrade.sh injects it via --set from the
+  # DATA_PATH in .env (or from the project root).
+  # This directory is the MinIO storage root itself: each top-level
+  # subdirectory is a bucket.
+  dataPath: ""
+  # Base path on the host for databases/services that cannot run on object
+  # storage (ArangoDB, PostgreSQL, Redis). Empty by default: injected via
+  # --set by scripts/helm-upgrade.sh (<project root>/services).
+  servicesDataPath: ""
+  # Portal da Transparência API key.
+  # Register at https://portaldatransparencia.gov.br/api-de-dados/cadastrar-email
+  transparencyApiKey: ""
+
+# Capiba API image
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: capiba/api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  # Pinned session-signing key of the capiba-dashboard portal (local dev
+  # default; override in real deployments) so logins survive pod restarts.
+  portalSessionSecret: "capiba-portal-session-secret"
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: capiba.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  livenessProbe:
+    enabled: true
+    path: /health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    enabled: true
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 5
+
+# PostgreSQL
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 5432
+  auth:
+    database: capiba
+    username: capiba
+    password: capiba-secret
+    postgresPassword: postgres-secret
+  # Complementary data warehouse: dedicated database/user in this same
+  # PostgreSQL, written by dbt through the Trino `dwh` catalog (see
+  # trino/configmap.yaml) with the serving models of dbt/models/serving/.
+  # Created by the idempotent post-install/upgrade hook job
+  # (postgres/job-dwh.yaml).
+  dwh:
+    dbname: dwh
+    username: dwh
+    password: dwh-secret
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    # PostgreSQL uses the default StorageClass (local-path), which is configured
+    # to store volumes in data/local-path-storage.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# ArangoDB (multi-model: documents, graphs, vectors, full-text)
+arangodb:
+  enabled: true
+  image:
+    repository: arangodb
+    tag: "3.12"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8529
+  auth:
+    rootPassword: capiba-arangodb
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 384Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# Redis (cache for the quality monitor baselines and the API hot paths —
+# risk signals and municipal ranking). Everything degrades gracefully
+# without it (the monitor works without it and the lake holds the
+# historical data); disable to save resources.
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 6379
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# MinIO (object storage for the data lake and evidence)
+minio:
+  enabled: true
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2024-01-13T07-53-03Z"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    apiPort: 9000
+    consolePort: 9001
+  auth:
+    rootUser: capiba
+    rootPassword: capiba-secret
+  # Buckets created by the post-install/upgrade hook (kept in sync with
+  # scripts/init_buckets.py). Medallion layout; evidence files live in
+  # capiba-bronze under evidence/<type>/<source>/.
+  buckets:
+    - capiba-bronze
+    - capiba-silver
+    - capiba-gold
+    - capiba-artifacts
+    - capiba-airflow-logs
+    - capiba-backups
+  # CORS applied to every bucket above. Required so the Lakekeeper UI
+  # (browser-side DuckDB-WASM preview using STS-vended MinIO credentials)
+  # can read table data files. Add extra origins here for custom ingresses
+  # or port-forward workflows.
+  cors:
+    allowedOrigins:
+      - "https://iceberg.capiba.local:8443"
+      - "http://iceberg.capiba.local:8088"
+      - "https://localhost:8181"
+      - "http://localhost:8181"
+  # MinIO Client (mc) image used by the post-install/upgrade hook jobs.
+  # Pinned to a release close to the MinIO server image to avoid API
+  # incompatibilities (e.g. CORS parsing mismatches between mc:latest and an
+  # older server).
+  mc:
+    image:
+      repository: minio/mc
+      tag: "RELEASE.2024-01-13T08-44-48Z"
+      pullPolicy: IfNotPresent
+  # Scoped (non-root) users with bucket-level policies, created by the
+  # post-install/upgrade hook job (job-users.yaml). Trino reads/writes only
+  # the lake buckets; the Airflow remote-logs connection only the logs
+  # bucket. Root credentials stay for admin/bootstrap (init_buckets.py).
+  scopedUsers:
+    trino:
+      accessKey: trino
+      secretKey: trino-secret
+    airflowLogs:
+      accessKey: airflow-logs
+      secretKey: airflow-logs-secret
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# Iceberg REST catalog (Lakekeeper) — metadata catalog for the lake tables.
+# Backed by a dedicated database in the Capiba PostgreSQL (created by an
+# idempotent init container); table data (Parquet) lives in the medallion
+# MinIO buckets, one warehouse per bucket (provisioned by
+# scripts/init_buckets.py).
+icebergCatalog:
+  enabled: true
+  image:
+    repository: quay.io/lakekeeper/catalog
+    tag: "v0.13.1"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8181
+  # CORS origins allowed for the Lakekeeper REST catalog and built-in UI.
+  # Required when the UI is reached through a different origin (e.g. ingress
+  # vs. port-forward) so that browser-side requests are not blocked.
+  cors:
+    allowedOrigins:
+      - "https://iceberg.capiba.local:8443"
+      - "http://iceberg.capiba.local:8088"
+      - "https://localhost:8181"
+      - "http://localhost:8181"
+  database:
+    dbname: lakekeeper
+    username: lakekeeper
+    password: lakekeeper-secret
+  # 64-char hex key used to encrypt storage credentials at rest (local dev
+  # default; override in real deployments).
+  pgEncryptionKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+
+# Keycloak — SSO identity provider. One dev user shared by every UI: the
+# first login (portal, Grafana, MinIO, Airflow, Lakekeeper, Headlamp)
+# establishes the Keycloak session and the other services accept it without
+# prompting again. Backed by a dedicated database in the Capiba PostgreSQL
+# (created by an idempotent init container). The `capiba` realm is imported
+# at startup from a ConfigMap (users + OIDC clients).
+keycloak:
+  enabled: true
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.5"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  admin:
+    username: admin
+    password: keycloak-admin-secret
+  database:
+    dbname: keycloak
+    username: keycloak
+    password: keycloak-secret
+  realm: capiba
+  # Dev user shared by all SSO UIs (local dev default; override in real
+  # deployments). The `policy` attribute (consoleAdmin) feeds MinIO's claim.
+  devUser:
+    username: capiba
+    password: capiba-sso
+    email: capiba@capiba.local
+  # OIDC client secrets (local dev defaults). lakekeeper-ui and headlamp are
+  # public PKCE clients (no secret). capiba-services is the service account
+  # used by machine clients (Trino, pyiceberg) when Lakekeeper auth is on.
+  clientSecrets:
+    capiba-dashboard: capiba-dashboard-secret
+    minio: minio-oidc-secret
+    grafana: grafana-oidc-secret
+    airflow: airflow-oidc-secret
+    capiba-services: capiba-services-secret
+    trino: trino-oidc-secret
+  resources:
+    requests:
+      cpu: 250m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+# Grafana (visualization; SSO via Keycloak generic OAuth — Metabase was
+# replaced because its OSS edition has no SSO). The Trino datasource (gold
+# marts) is provisioned declaratively from a ConfigMap — no post-install
+# registration script needed.
+grafana:
+  enabled: true
+  image:
+    repository: grafana/grafana
+    tag: "12.4"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 3000
+  # Local admin login stays as fallback (local dev default; override in real
+  # deployments).
+  auth:
+    adminUser: admin
+    adminPassword: capiba-grafana
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Prometheus (cluster infra metrics: kubelet/cAdvisor of the k3s node +
+# Kepler). Single deployment, provisioned as a Grafana datasource
+# (grafana/configmap.yaml). TSDB on emptyDir: dev-grade, the metric history
+# is lost on pod restart — persistence is intentionally skipped to fit the
+# RAM budget (enable a PVC before using it beyond dev).
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: "v3.13.2"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 9090
+  retention: 7d
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Kepler (energy/power estimation per pod, eBPF). Metrics on port 28282
+# (default of the v0.11.x series — older 0.7.x used 9102), scraped by
+# Prometheus via pod discovery. On VMs/notebooks without RAPL the values
+# come from the power model (estimation) and may be zero.
+kepler:
+  enabled: true
+  image:
+    repository: quay.io/sustainable_computing_io/kepler
+    tag: "v0.11.4"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 28282
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# Apache Airflow (disabled by default because it consumes many resources)
+airflow:
+  enabled: false
+  image:
+    repository: capiba/airflow
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  auth:
+    # UI/API login is via SSO (Keycloak) — see templates/airflow/webserver-config.yaml.
+    # Pinned JWT signing secret of the API server (local dev default;
+    # override in real deployments). Without it each pod start generates a
+    # random secret and all UI sessions/API tokens die on redeploys.
+    jwtSecret: "MiuT43RXgkfSRv7X4923vP73byiiLh2hkDSxTmetErI="
+  # Stable Fernet key encrypting connections/variables in the metadata DB.
+  # Pinned (local dev) so a fresh cluster install over a preserved PostgreSQL
+  # hostPath can still decrypt them; the helper also reuses the key from the
+  # existing K8s secret on upgrades.
+  fernetKey: "fPoiu0eoT46TSxhd4WYPPampDl6YNm8qLr6KFD9jyZm="
+  database:
+    host: ""
+    port: 5432
+    dbname: airflow
+    username: airflow
+    password: airflow-secret
+  # Capiba code (src/) and DAGs are synced from MinIO artifacts at pod
+  # startup and periodically by a sidecar — no image rebuild needed.
+  # Publish changes with `make publish-artifacts`.
+  artifacts:
+    bucket: capiba-artifacts
+    syncIntervalSeconds: 60
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: 1000m
+      memory: 4Gi
+
+# Trino — SQL engine over the Iceberg REST catalog (Lakekeeper). Data source
+# used by Grafana to build dashboards over the gold marts; one Trino
+# catalog per medallion warehouse (bronze/silver/gold). Object storage
+# access uses the Lakekeeper-vended credentials (STS) or the static MinIO
+# credentials injected via ${ENV:...} substitution.
+trino:
+  enabled: true
+  image:
+    repository: trinodb/trino
+    tag: "483"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  # SSO via Keycloak (OAuth2/OIDC) for the Web UI.  Trino 483 does not allow
+  # password authentication over insecure HTTP: in-cluster machine clients
+  # (dbt-trino, lake_maintenance, Grafana datasource) authenticate with the
+  # user header only (http-server.authentication.allow-insecure-over-http in
+  # templates/trino/configmap.yaml).  The password file below only serves
+  # clients reaching Trino through the HTTPS ingress (e.g. dbt from the host
+  # against https://trino.capiba.local:8443).
+  auth:
+    # Client secret of the Keycloak OIDC client ``trino``.
+    oauth2ClientSecret: trino-oidc-secret
+    # Shared secret for internal Trino node communication; required when any
+    # authentication is enabled.
+    internalSharedSecret: trino-internal-shared-secret
+    # Local password-file user for clients coming through the HTTPS ingress.
+    # Trino requires bcrypt cost >= 8; generate with
+    # ``htpasswd -B -C 10 -n -b <user> <password>``.
+    internalUser: capiba
+    internalPassword: capiba-trino
+    internalPasswordHash: "capiba:$2y$10$WtvT3MYjpWfOkRsLNJjde.gaVpUO5YZ8rYpCyH092YOEOupupemwa"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: 1500m
+      memory: 1536Mi
+
+# Periodic logical backups of the databases to MinIO (bucket capiba-backups)
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+  bucket: capiba-backups
+
+# Marquez — data catalog/lineage (OpenLineage reference implementation).
+# Much lighter than DataHub: a single API + web backed by a dedicated
+# database in the Capiba PostgreSQL (created by an idempotent init
+# container). The Airflow OpenLineage provider emits lineage events to
+# the API (see the airflow configmap: OPENLINEAGE_*).
+marquez:
+  enabled: true
+  image:
+    repository: marquezproject/marquez
+    tag: "0.50.0"
+    pullPolicy: IfNotPresent
+  webImage:
+    repository: marquezproject/marquez-web
+    tag: "0.50.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    apiPort: 5000
+    adminPort: 5001
+    webPort: 3000
+  database:
+    dbname: marquez
+    username: marquez
+    password: marquez-secret
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+# Ingress via the k3s Traefik controller: browser/host access to the UIs and
+# APIs at <service>.<domain> (port 80) without port-forwards. Map the hosts
+# to 127.0.0.1 in /etc/hosts — scripts/setup.sh adds them automatically.
+ingress:
+  enabled: true
+  className: traefik
+  domain: capiba.local
+  # HTTPS on the Traefik websecure entrypoint (hostPort 8443). The wildcard
+  # secret is created by scripts/gen-certs.sh (self-signed, local dev).
+  tls:
+    enabled: true
+    secretName: capiba-tls

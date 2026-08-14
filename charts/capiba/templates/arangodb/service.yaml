@@ -1,0 +1,19 @@
+{{- if .Values.arangodb.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "capiba.arangodb.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "arangodb" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.arangodb.service.type }}
+  ports:
+    - port: {{ .Values.arangodb.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "capiba.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: arangodb
+{{- end }}

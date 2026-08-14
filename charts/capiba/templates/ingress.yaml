@@ -1,0 +1,49 @@
+{{- if .Values.ingress.enabled }}
+# Ingress via the k3s Traefik controller: browser/host access to the UIs and
+# APIs without port-forwards. Map <service>.<domain> to 127.0.0.1 in
+# /etc/hosts (scripts/setup.sh does it); Traefik listens on the host's 80/443
+# through the k3s ServiceLB.
+{{- $domain := .Values.ingress.domain }}
+{{- range $entry := list
+  (dict "name" "api" "enabled" $.Values.api.enabled "service" (include "capiba.api.fullname" $) "port" $.Values.api.service.port)
+  (dict "name" "keycloak" "enabled" $.Values.keycloak.enabled "service" (include "capiba.keycloak.fullname" $) "port" $.Values.keycloak.service.port)
+  (dict "name" "grafana" "enabled" $.Values.grafana.enabled "service" (include "capiba.grafana.fullname" $) "port" $.Values.grafana.service.port)
+  (dict "name" "marquez" "enabled" $.Values.marquez.enabled "service" (include "capiba.marquez.fullname" $) "port" $.Values.marquez.service.webPort)
+  (dict "name" "iceberg" "enabled" $.Values.icebergCatalog.enabled "service" (include "capiba.icebergCatalog.fullname" $) "port" $.Values.icebergCatalog.service.port)
+  (dict "name" "minio" "enabled" $.Values.minio.enabled "service" (include "capiba.minio.fullname" $) "port" $.Values.minio.service.consolePort)
+  (dict "name" "s3" "enabled" $.Values.minio.enabled "service" (include "capiba.minio.fullname" $) "port" $.Values.minio.service.apiPort)
+  (dict "name" "trino" "enabled" $.Values.trino.enabled "service" (include "capiba.trino.fullname" $) "port" $.Values.trino.service.port)
+  (dict "name" "airflow" "enabled" $.Values.airflow.enabled "service" (include "capiba.airflow.fullname" $) "port" $.Values.airflow.service.port)
+}}
+{{- if $entry.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "capiba.fullname" $ }}-{{ $entry.name }}
+  labels:
+    {{- include "capiba.labels" $ | nindent 4 }}
+spec:
+  {{- if $.Values.ingress.className }}
+  ingressClassName: {{ $.Values.ingress.className }}
+  {{- end }}
+  {{- if $.Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ printf "%s.%s" $entry.name $domain | quote }}
+      secretName: {{ $.Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ printf "%s.%s" $entry.name $domain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $entry.service }}
+                port:
+                  number: {{ $entry.port }}
+{{- end }}
+{{- end }}
+{{- end }}

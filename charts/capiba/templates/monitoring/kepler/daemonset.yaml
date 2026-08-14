@@ -1,0 +1,88 @@
+{{- if .Values.kepler.enabled }}
+# Minimal Kepler DaemonSet, adapted from the upstream v0.11.x manifests
+# (sustainable-computing-io/kepler): privileged + hostPID with host
+# sysfs/procfs mounts (read-only) are required by the eBPF power reader.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "capiba.kepler.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "kepler" "context" .) | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kepler
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kepler
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/monitoring/kepler/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "capiba.kepler.fullname" . }}
+      hostPID: true
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: kepler
+          image: "{{ .Values.kepler.image.repository }}:{{ .Values.kepler.image.tag }}"
+          imagePullPolicy: {{ .Values.kepler.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          command:
+            - /usr/bin/kepler
+          args:
+            - --config.file=/etc/kepler/config.yaml
+            - --kube.enable
+            - --kube.node-name=$(NODE_NAME)
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: {{ .Values.kepler.service.port }}
+              protocol: TCP
+          # /metrics collects power data on demand (~2s per scrape in v0.11),
+          # so the probe needs a timeout well above the 1s default or the
+          # kubelet kills a healthy container (CrashLoopBackOff).
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.kepler.resources | nindent 12 }}
+          volumeMounts:
+            - name: sysfs
+              mountPath: /host/sys
+              readOnly: true
+            - name: procfs
+              mountPath: /host/proc
+              readOnly: true
+            - name: config
+              mountPath: /etc/kepler
+      volumes:
+        - name: sysfs
+          hostPath:
+            path: /sys
+        - name: procfs
+          hostPath:
+            path: /proc
+        - name: config
+          configMap:
+            name: {{ include "capiba.kepler.fullname" . }}
+{{- end }}

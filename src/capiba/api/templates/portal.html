@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capiba — Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f7f7f7;
+      --text: #111111;
+      --muted: #6b6b6b;
+      --border: rgba(0, 0, 0, 0.10);
+      --card-bg: rgba(255, 255, 255, 0.72);
+      --hover-bg: rgba(255, 255, 255, 0.92);
+      --shadow: rgba(0, 0, 0, 0.06);
+      --shadow-hover: rgba(0, 0, 0, 0.12);
+      --radius: 14px;
+
+      /* LGBT 6 cores + rosa + preto + branco */
+      --c1: 255,   0,  24;
+      --c2: 255, 165,  44;
+      --c3: 255, 255,  65;
+      --c4:   0, 128,  24;
+      --c5:   0,   0, 249;
+      --c6: 134,   0, 125;
+      --c7: 255, 105, 180;
+      --c8:   0,   0,   0;
+      --c9: 255, 255, 255;
+    }
+
+    body.mode-gray {
+      --bg: #c8c8c8;
+      --surface: #dadada;
+      --text: #111111;
+      --muted: #444444;
+      --border: rgba(0, 0, 0, 0.12);
+      --card-bg: rgba(255, 255, 255, 0.42);
+      --hover-bg: rgba(255, 255, 255, 0.58);
+      --shadow: rgba(0, 0, 0, 0.08);
+      --shadow-hover: rgba(0, 0, 0, 0.16);
+    }
+
+    body.mode-dark {
+      --bg: #0b0b0b;
+      --surface: #161616;
+      --text: #f5f5f5;
+      --muted: #9a9a9a;
+      --border: rgba(255, 255, 255, 0.10);
+      --card-bg: rgba(255, 255, 255, 0.05);
+      --hover-bg: rgba(255, 255, 255, 0.09);
+      --shadow: rgba(0, 0, 0, 0.35);
+      --shadow-hover: rgba(0, 0, 0, 0.50);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { min-height: 100vh; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 400;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      transition: background 0.25s ease, color 0.25s ease;
+    }
+
+    .pride-strip {
+      display: flex;
+      height: 5px;
+    }
+    .pride-strip i { flex: 1; }
+    .pride-strip i:nth-child(1) { background: rgb(var(--c1)); }
+    .pride-strip i:nth-child(2) { background: rgb(var(--c2)); }
+    .pride-strip i:nth-child(3) { background: rgb(var(--c3)); }
+    .pride-strip i:nth-child(4) { background: rgb(var(--c4)); }
+    .pride-strip i:nth-child(5) { background: rgb(var(--c5)); }
+    .pride-strip i:nth-child(6) { background: rgb(var(--c6)); }
+    .pride-strip i:nth-child(7) { background: rgb(var(--c7)); }
+    .pride-strip i:nth-child(8) { background: rgb(var(--c8)); }
+    .pride-strip i:nth-child(9) { background: rgb(var(--c9)); }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 5rem;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      padding-bottom: 1.75rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 3rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+    .brand img {
+      width: 72px;
+      height: auto;
+      display: block;
+    }
+    .brand h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+    }
+    .brand p {
+      color: var(--muted);
+      font-size: 0.875rem;
+      font-weight: 400;
+      margin-top: 0.35rem;
+      max-width: 24rem;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .mode-toggle {
+      display: flex;
+      gap: 0.35rem;
+      padding: 0.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+    }
+    .mode-toggle button {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      background: transparent;
+      position: relative;
+      transition: transform 0.15s ease;
+    }
+    .mode-toggle button:hover { transform: scale(1.08); }
+    .mode-toggle button[data-mode="light"] { background: #ffffff; border: 1px solid rgba(0,0,0,0.15); }
+    .mode-toggle button[data-mode="gray"]  { background: #bdbdbd; }
+    .mode-toggle button[data-mode="dark"]  { background: #0a0a0a; border: 1px solid rgba(255,255,255,0.18); }
+    .mode-toggle button[aria-pressed="true"]::after {
+      content: "";
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      border: 1.5px solid var(--text);
+    }
+
+    .user-box {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: right;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.55rem 0.85rem;
+      background: var(--surface);
+    }
+    .user-box strong { color: var(--text); font-weight: 600; }
+
+    a { color: var(--text); text-decoration: none; }
+
+    h2 {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--muted);
+      margin-bottom: 1.25rem;
+      text-align: center;
+    }
+
+    section { margin-bottom: 3.5rem; }
+
+    /* Círculo de serviços: um segmento de 40° por serviço, nas nove cores. */
+    .services-circle-wrap {
+      display: flex;
+      justify-content: center;
+    }
+    .services-circle {
+      width: 100%;
+      max-width: 440px;
+      height: auto;
+      display: block;
+      overflow: visible;
+    }
+
+    .seg { outline: none; cursor: pointer; }
+    .seg:nth-of-type(9n+1) { --r: var(--c1); }
+    .seg:nth-of-type(9n+2) { --r: var(--c2); }
+    .seg:nth-of-type(9n+3) { --r: var(--c3); }
+    .seg:nth-of-type(9n+4) { --r: var(--c4); }
+    .seg:nth-of-type(9n+5) { --r: var(--c5); }
+    .seg:nth-of-type(9n+6) { --r: var(--c6); }
+    .seg:nth-of-type(9n+7) { --r: var(--c7); }
+    .seg:nth-of-type(9n+8) { --r: var(--c8); }
+    .seg:nth-of-type(9n+9) { --r: var(--c9); }
+
+    .seg .arc {
+      fill: none;
+      stroke: rgb(var(--r));
+      stroke-width: 66;
+      transition: stroke-width 0.18s ease;
+    }
+    .seg:hover .arc,
+    .seg:focus-visible .arc { stroke-width: 78; }
+
+    .seg .icon { color: #ffffff; }
+    /* Ícones escuros nos segmentos claros (amarelo e branco). */
+    .seg:nth-of-type(9n+3) .icon,
+    .seg:nth-of-type(9n+9) .icon { color: #1a1a1a; }
+
+    .circle-center .count {
+      fill: var(--text);
+      font-size: 64px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+    .circle-center .label {
+      fill: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+    }
+
+    #seg-tip {
+      position: fixed;
+      z-index: 30;
+      max-width: 260px;
+      padding: 0.6rem 0.8rem;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 10px 30px var(--shadow-hover);
+      font-size: 0.8rem;
+      line-height: 1.45;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.12s ease, transform 0.12s ease;
+    }
+    #seg-tip.visible { opacity: 1; transform: translateY(0); }
+    #seg-tip strong {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.15rem;
+    }
+    #seg-tip span { color: var(--muted); }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+      justify-items: center;
+    }
+    .stat {
+      --r: var(--c7);
+      position: relative;
+      display: block;
+      width: 100%;
+      text-align: center;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-top: 3px solid rgb(var(--r));
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      color: var(--text);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 4px 20px var(--shadow);
+      transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    }
+    .stat:nth-child(2) { --r: var(--c5); }
+    .stat:hover {
+      transform: translateY(-4px);
+      background: var(--hover-bg);
+      border-color: rgba(var(--r), 0.45);
+      box-shadow: 0 12px 32px var(--shadow-hover), 0 0 0 1px rgba(var(--r), 0.12);
+    }
+
+    .stat .value {
+      font-family: "Inter", system-ui, sans-serif;
+      font-size: 2.75rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      color: rgb(var(--r));
+    }
+    .stat .value.unavailable {
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .stat .label {
+      margin-top: 0.7rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding-top: 1.5rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 400;
+      text-align: center;
+    }
+
+    @media (max-width: 560px) {
+      .container { padding: 2rem 1rem 3.5rem; }
+      header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+      .brand { flex-direction: row; align-items: center; }
+      .brand img { width: 56px; }
+      .brand h1 { font-size: 1.6rem; }
+      .controls { width: 100%; justify-content: space-between; }
+      .user-box { text-align: left; }
+      .services-circle { max-width: 320px; }
+      .stats { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="pride-strip" aria-hidden="true">
+    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
+
+  <div class="container">
+    <header>
+      <div class="brand">
+        <img src="/static/logo.svg" alt="Capiba">
+        <div>
+          <h1>Capiba</h1>
+          <p>Cruzamento e Análise de Padrões e Indícios em Bases Abertas</p>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="mode-toggle" aria-label="Tema">
+          <button data-mode="light" aria-pressed="true" title="Claro"></button>
+          <button data-mode="gray" aria-pressed="false" title="Cinza"></button>
+          <button data-mode="dark" aria-pressed="false" title="Escuro"></button>
+        </div>
+        <div class="user-box">
+          {% if user %}
+          Logado como <strong>{{ user.preferred_username }}</strong><br>
+          <a href="/auth/logout">Sair</a>
+          {% else %}
+          Visitante
+          {% endif %}
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h2>Serviços</h2>
+      <div class="services-circle-wrap">
+        <svg class="services-circle" viewBox="0 0 420 420" role="navigation" aria-label="Serviços do cluster">
+          <defs>
+            <!-- Ícones de linha (estilo Feather), um por serviço. -->
+            <symbol id="icon-file-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </symbol>
+            <symbol id="icon-bar-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </symbol>
+            <symbol id="icon-wind" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/>
+            </symbol>
+            <symbol id="icon-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </symbol>
+            <symbol id="icon-hard-drive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="12" x2="2" y2="12"/>
+              <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+              <line x1="6" y1="16" x2="6.01" y2="16"/>
+              <line x1="10" y1="16" x2="10.01" y2="16"/>
+            </symbol>
+            <symbol id="icon-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="18" cy="5" r="3"/>
+              <circle cx="6" cy="12" r="3"/>
+              <circle cx="18" cy="19" r="3"/>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </symbol>
+            <symbol id="icon-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5"/>
+              <line x1="12" y1="19" x2="20" y2="19"/>
+            </symbol>
+            <symbol id="icon-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+            </symbol>
+            <symbol id="icon-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
+            </symbol>
+          </defs>
+
+          {% set icons = {
+            "API Docs": "file-text",
+            "Grafana": "bar-chart",
+            "Airflow": "wind",
+            "Lakekeeper": "database",
+            "MinIO": "hard-drive",
+            "Marquez": "share",
+            "Trino": "terminal",
+            "Keycloak": "key",
+            "Headlamp": "grid"
+          } %}
+          {% for service in services %}
+          {% set mid = loop.index0 * 40 - 70 %}
+          <a class="seg" href="{{ service.url }}" focusable="true"
+             data-name="{{ service.name }}" data-desc="{{ service.description }}"
+             aria-label="{{ service.name }} — {{ service.description }}">
+            <circle class="arc" cx="210" cy="210" r="118" pathLength="360"
+                    stroke-dasharray="38.5 321.5"
+                    stroke-dashoffset="{{ 270.75 + loop.index0 * 40 }}"/>
+            <g transform="rotate({{ mid }} 210 210)">
+              <g transform="translate(328 210)">
+                <g transform="rotate({{ -mid }})">
+                  <use class="icon" href="#icon-{{ icons.get(service.name, 'grid') }}" x="-15" y="-15" width="30" height="30"/>
+                </g>
+              </g>
+            </g>
+          </a>
+          {% endfor %}
+
+          <g class="circle-center" text-anchor="middle">
+            <text class="count" x="210" y="226">{{ services | length }}</text>
+            <text class="label" x="210" y="252">serviços</text>
+          </g>
+        </svg>
+      </div>
+      <div id="seg-tip" role="tooltip" aria-hidden="true">
+        <strong></strong>
+        <span></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Estatísticas do lake</h2>
+      <div class="stats">
+        <div class="stat">
+          {% if stats.contracts is not none %}
+          <div class="value">{{ stats.contracts }}</div>
+          {% else %}
+          <div class="value unavailable">indisponível</div>
+          {% endif %}
+          <div class="label">Contratos (silver)</div>
+        </div>
+        <div class="stat">
+          {% if stats.fraud_signals is not none %}
+          <div class="value">{{ stats.fraud_signals }}</div>
+          {% else %}
+          <div class="value unavailable">indisponível</div>
+          {% endif %}
+          <div class="label">Sinais de fraude detectados</div>
+        </div>
+      </div>
+    </section>
+
+    <footer>Motor de detecção de fraude via dados abertos.</footer>
+  </div>
+
+  <script>
+    (function () {
+      const body = document.body;
+      const buttons = document.querySelectorAll('.mode-toggle button');
+      const saved = localStorage.getItem('capiba-mode') || 'light';
+      setMode(saved);
+
+      buttons.forEach((btn) => {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+      });
+
+      function setMode(mode) {
+        body.classList.remove('mode-light', 'mode-gray', 'mode-dark');
+        body.classList.add('mode-' + mode);
+        localStorage.setItem('capiba-mode', mode);
+        buttons.forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.mode === mode));
+        });
+      }
+    })();
+
+    (function () {
+      const tip = document.getElementById('seg-tip');
+      if (!tip) return;
+      const tipName = tip.querySelector('strong');
+      const tipDesc = tip.querySelector('span');
+
+      function show(seg) {
+        tipName.textContent = seg.dataset.name || '';
+        tipDesc.textContent = seg.dataset.desc || '';
+        tip.classList.add('visible');
+        tip.setAttribute('aria-hidden', 'false');
+      }
+      function hide() {
+        tip.classList.remove('visible');
+        tip.setAttribute('aria-hidden', 'true');
+      }
+      function place(x, y) {
+        const pad = 12;
+        let left = x + 16;
+        let top = y + 16;
+        if (left + tip.offsetWidth + pad > window.innerWidth) left = x - tip.offsetWidth - 16;
+        if (top + tip.offsetHeight + pad > window.innerHeight) top = y - tip.offsetHeight - 16;
+        tip.style.left = Math.max(pad, left) + 'px';
+        tip.style.top = Math.max(pad, top) + 'px';
+      }
+
+      document.querySelectorAll('.seg').forEach((seg) => {
+        seg.addEventListener('pointerenter', (e) => { show(seg); place(e.clientX, e.clientY); });
+        seg.addEventListener('pointermove', (e) => place(e.clientX, e.clientY));
+        seg.addEventListener('pointerleave', hide);
+        seg.addEventListener('focus', () => {
+          show(seg);
+          const r = seg.getBoundingClientRect();
+          place(r.left + r.width / 2, r.top + r.height / 2);
+        });
+        seg.addEventListener('blur', hide);
+      });
+    })();
+  </script>
+</body>
+</html>

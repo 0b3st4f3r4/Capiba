@@ -1,0 +1,62 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "capiba.postgresql.fullname" . }}-init-dwh
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "postgresql" "context" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        # Creates the DWH database/user in the Capiba PostgreSQL. Idempotent:
+        # same psql pattern as the Keycloak/Lakekeeper/Marquez init
+        # containers (which live in the consumer deployments; the DWH has
+        # none, hence this hook job).
+        - name: create-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          env:
+            - name: PGHOST
+              value: {{ include "capiba.postgresql.fullname" . }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.service.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_PASSWORD
+            - name: DWH_DB
+              value: {{ .Values.postgresql.dwh.dbname | quote }}
+            - name: DWH_USER
+              value: {{ .Values.postgresql.dwh.username | quote }}
+            - name: DWH_PASSWORD
+              value: {{ .Values.postgresql.dwh.password | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until pg_isready -q; do sleep 2; done
+              psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DWH_USER}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE USER ${DWH_USER} WITH ENCRYPTED PASSWORD '${DWH_PASSWORD}'"
+              psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DWH_DB}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${DWH_DB} OWNER ${DWH_USER}"
+              psql -d "${DWH_DB}" -v ON_ERROR_STOP=1 \
+                -c "GRANT ALL ON SCHEMA public TO ${DWH_USER}"
+{{- end }}

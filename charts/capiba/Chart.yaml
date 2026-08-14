@@ -1,0 +1,17 @@
+apiVersion: v2
+name: capiba
+description: Helm chart to deploy Capiba on Kubernetes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - capiba
+  - detection
+  - corruption
+  - open-data
+home: https://github.com/0b3st4f3ra/capiba
+sources:
+  - https://github.com/0b3st4f3ra/capiba
+maintainers:
+  - name: Silvano Neto
+    email: dev@silvanoneto.com

@@ -1,0 +1,64 @@
+version: 2
+
+models:
+  - name: contracts_by_agency
+    description: Contracts aggregated by buying agency
+    columns:
+      - name: siafi_code
+        description: SIAFI code of the buying agency
+        tests:
+          - not_null
+      - name: contracts
+        tests:
+          - not_null
+
+  - name: contracts_daily
+    description: Daily contract load volumes and amounts
+    columns:
+      - name: dt
+        description: Ingestion date partition
+        tests:
+          - not_null
+          - unique
+
+  - name: data_quality_daily
+    description: Daily data quality indicators of the silver contracts
+    columns:
+      - name: dt
+        description: Ingestion date partition
+        tests:
+          - not_null
+          - unique
+
+  - name: supplier_stats
+    description: Contract history aggregated by supplier
+    columns:
+      - name: supplier_id
+        description: Supplier identifier (CNPJ or CPF)
+        tests:
+          - not_null
+          - unique
+
+  - name: pod_usage_hourly
+    description: Hourly per-pod CPU/memory usage of the platform namespace
+    columns:
+      - name: hour
+        description: Hour bucket of the usage samples
+        tests:
+          - not_null
+      - name: pod
+        description: Pod name
+        tests:
+          - not_null
+
+  - name: platform_cost_daily
+    description: Daily real usage vs declared requests per pod (idleness)
+    columns:
+      - name: dt
+        description: Usage date
+        tests:
+          - not_null
+      - name: pod
+        description: Pod name
+        tests:
+          - not_null

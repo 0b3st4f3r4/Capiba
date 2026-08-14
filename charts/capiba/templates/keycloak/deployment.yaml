@@ -1,0 +1,126 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "capiba.keycloak.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "keycloak" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.keycloak.replicaCount }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: keycloak
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keycloak
+    spec:
+      initContainers:
+        # Creates the Keycloak database/user in the Capiba PostgreSQL.
+        # Idempotent: same pattern as the Lakekeeper/Marquez databases.
+        - name: create-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          env:
+            - name: PGHOST
+              value: {{ include "capiba.postgresql.fullname" . }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.service.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_PASSWORD
+            - name: KEYCLOAK_DB
+              value: {{ .Values.keycloak.database.dbname | quote }}
+            - name: KEYCLOAK_USER
+              value: {{ .Values.keycloak.database.username | quote }}
+            - name: KEYCLOAK_PASSWORD
+              value: {{ .Values.keycloak.database.password | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until pg_isready -q; do sleep 2; done
+              psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${KEYCLOAK_USER}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE USER ${KEYCLOAK_USER} WITH ENCRYPTED PASSWORD '${KEYCLOAK_PASSWORD}'"
+              psql -tAc "SELECT 1 FROM pg_database WHERE datname='${KEYCLOAK_DB}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${KEYCLOAK_DB} OWNER ${KEYCLOAK_USER}"
+      containers:
+        - name: keycloak
+          image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          # start-dev: embedded HTTP, no TLS (Traefik terminates it);
+          # --import-realm loads the capiba realm on first boot.
+          args: ["start-dev", "--import-realm"]
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://{{ include "capiba.postgresql.fullname" . }}:{{ .Values.postgresql.service.port }}/{{ .Values.keycloak.database.dbname }}"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            # TLS terminates at Traefik: honor X-Forwarded-* for redirects
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            # OIDC issuer pinned with full scheme+port: the issuer is an
+            # identity string (validators compare it literally), not a
+            # reachability address. Reachability is solved by DNS — the
+            # CoreDNS rewrite points this host at the Traefik ClusterIP
+            # (which exposes 8443) for pods; backchannels use the service
+            # DNS (capiba-keycloak:8080) and still get tokens with this same
+            # iss. Pods that call the advertised HTTPS endpoints trust the
+            # self-signed cert via the mounted capiba-tls CA (SSL_CERT_FILE).
+            - name: KC_HOSTNAME
+              value: "https://keycloak.{{ .Values.ingress.domain }}:8443"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            # Cap the JVM heap: the local dev realm is tiny, and the default
+            # heap sizing would grow toward the container limit.
+            - name: JAVA_OPTS_KC_HEAP
+              value: "-Xms64m -Xmx384m"
+          envFrom:
+            - secretRef:
+                name: {{ include "capiba.keycloak.fullname" . }}-secrets
+          ports:
+            - name: http
+              containerPort: {{ .Values.keycloak.service.port }}
+              protocol: TCP
+            - name: management
+              containerPort: 9000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ include "capiba.keycloak.fullname" . }}-realm
+{{- end }}

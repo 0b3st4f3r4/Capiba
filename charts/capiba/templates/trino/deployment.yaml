@@ -1,0 +1,103 @@
+{{- if .Values.trino.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "capiba.trino.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "trino" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.trino.replicaCount }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: trino
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: trino
+    spec:
+      initContainers:
+        - name: wait-for-iceberg-catalog
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "capiba.icebergCatalog.fullname" . }} {{ .Values.icebergCatalog.service.port }}; do
+                echo "Waiting for the Iceberg catalog..."
+                sleep 2
+              done
+      containers:
+        - name: trino
+          image: "{{ .Values.trino.image.repository }}:{{ .Values.trino.image.tag }}"
+          imagePullPolicy: {{ .Values.trino.image.pullPolicy }}
+          args: ["/usr/lib/trino/bin/run-trino"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.trino.service.port }}
+              protocol: TCP
+          # TRINO_MINIO_ACCESS_KEY/TRINO_MINIO_SECRET_KEY (scoped lake user)
+          # referenced by the catalog properties via ${ENV:...} substitution
+          envFrom:
+            - secretRef:
+                name: {{ include "capiba.fullname" . }}-secrets
+          readinessProbe:
+            httpGet:
+              path: /v1/status
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/status
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.trino.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/trino
+            - name: catalog
+              mountPath: /etc/trino/catalog
+            - name: auth
+              mountPath: /etc/trino/auth
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "capiba.trino.fullname" . }}-config
+            items:
+              - key: config.properties
+                path: config.properties
+              - key: password-authenticator.properties
+                path: password-authenticator.properties
+              - key: jvm.config
+                path: jvm.config
+              - key: node.properties
+                path: node.properties
+              - key: log.properties
+                path: log.properties
+        - name: catalog
+          configMap:
+            name: {{ include "capiba.trino.fullname" . }}-config
+            items:
+              - key: bronze.properties
+                path: bronze.properties
+              - key: silver.properties
+                path: silver.properties
+              - key: gold.properties
+                path: gold.properties
+              {{- if .Values.postgresql.enabled }}
+              - key: dwh.properties
+                path: dwh.properties
+              {{- end }}
+        - name: auth
+          secret:
+            secretName: {{ include "capiba.trino.fullname" . }}-auth
+{{- end }}

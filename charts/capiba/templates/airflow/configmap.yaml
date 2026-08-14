@@ -1,0 +1,51 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.airflow.fullname" . }}-config
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "airflow" "context" .) | nindent 4 }}
+data:
+  AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://{{ .Values.airflow.database.username }}:{{ .Values.airflow.database.password }}@{{ default (include "capiba.postgresql.fullname" .) .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.dbname }}"
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+  # SSO: FAB auth manager with OAuth via Keycloak (webserver_config.py in
+  # the -webserver-config ConfigMap). The webserver base URL is the ingress
+  # host so OAuth redirects point at the public address.
+  AIRFLOW__CORE__AUTH_MANAGER: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager"
+  # TLS terminates at Traefik: wrap the FAB Flask app in werkzeug ProxyFix so
+  # OAuth redirect_uris are built with https:// (read from [fab] config, not
+  # webserver_config.py). The api-server also runs with --proxy-headers.
+  AIRFLOW__FAB__ENABLE_PROXY_FIX: "true"
+  AIRFLOW__WEBSERVER__BASE_URL: "https://airflow.{{ .Values.ingress.domain }}:8443"
+  # Airflow 3 uses this URL to build auth redirects (e.g. /api/v2/auth/login).
+  # It must be the public ingress address so the browser follows the redirect.
+  AIRFLOW__API__BASE_URL: "https://airflow.{{ .Values.ingress.domain }}:8443"
+  # Internal URL used by the scheduler/worker to talk to the execution API
+  # server.  The public ingress host does not resolve inside the pod, so point
+  # to the api-server running in the same container on port 8080.  Must end
+  # with /execution/ so task-instances endpoints are reached under that path.
+  AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://localhost:8080/execution/"
+  # Long-running tasks (e.g. PNCP crawl over many pages) may exceed the
+  # default 300s heartbeat timeout.  Raise it and allow more heartbeat
+  # failures before the supervisor kills the worker with SIGKILL.
+  AIRFLOW__SCHEDULER__TASK_INSTANCE_HEARTBEAT_TIMEOUT: "900"
+  AIRFLOW__WORKERS__MAX_FAILED_HEARTBEATS: "5"
+  # Uvicorn worker timeout for the api-server; tasks pushing large XComs or
+  # streaming logs can block the HTTP worker for longer than the 120s
+  # default, causing connection resets during heartbeats.
+  AIRFLOW__API__WORKER_TIMEOUT: "300"
+  # Remote task logs in MinIO (bucket created by scripts/init_buckets.py;
+  # the minio_logs connection is an env var in the airflow-auth secret)
+  AIRFLOW__LOGGING__REMOTE_LOGGING: "true"
+  AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: "s3://capiba-airflow-logs"
+  AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: "minio_logs"
+  AIRFLOW__LOGGING__ENCRYPT_S3_LOGS: "false"
+{{- if .Values.marquez.enabled }}
+  # OpenLineage: task/dataset lineage events go to the Marquez API
+  OPENLINEAGE_URL: "http://{{ include "capiba.marquez.fullname" . }}:{{ .Values.marquez.service.apiPort }}"
+  OPENLINEAGE_NAMESPACE: {{ .Release.Name | quote }}
+{{- end }}
+{{- end }}

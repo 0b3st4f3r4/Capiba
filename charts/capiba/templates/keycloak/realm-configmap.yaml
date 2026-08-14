@@ -1,0 +1,177 @@
+{{- if .Values.keycloak.enabled }}
+# Realm `capiba`: one dev user shared by every SSO UI plus the OIDC clients
+# of each service. Imported by Keycloak at startup (--import-realm); note
+# that Keycloak does NOT re-import an existing realm on upgrades — the
+# dev user is re-synced by the post-install/upgrade hook job
+# (job-sync-user.yaml), but other realm changes (clients, scopes) require a
+# fresh database or manual edits in the admin console.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.keycloak.fullname" . }}-realm
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "keycloak" "context" .) | nindent 4 }}
+data:
+  capiba-realm.json: |
+    {
+      "realm": {{ .Values.keycloak.realm | quote }},
+      "enabled": true,
+      "sslRequired": "none",
+      "clientScopes": [
+        {
+          "name": "catalog",
+          "protocol": "openid-connect",
+          "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "false"
+          }
+        }
+      ],
+      "users": [
+        {
+          "username": {{ .Values.keycloak.devUser.username | quote }},
+          "enabled": true,
+          "emailVerified": true,
+          "email": {{ .Values.keycloak.devUser.email | quote }},
+          "attributes": { "policy": ["consoleAdmin"] },
+          "credentials": [
+            {
+              "type": "password",
+              "value": {{ .Values.keycloak.devUser.password | quote }},
+              "temporary": false
+            }
+          ]
+        }
+      ],
+      "clients": [
+        {
+          "clientId": "capiba-dashboard",
+          "name": "Capiba Dashboard (portal)",
+          "enabled": true,
+          "publicClient": false,
+          "secret": {{ index .Values.keycloak.clientSecrets "capiba-dashboard" | quote }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "https://api.{{ .Values.ingress.domain }}:8443/auth/callback",
+            "http://api.{{ .Values.ingress.domain }}:8088/auth/callback",
+            "http://localhost:8000/auth/callback"
+          ],
+          "webOrigins": ["+"]
+        },
+        {
+          "clientId": "lakekeeper-ui",
+          "name": "Lakekeeper UI",
+          "enabled": true,
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "attributes": { "pkce.code.challenge.method": "S256" },
+          "redirectUris": [
+            "https://iceberg.{{ .Values.ingress.domain }}:8443/*",
+            "http://iceberg.{{ .Values.ingress.domain }}:8088/*",
+            "http://localhost:8181/*"
+          ],
+          "webOrigins": ["+"]
+        },
+        {
+          "clientId": "minio",
+          "name": "MinIO Console",
+          "enabled": true,
+          "publicClient": false,
+          "secret": {{ index .Values.keycloak.clientSecrets "minio" | quote }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "https://minio.{{ .Values.ingress.domain }}:8443/oauth_callback",
+            "http://minio.{{ .Values.ingress.domain }}:8088/oauth_callback",
+            "http://localhost:9001/oauth_callback"
+          ],
+          "webOrigins": ["+"],
+          "protocolMappers": [
+            {
+              "name": "policy",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-attribute-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "policy",
+                "claim.name": "policy",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "grafana",
+          "name": "Grafana",
+          "enabled": true,
+          "publicClient": false,
+          "secret": {{ index .Values.keycloak.clientSecrets "grafana" | quote }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "https://grafana.{{ .Values.ingress.domain }}:8443/login/generic_oauth",
+            "http://grafana.{{ .Values.ingress.domain }}:8088/login/generic_oauth",
+            "http://localhost:3000/login/generic_oauth"
+          ],
+          "webOrigins": ["+"]
+        },
+        {
+          "clientId": "airflow",
+          "name": "Airflow",
+          "enabled": true,
+          "publicClient": false,
+          "secret": {{ index .Values.keycloak.clientSecrets "airflow" | quote }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "https://airflow.{{ .Values.ingress.domain }}:8443/auth/oauth-authorized/keycloak",
+            "http://airflow.{{ .Values.ingress.domain }}:8088/auth/oauth-authorized/keycloak",
+            "http://localhost:8080/auth/oauth-authorized/keycloak"
+          ],
+          "webOrigins": ["+"]
+        },
+        {
+          "clientId": "headlamp",
+          "name": "Headlamp",
+          "enabled": true,
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "attributes": { "pkce.code.challenge.method": "S256" },
+          "redirectUris": ["http://localhost:4466/*"],
+          "webOrigins": ["+"]
+        },
+        {
+          "clientId": "capiba-services",
+          "name": "Capiba machine clients (Trino, pyiceberg)",
+          "enabled": true,
+          "publicClient": false,
+          "secret": {{ index .Values.keycloak.clientSecrets "capiba-services" | quote }},
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "optionalClientScopes": ["catalog"]
+        },
+        {
+          "clientId": "trino",
+          "name": "Trino Web UI",
+          "enabled": true,
+          "publicClient": false,
+          "secret": {{ index .Values.keycloak.clientSecrets "trino" | quote }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "https://trino.{{ .Values.ingress.domain }}:8443/oauth2/callback",
+            "http://trino.{{ .Values.ingress.domain }}:8088/oauth2/callback"
+          ],
+          "webOrigins": ["+"]
+        }
+      ]
+    }
+{{- end }}

@@ -1,0 +1,15 @@
+{{- if .Values.grafana.enabled }}
+# Dashboards as code: every *.json under charts/capiba/dashboards/ is
+# mounted into the file provider directory (/var/lib/grafana/dashboards,
+# provisioned by the dashboards.yaml provider of the provisioning
+# ConfigMap).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.grafana.fullname" . }}-dashboards
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+data:
+{{ (.Files.Glob "dashboards/*.json").AsConfig | indent 2 }}
+{{- end }}

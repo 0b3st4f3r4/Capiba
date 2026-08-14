@@ -1,0 +1,23 @@
+{{- if and .Values.minio.enabled .Values.minio.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "capiba.minio.fullname" . }}-data
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "minio" "context" .) | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.global.dataPath }}
+  storageClassName: ""
+  volumeName: {{ include "capiba.minio.fullname" . }}-data-pv
+  {{- else if or .Values.global.storageClass .Values.minio.persistence.storageClass }}
+  storageClassName: {{ include "capiba.storageClass" (dict "global" .Values.global "persistence" .Values.minio.persistence) }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.minio.persistence.size }}
+{{- end }}

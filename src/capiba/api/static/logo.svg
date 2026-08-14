@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 80" role="img" aria-label="Capiba">
+  <!-- Brutalist wordmark: thick border, bold type, nine pride stripes. -->
+  <rect x="0" y="0" width="280" height="80" fill="none" stroke="currentColor" stroke-width="4"/>
+  <g transform="translate(12, 12)">
+    <rect x="0"  y="0" width="6" height="56" fill="#FF0018"/>
+    <rect x="8"  y="0" width="6" height="56" fill="#FFA52C"/>
+    <rect x="16" y="0" width="6" height="56" fill="#FFFF41"/>
+    <rect x="24" y="0" width="6" height="56" fill="#008018"/>
+    <rect x="32" y="0" width="6" height="56" fill="#0000F9"/>
+    <rect x="40" y="0" width="6" height="56" fill="#86007D"/>
+    <rect x="48" y="0" width="6" height="56" fill="#FF69B4"/>
+    <rect x="56" y="0" width="6" height="56" fill="#000000"/>
+    <rect x="64" y="0" width="6" height="56" fill="#FFFFFF" stroke="currentColor" stroke-width="1"/>
+  </g>
+  <text x="100" y="52" font-family="Arial Black, Helvetica Neue, Helvetica, sans-serif" font-size="42" font-weight="900" letter-spacing="2" fill="currentColor">CAPIBA</text>
+</svg>

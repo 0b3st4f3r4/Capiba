@@ -1,0 +1,27 @@
+# dbt-trino profile for the Capiba lakehouse.
+#
+# dbt runs its SQL through the Trino gateway, which reads/writes the Iceberg
+# tables of the medallion warehouses via the Lakekeeper REST catalog. The
+# target catalog is the gold warehouse; the silver contracts source lives in
+# the silver catalog (see models/staging/sources.yml).
+#
+# Auth is ``none`` (X-Trino-User header only): Trino 483 refuses passwords
+# over insecure HTTP, and dbt always talks to the plain-HTTP service
+# (in-cluster ``capiba-trino:8080`` or the localhost:8081 port-forward).
+# Password auth stays available for clients reaching Trino through the HTTPS
+# ingress.
+#
+# All values come from environment variables (see .env.example); the
+# in-cluster values are injected by the capiba-config ConfigMap.
+capiba:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none
+      host: "{{ env_var('TRINO_HOST', 'localhost') }}"
+      port: "{{ env_var('TRINO_PORT', '8081') | as_number }}"
+      user: "{{ env_var('TRINO_USER', 'capiba') }}"
+      catalog: "{{ env_var('DBT_TRINO_CATALOG', 'gold') }}"
+      schema: capiba
+      threads: 4

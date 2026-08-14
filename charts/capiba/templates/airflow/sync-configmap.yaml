@@ -1,0 +1,67 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.airflow.fullname" . }}-sync-script
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "airflow" "context" .) | nindent 4 }}
+data:
+  sync_artifacts.py: |
+    """Syncs Capiba artifacts (source code and DAGs) from MinIO.
+
+    Downloads the tarballs published by scripts/publish_artifacts.py into
+    SYNC_DEST and extracts them, skipping artifacts whose etag has not
+    changed. Runs once by default; with SYNC_INTERVAL_SECONDS > 0 it
+    loops, keeping the DAGs folder up to date without pod restarts.
+    """
+
+    import os
+    import tarfile
+    import time
+
+    from minio import Minio
+
+    BUCKET = os.getenv("ARTIFACTS_BUCKET", "capiba-artifacts")
+    DEST = os.getenv("SYNC_DEST", "/synced")
+    INTERVAL = int(os.getenv("SYNC_INTERVAL_SECONDS", "0"))
+
+    client = Minio(
+        os.environ["MINIO_ENDPOINT"],
+        access_key=os.environ["MINIO_ACCESS_KEY"],
+        secret_key=os.environ["MINIO_SECRET_KEY"],
+        secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
+    )
+
+
+    def sync() -> None:
+        # Always create the layout so volume mounts never fail, even when
+        # no artifact has been published yet (falls back to baked-in code).
+        os.makedirs(f"{DEST}/src", exist_ok=True)
+        os.makedirs(f"{DEST}/dags", exist_ok=True)
+        os.makedirs(f"{DEST}/dbt", exist_ok=True)
+        for filename in ("code.tar.gz", "dags.tar.gz", "dbt.tar.gz"):
+            key = f"airflow/{filename}"
+            marker = f"{DEST}/.{filename}.etag"
+            try:
+                stat = client.stat_object(BUCKET, key)
+            except Exception as exc:
+                print(f"artifact {key} unavailable: {exc}")
+                continue
+            if os.path.exists(marker) and open(marker).read() == stat.etag:
+                continue
+            tmp = f"/tmp/{filename}"
+            client.fget_object(BUCKET, key, tmp)
+            with tarfile.open(tmp) as tar:
+                tar.extractall(DEST, filter="data")
+            with open(marker, "w") as fh:
+                fh.write(stat.etag)
+            print(f"synced {key} (etag={stat.etag})")
+
+
+    while True:
+        sync()
+        if INTERVAL <= 0:
+            break
+        time.sleep(INTERVAL)
+{{- end }}

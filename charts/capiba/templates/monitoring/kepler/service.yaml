@@ -1,0 +1,21 @@
+{{- if .Values.kepler.enabled }}
+# Convenience service for the Kepler metrics endpoint (Prometheus scrapes
+# the pods directly via pod discovery; the service is for manual checks).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "capiba.kepler.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "kepler" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.kepler.service.type }}
+  selector:
+    {{- include "capiba.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: kepler
+  ports:
+    - name: http
+      port: {{ .Values.kepler.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

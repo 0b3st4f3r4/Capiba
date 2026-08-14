@@ -1,0 +1,33 @@
+{
+  "battery": "D-01",
+  "predictions": {
+    "P1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P2": {
+      "verdict": "refuted",
+      "false_positives": 0,
+      "control_cells": 400,
+      "band": [
+        6,
+        34
+      ]
+    },
+    "P3": {
+      "verdict": "refuted",
+      "planted_hits": 1,
+      "planted_cells": 400,
+      "minimum": 380
+    },
+    "P4": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P5": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "verdict": "refuted"
+}

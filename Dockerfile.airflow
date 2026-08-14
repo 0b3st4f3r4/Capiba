@@ -1,0 +1,42 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# System dependencies to compile native packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python build tools and uv first (cached independently of code)
+RUN pip install --no-cache-dir -U pip uv
+
+# Copy only package metadata and the requirements extractor so dependency
+# installation can be cached even when src/ changes.
+COPY pyproject.toml README.md scripts/extract_requirements.py ./
+
+# Install CPU-only torch explicitly to avoid pulling the giant CUDA wheel.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Extract declared dependencies (including Airflow extras) from pyproject.toml
+# and install them with uv.
+RUN python extract_requirements.py --extra airflow /tmp/requirements.txt && \
+    uv pip install --system --no-cache -r /tmp/requirements.txt
+
+# Copy source code and install the Capiba package itself without reinstalling deps.
+COPY src/ ./src/
+RUN uv pip install --system --no-cache --no-deps .
+
+ENV AIRFLOW_HOME=/opt/airflow
+
+# Creates the Airflow structure with permissions for a non-root user
+RUN useradd -m -s /bin/bash airflow && \
+    mkdir -p /opt/airflow/dags /opt/airflow/logs && \
+    chown -R airflow:airflow /opt/airflow
+
+USER airflow
+
+# The command is defined in the Helm chart (api-server + scheduler +
+# dag-processor + triggerer; NOT `airflow standalone`, which forces the
+# SimpleAuthManager and disables the FAB OAuth/SSO).

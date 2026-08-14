@@ -1,0 +1,27 @@
+{{- if .Values.minio.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.minio.fullname" . }}-cors
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "minio" "context" .) | nindent 4 }}
+data:
+  cors.xml: |
+    <CORSConfiguration>
+      <CORSRule>
+        {{- range .Values.minio.cors.allowedOrigins }}
+        <AllowedOrigin>{{ . }}</AllowedOrigin>
+        {{- end }}
+        <AllowedMethod>GET</AllowedMethod>
+        <AllowedMethod>HEAD</AllowedMethod>
+        <AllowedMethod>POST</AllowedMethod>
+        <AllowedMethod>PUT</AllowedMethod>
+        <AllowedMethod>DELETE</AllowedMethod>
+        <AllowedHeader>*</AllowedHeader>
+        <ExposeHeader>ETag</ExposeHeader>
+        <ExposeHeader>x-amz-version-id</ExposeHeader>
+        <MaxAgeSeconds>3000</MaxAgeSeconds>
+      </CORSRule>
+    </CORSConfiguration>
+{{- end }}

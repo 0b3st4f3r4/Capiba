@@ -1,0 +1,137 @@
+{{- if .Values.keycloak.enabled }}
+# Post-install/upgrade hook: syncs the dev user of the capiba realm with
+# keycloak.devUser (from .env via scripts/helm-upgrade.sh) on every release.
+# --import-realm only applies on first boot (IGNORE_EXISTING), so without
+# this job credential changes in .env never reach the already-imported realm.
+# Uses kcadm.sh from the Keycloak image itself, authenticated with the master
+# realm bootstrap admin (keycloak-secrets).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "capiba.keycloak.fullname" . }}-sync-dev-user
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "keycloak" "context" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keycloak
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sync-dev-user
+          image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          env:
+            - name: KEYCLOAK_URL
+              value: "http://{{ include "capiba.keycloak.fullname" . }}:{{ .Values.keycloak.service.port }}"
+            - name: REALM
+              value: {{ .Values.keycloak.realm | quote }}
+            - name: DEV_USERNAME
+              value: {{ .Values.keycloak.devUser.username | quote }}
+            - name: DEV_PASSWORD
+              value: {{ .Values.keycloak.devUser.password | quote }}
+            - name: DEV_EMAIL
+              value: {{ .Values.keycloak.devUser.email | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.keycloak.fullname" . }}-secrets
+                  key: KC_BOOTSTRAP_ADMIN_USERNAME
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.keycloak.fullname" . }}-secrets
+                  key: KC_BOOTSTRAP_ADMIN_PASSWORD
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              KCADM=/opt/keycloak/bin/kcadm.sh
+
+              login() {
+                "$KCADM" config credentials --server "$KEYCLOAK_URL" --realm master \
+                  --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"
+              }
+
+              # Post-upgrade hooks can start while the Keycloak pod is still
+              # booting (strategy: Recreate); retry the admin login.
+              for attempt in $(seq 1 36); do
+                if login >/dev/null 2>&1; then
+                  break
+                fi
+                echo "Waiting for Keycloak admin login (attempt ${attempt}/36)..."
+                sleep 5
+              done
+              login
+
+              # Realm adjustments required for API-managed users (idempotent):
+              # - VERIFY_PROFILE is dynamically injected at the first login of
+              #   users created/updated through the admin API (Keycloak 26.x
+              #   user profile), which would force a profile-verification page
+              #   on the SSO login; the realm has no custom profile, so the
+              #   required action is disabled.
+              # - unmanagedAttributePolicy=ENABLED allows persisting the
+              #   `policy` attribute (MinIO consoleAdmin claim) through the
+              #   admin API; without it the write is silently dropped.
+              "$KCADM" update "authentication/required-actions/VERIFY_PROFILE" -r "$REALM" -s enabled=false
+              "$KCADM" update users/profile -r "$REALM" -s unmanagedAttributePolicy=ENABLED
+
+              # Prints the first value of a top-level string field from the
+              # pretty-printed JSON emitted by kcadm get.
+              user_field() {
+                sed -n "s/.*\"$1\" *: *\"\([^\"]*\)\".*/\1/p" | head -n 1
+              }
+
+              BY_USERNAME="$("$KCADM" get users -r "$REALM" -q exact=true -q "username=${DEV_USERNAME}")"
+              USER_ID="$(printf '%s' "${BY_USERNAME}" | user_field id)"
+
+              if [ -n "${USER_ID}" ]; then
+                # The update payload never carries "username": the realm user
+                # profile marks it read-only (editUsernameAllowed=false) and
+                # the update would fail with error-user-attribute-read-only.
+                echo "Updating dev user '${DEV_USERNAME}' (${USER_ID})"
+                "$KCADM" update "users/${USER_ID}" -r "$REALM" -s enabled=true -s emailVerified=true \
+                  -s "email=${DEV_EMAIL}" -s "attributes.policy=consoleAdmin"
+              else
+                # The dev user may exist under an older username with the same
+                # email (e.g. imported before KEYCLOAK_DEV_* changed). Rename
+                # is blocked by the user profile, so recreate the user.
+                BY_EMAIL="$("$KCADM" get users -r "$REALM" -q exact=true -q "email=${DEV_EMAIL}")"
+                OLD_ID="$(printf '%s' "${BY_EMAIL}" | user_field id)"
+                if [ -n "${OLD_ID}" ]; then
+                  OLD_NAME="$(printf '%s' "${BY_EMAIL}" | user_field username)"
+                  echo "Recreating dev user: '${OLD_NAME}' -> '${DEV_USERNAME}'"
+                  "$KCADM" delete "users/${OLD_ID}" -r "$REALM"
+                fi
+                echo "Creating dev user '${DEV_USERNAME}'"
+                USER_ID="$("$KCADM" create users -r "$REALM" -s "username=${DEV_USERNAME}" \
+                  -s enabled=true -s emailVerified=true -s "email=${DEV_EMAIL}" \
+                  -s "attributes.policy=consoleAdmin" -i)"
+              fi
+
+              "$KCADM" set-password -r "$REALM" --userid "${USER_ID}" --new-password "${DEV_PASSWORD}"
+
+              # kcadm exits 0 even when the server silently drops the unmanaged
+              # `policy` attribute — fail loudly so the upgrade does not
+              # proceed with a dev user unable to admin the MinIO Console.
+              if ! "$KCADM" get "users/${USER_ID}" -r "$REALM" | grep -q '"policy"'; then
+                echo "ERROR: policy attribute missing after sync of '${DEV_USERNAME}'" >&2
+                exit 1
+              fi
+              echo "Dev user '${DEV_USERNAME}' synced."
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+{{- end }}

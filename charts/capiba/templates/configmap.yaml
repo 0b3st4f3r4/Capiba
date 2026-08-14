@@ -1,0 +1,73 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.fullname" . }}-config
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+
+  # Redis (optional cache; disabled by default — see values.yaml)
+  {{- if .Values.redis.enabled }}
+  REDIS_URL: "redis://{{ include "capiba.redis.fullname" . }}:{{ .Values.redis.service.port }}/0"
+  {{- end }}
+  REDIS_TTL_DEFAULT: "3600"
+
+  # MinIO
+  MINIO_ENDPOINT: "{{ include "capiba.minio.fullname" . }}:{{ .Values.minio.service.apiPort }}"
+  MINIO_ACCESS_KEY: {{ .Values.minio.auth.rootUser | quote }}
+  MINIO_SECURE: "false"
+
+  # Evidence (MinIO)
+  # EVIDENCE_MINIO_* are not set: src/capiba/config.py falls back
+  # to MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY/MINIO_SECURE.
+  # Evidence files live in the bronze bucket (evidence/<type>/<source>/).
+  EVIDENCE_BUCKET: "capiba-bronze"
+
+  # Iceberg REST catalog (Lakekeeper); warehouses map to the medallion buckets
+  ICEBERG_CATALOG_URI: "http://{{ include "capiba.icebergCatalog.fullname" . }}:{{ .Values.icebergCatalog.service.port }}/catalog"
+  ICEBERG_STORAGE_ENDPOINT: "http://{{ include "capiba.minio.fullname" . }}:{{ .Values.minio.service.apiPort }}"
+  # Token endpoint over plain HTTP via the Traefik ingress rewrite (same issuer
+  # URL used by Lakekeeper). pyiceberg uses it with ICEBERG_OAUTH2_CLIENT_ID/SECRET
+  # from capiba-secrets.
+  ICEBERG_OAUTH2_SERVER_URI: "http://keycloak.{{ .Values.ingress.domain }}:8088/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/token"
+  # dbt project synced by the artifacts sidecar
+  DBT_PROJECT_DIR: "/synced/dbt"
+
+  # SSO (Keycloak) — portal capiba-dashboard served by the API.
+  # KEYCLOAK_ISSUER is the internal/plain HTTP endpoint used by the API to fetch
+  # OIDC metadata; the advertised HTTPS endpoints are trusted via the mounted
+  # capiba-tls CA.
+  # KEYCLOAK_PUBLIC_ISSUER is the Traefik ingress URL exposed to browsers.
+  SSO_ENABLED: {{ .Values.keycloak.enabled | quote }}
+  KEYCLOAK_ISSUER: "http://keycloak.{{ .Values.ingress.domain }}:8088/realms/{{ .Values.keycloak.realm }}"
+  KEYCLOAK_PUBLIC_ISSUER: "https://keycloak.{{ .Values.ingress.domain }}:8443/realms/{{ .Values.keycloak.realm }}"
+  PORTAL_DOMAIN: {{ .Values.ingress.domain | quote }}
+
+  # Trino (SQL over the Iceberg catalog; lake maintenance, ad-hoc queries)
+  TRINO_URL: "http://{{ include "capiba.trino.fullname" . }}:{{ .Values.trino.service.port }}"
+  TRINO_HOST: {{ include "capiba.trino.fullname" . | quote }}
+  TRINO_PORT: {{ .Values.trino.service.port | quote }}
+  TRINO_USER: "capiba"
+
+  # ArangoDB
+  ARANGODB_HOST: {{ include "capiba.arangodb.fullname" . | quote }}
+  ARANGODB_PORT: {{ .Values.arangodb.service.port | quote }}
+  ARANGODB_DATABASE: {{ .Values.arangodb.auth.database | default "capiba" | quote }}
+  ARANGODB_GRAPH_NAME: "capiba_graph"
+  ARANGODB_USE_TLS: "false"
+
+  # Public APIs
+  PNCP_API_URL: "https://pncp.gov.br/api/consulta"
+  TRANSPARENCY_API_URL: "https://api.portaldatransparencia.gov.br/api-de-dados"
+  TRANSPARENCY_AGENCY_CODES: "26000"
+  FEDERAL_REVENUE_BASE_URL: "https://arquivos.receitafederal.gov.br/index.php/s/YggdBLfdninEJX9/download"
+
+  # Notification
+  NOTIFICATION_EMAIL_HOST: "smtp.gmail.com"
+  NOTIFICATION_EMAIL_PORT: "587"
+  NOTIFICATION_EMAIL_FROM: "capiba@example.org"
+  NOTIFICATION_EMAIL_TLS: "true"
+{{- end }}

@@ -1,0 +1,135 @@
+{{- if .Values.marquez.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "capiba.marquez.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "marquez" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.marquez.replicaCount }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: marquez
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: marquez
+    spec:
+      initContainers:
+        # Creates the Marquez database/user in the Capiba PostgreSQL.
+        # Idempotent: covers existing installs where the initdb scripts
+        # (which only run on a fresh PGDATA) never created them.
+        - name: create-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          env:
+            - name: PGHOST
+              value: {{ include "capiba.postgresql.fullname" . }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.service.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "capiba.postgresql.fullname" . }}-auth
+                  key: POSTGRES_PASSWORD
+            - name: MARQUEZ_DB
+              value: {{ .Values.marquez.database.dbname | quote }}
+            - name: MARQUEZ_USER
+              value: {{ .Values.marquez.database.username | quote }}
+            - name: MARQUEZ_PASSWORD
+              value: {{ .Values.marquez.database.password | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until pg_isready -q; do sleep 2; done
+              psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${MARQUEZ_USER}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE USER ${MARQUEZ_USER} WITH ENCRYPTED PASSWORD '${MARQUEZ_PASSWORD}'"
+              psql -tAc "SELECT 1 FROM pg_database WHERE datname='${MARQUEZ_DB}'" | grep -q 1 \
+                || psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${MARQUEZ_DB} OWNER ${MARQUEZ_USER}"
+      containers:
+        - name: marquez
+          image: "{{ .Values.marquez.image.repository }}:{{ .Values.marquez.image.tag }}"
+          imagePullPolicy: {{ .Values.marquez.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.marquez.service.apiPort }}
+              protocol: TCP
+            - name: admin
+              containerPort: {{ .Values.marquez.service.adminPort }}
+              protocol: TCP
+          env:
+            - name: MARQUEZ_PORT
+              value: {{ .Values.marquez.service.apiPort | quote }}
+            - name: MARQUEZ_ADMIN_PORT
+              value: {{ .Values.marquez.service.adminPort | quote }}
+            # Production config rendered by the chart (see the configmap);
+            # the image default marquez.dev.yml hardcodes user/password
+            - name: MARQUEZ_CONFIG
+              value: /config/marquez.yml
+          envFrom:
+            - secretRef:
+                name: {{ include "capiba.marquez.fullname" . }}-secrets
+          readinessProbe:
+            httpGet:
+              path: /api/v1/namespaces
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: admin
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.marquez.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+        # UI in the same pod; proxies /api/v1 to the API on localhost
+        - name: marquez-web
+          image: "{{ .Values.marquez.webImage.repository }}:{{ .Values.marquez.webImage.tag }}"
+          imagePullPolicy: {{ .Values.marquez.webImage.pullPolicy }}
+          ports:
+            - name: web
+              containerPort: {{ .Values.marquez.service.webPort }}
+              protocol: TCP
+          env:
+            - name: MARQUEZ_HOST
+              value: localhost
+            - name: MARQUEZ_PORT
+              value: {{ .Values.marquez.service.apiPort | quote }}
+            - name: WEB_PORT
+              value: {{ .Values.marquez.service.webPort | quote }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "capiba.marquez.fullname" . }}-config
+{{- end }}

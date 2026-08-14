@@ -1,0 +1,91 @@
+{{- if and .Values.backup.enabled .Values.api.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "capiba.fullname" . }}-backup
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "backup" "context" .) | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          initContainers:
+            - name: pg-dump
+              image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+              imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+              env:
+                - name: PGHOST
+                  value: {{ include "capiba.postgresql.fullname" . }}
+                - name: PGPORT
+                  value: {{ .Values.postgresql.service.port | quote }}
+              envFrom:
+                - secretRef:
+                    name: {{ include "capiba.postgresql.fullname" . }}-auth
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  export PGPASSWORD="${POSTGRES_PASSWORD}"
+                  mkdir -p /backup/postgresql
+                  for db in {{ .Values.airflow.database.dbname }}{{- if .Values.icebergCatalog.enabled }} {{ .Values.icebergCatalog.database.dbname }}{{- end }}{{- if .Values.keycloak.enabled }} {{ .Values.keycloak.database.dbname }}{{- end }}{{- if .Values.marquez.enabled }} {{ .Values.marquez.database.dbname }}{{- end }}; do
+                    pg_dump -U "${POSTGRES_USER}" -d "${db}" -f "/backup/postgresql/${db}.sql"
+                  done
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+            - name: arango-dump
+              image: "{{ .Values.arangodb.image.repository }}:{{ .Values.arangodb.image.tag }}"
+              imagePullPolicy: {{ .Values.arangodb.image.pullPolicy }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "capiba.fullname" . }}-config
+                - secretRef:
+                    name: {{ include "capiba.fullname" . }}-secrets
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  mkdir -p /backup/arangodb
+                  arangodump \
+                    --server.endpoint "tcp://${ARANGODB_HOST}:${ARANGODB_PORT}" \
+                    --server.username root \
+                    --server.password "${ARANGODB_ROOT_PASSWORD}" \
+                    --server.database "${ARANGODB_DATABASE}" \
+                    --output-directory /backup/arangodb \
+                    --overwrite true
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          containers:
+            - name: upload
+              image: "{{ .Values.minio.mc.image.repository }}:{{ .Values.minio.mc.image.tag }}"
+              imagePullPolicy: {{ .Values.minio.mc.image.pullPolicy }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "capiba.fullname" . }}-config
+                - secretRef:
+                    name: {{ include "capiba.fullname" . }}-secrets
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  mc alias set local "http://${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+                  mc mb --ignore-existing "local/{{ .Values.backup.bucket }}"
+                  mc mirror /backup "local/{{ .Values.backup.bucket }}/dt=$(date +%F)/"
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              emptyDir: {}
+{{- end }}

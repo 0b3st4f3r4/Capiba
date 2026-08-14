@@ -1,0 +1,14 @@
+# Hourly collection of pod CPU/memory usage of the platform namespace
+# (dogfood of the declarative framework): the pod_usage source reads the
+# metrics-server API (or `kubectl top` outside the cluster) and the snapshot
+# lands in the bronze raw_pod_usage Iceberg table, aggregated hourly/daily
+# by the dbt marts pod_usage_hourly/platform_cost_daily.
+name: hourly_pod_usage
+description: Hourly collection of pod resource usage (metrics-server)
+schedule: "7 * * * *" # hourly at minute 7 (UTC)
+window: all # point-in-time snapshot; the window is ignored by the source
+sources:
+  - name: pod_usage
+formula: metrics_collect
+destinations:
+  - lake_bronze # raw audit copy + raw_pod_usage Iceberg table

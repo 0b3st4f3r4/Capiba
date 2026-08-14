@@ -1,0 +1,20 @@
+{{- if and .Values.minio.enabled .Values.minio.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "capiba.minio.fullname" . }}-data-pv
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "minio" "context" .) | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.minio.persistence.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  volumeMode: Filesystem
+  hostPath:
+    path: {{ .Values.global.dataPath | quote }}
+    type: DirectoryOrCreate
+{{- end }}

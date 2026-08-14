@@ -1,0 +1,66 @@
+{{- if .Values.arangodb.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "capiba.arangodb.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "arangodb" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.arangodb.replicaCount }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: arangodb
+  template:
+    metadata:
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: arangodb
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: arangodb
+          image: "{{ .Values.arangodb.image.repository }}:{{ .Values.arangodb.image.tag }}"
+          imagePullPolicy: {{ .Values.arangodb.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8529
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ include "capiba.arangodb.fullname" . }}-auth
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.arangodb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/arangodb3
+            - name: apps
+              mountPath: /var/lib/arangodb3-apps
+      volumes:
+        - name: data
+          {{- if .Values.arangodb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "capiba.arangodb.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: apps
+          emptyDir: {}
+{{- end }}

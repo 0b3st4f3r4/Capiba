@@ -1,0 +1,6 @@
+name: capiba_lakehouse
+version: "1.0.0"
+
+profile: capiba
+
+model-paths: ["models"]

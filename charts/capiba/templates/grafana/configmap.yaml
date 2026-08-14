@@ -1,0 +1,47 @@
+{{- if .Values.grafana.enabled }}
+# Declarative provisioning: the Trino datasource (lake marts) and the
+# dashboard file provider. Replaces the old Metabase API registration
+# script — Grafana picks this up at startup, no post-install job needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.grafana.fullname" . }}-provisioning
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Trino
+        uid: trino
+        type: trino-datasource
+        access: proxy
+        url: "http://{{ include "capiba.trino.fullname" . }}:{{ .Values.trino.service.port }}"
+        isDefault: true
+        editable: true
+        # User-header auth only: Trino 483 refuses passwords over insecure
+        # HTTP (see templates/trino/configmap.yaml).
+        jsonData:
+          user: {{ .Values.trino.auth.internalUser | quote }}
+      {{- if .Values.prometheus.enabled }}
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: "http://{{ include "capiba.prometheus.fullname" . }}:{{ .Values.prometheus.service.port }}"
+        editable: true
+      {{- end }}
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: Capiba
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false
+{{- end }}

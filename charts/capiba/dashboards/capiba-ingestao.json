@@ -1,0 +1,65 @@
+{
+  "uid": "capiba-ingestao",
+  "title": "Capiba — Ingestão (platform_metrics)",
+  "description": "Duração, volume e erros de validação dos pipelines declarativos, lidos da tabela gold platform_metrics (escrita pelo runner a cada run).",
+  "tags": ["capiba", "ingestao"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {"from": "now-30d", "to": "now"},
+  "refresh": "5m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Sobre",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "Fonte: tabela Iceberg `gold.capiba.platform_metrics` (uma linha por step de cada run de pipeline, escrita por `run_pipeline` via `write_platform_metrics`). Consultas via datasource Trino."
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Duração por pipeline/step (últimos 7 dias)",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 4},
+      "datasource": {"type": "trino-datasource", "uid": "trino"},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT dt, run_id, pipeline, step, round(duration_s, 2) AS duration_s FROM gold.capiba.platform_metrics WHERE dt >= format_datetime(current_date - interval '7' day, 'YYYY-MM-dd') ORDER BY dt DESC, pipeline, step"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Linhas processadas por dia/pipeline",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 13},
+      "datasource": {"type": "trino-datasource", "uid": "trino"},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT dt, pipeline, sum(rows_out) AS rows_out FROM gold.capiba.platform_metrics WHERE step LIKE 'crawl_%' OR step LIKE 'collect_%' OR step = 'normalize' GROUP BY dt, pipeline ORDER BY dt DESC"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Erros de validação por dia/pipeline",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 13},
+      "datasource": {"type": "trino-datasource", "uid": "trino"},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT dt, pipeline, sum(validation_errors) AS validation_errors FROM gold.capiba.platform_metrics GROUP BY dt, pipeline HAVING sum(validation_errors) > 0 ORDER BY dt DESC"
+        }
+      ]
+    }
+  ]
+}

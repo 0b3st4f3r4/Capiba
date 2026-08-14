@@ -1,0 +1,130 @@
+{{- if .Values.trino.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "capiba.trino.fullname" . }}-config
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "trino" "context" .) | nindent 4 }}
+data:
+  # Single-node coordinator+worker for the local cluster
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port={{ .Values.trino.service.port }}
+    discovery.uri=http://localhost:{{ .Values.trino.service.port }}
+    # The UI/API is reached through the Traefik ingress, which adds
+    # X-Forwarded-* headers — accept them (default is to reject with 406).
+    http-server.process-forwarded=true
+    # SSO: Web UI uses Keycloak OIDC; the password file serves clients that
+    # come through the HTTPS ingress (secure requests).
+    http-server.authentication.type=PASSWORD,OAUTH2
+    # Trino 483 never accepts passwords over plain HTTP: insecure requests go
+    # through the InsecureAuthenticator (X-Trino-User header only). In-cluster
+    # machine clients (dbt, pipeline tasks, Grafana) authenticate that way;
+    # the public path is HTTPS via the Traefik ingress (process-forwarded
+    # above). Dev-cluster only — in production terminate TLS end-to-end.
+    http-server.authentication.allow-insecure-over-http=true
+    web-ui.authentication.type=oauth2
+    internal-communication.shared-secret=${ENV:TRINO_INTERNAL_SHARED_SECRET}
+    # OAuth2/OIDC against the Capiba Keycloak realm.  URLs use the in-cluster
+    # HTTP endpoint for token/JWKS validation; the issuer stays the public
+    # HTTPS one pinned by KC_HOSTNAME.
+    http-server.authentication.oauth2.oidc.discovery=false
+    http-server.authentication.oauth2.issuer=https://keycloak.{{ .Values.ingress.domain }}:8443/realms/{{ .Values.keycloak.realm }}
+    http-server.authentication.oauth2.auth-url=https://keycloak.{{ .Values.ingress.domain }}:8443/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/auth
+    http-server.authentication.oauth2.token-url=http://{{ include "capiba.keycloak.fullname" . }}:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/token
+    http-server.authentication.oauth2.jwks-url=http://{{ include "capiba.keycloak.fullname" . }}:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/certs
+    http-server.authentication.oauth2.client-id=${ENV:TRINO_OAUTH2_CLIENT_ID}
+    http-server.authentication.oauth2.client-secret=${ENV:TRINO_OAUTH2_CLIENT_SECRET}
+    http-server.authentication.oauth2.scopes=openid
+    http-server.authentication.oauth2.principal-field=preferred_username
+  # Local password-file authenticator for machine clients.
+  password-authenticator.properties: |
+    password-authenticator.name=file
+    file.password-file=/etc/trino/auth/password.db
+  jvm.config: |
+    -server
+    -Xmx768M
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+    -XX:PerMethodRecompilationCutoff=10000
+    -XX:PerBytecodeRecompilationCutoff=10000
+    -Djdk.attach.allowAttachSelf=true
+    -Djdk.nio.maxCachedBufferSize=2000000
+    -Dfile.encoding=UTF-8
+  node.properties: |
+    node.environment=capiba
+  log.properties: |
+    io.trino=INFO
+  # One catalog per medallion warehouse of the Lakekeeper Iceberg REST
+  # catalog. The scoped MinIO user (lake buckets only) comes from the
+  # environment (capiba-secrets); Lakekeeper also vends temporary STS
+  # credentials per table.
+  bronze.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://{{ include "capiba.icebergCatalog.fullname" . }}:{{ .Values.icebergCatalog.service.port }}/catalog
+    # Lakekeeper requires authentication (Keycloak OIDC): the capiba-services
+    # service account token is fetched over plain in-cluster HTTP (the token
+    # issuer stays https — KC_HOSTNAME is pinned; only the backchannel
+    # differs).
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=${ENV:ICEBERG_OAUTH2_CREDENTIAL}
+    iceberg.rest-catalog.oauth2.server-uri=http://{{ include "capiba.keycloak.fullname" . }}:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/token
+    iceberg.rest-catalog.warehouse=bronze
+    fs.native-s3.enabled=true
+    s3.endpoint=http://{{ include "capiba.minio.fullname" . }}:{{ .Values.minio.service.apiPort }}
+    s3.path-style-access=true
+    s3.region={{ .Values.global.s3Region | default "us-east-1" }}
+    s3.aws-access-key=${ENV:TRINO_MINIO_ACCESS_KEY}
+    s3.aws-secret-key=${ENV:TRINO_MINIO_SECRET_KEY}
+  silver.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://{{ include "capiba.icebergCatalog.fullname" . }}:{{ .Values.icebergCatalog.service.port }}/catalog
+    # Lakekeeper requires authentication (Keycloak OIDC): the capiba-services
+    # service account token is fetched over plain in-cluster HTTP (the token
+    # issuer stays https — KC_HOSTNAME is pinned; only the backchannel
+    # differs).
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=${ENV:ICEBERG_OAUTH2_CREDENTIAL}
+    iceberg.rest-catalog.oauth2.server-uri=http://{{ include "capiba.keycloak.fullname" . }}:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/token
+    iceberg.rest-catalog.warehouse=silver
+    fs.native-s3.enabled=true
+    s3.endpoint=http://{{ include "capiba.minio.fullname" . }}:{{ .Values.minio.service.apiPort }}
+    s3.path-style-access=true
+    s3.region={{ .Values.global.s3Region | default "us-east-1" }}
+    s3.aws-access-key=${ENV:TRINO_MINIO_ACCESS_KEY}
+    s3.aws-secret-key=${ENV:TRINO_MINIO_SECRET_KEY}
+  gold.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://{{ include "capiba.icebergCatalog.fullname" . }}:{{ .Values.icebergCatalog.service.port }}/catalog
+    # Lakekeeper requires authentication (Keycloak OIDC): the capiba-services
+    # service account token is fetched over plain in-cluster HTTP (the token
+    # issuer stays https — KC_HOSTNAME is pinned; only the backchannel
+    # differs).
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=${ENV:ICEBERG_OAUTH2_CREDENTIAL}
+    iceberg.rest-catalog.oauth2.server-uri=http://{{ include "capiba.keycloak.fullname" . }}:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm }}/protocol/openid-connect/token
+    iceberg.rest-catalog.warehouse=gold
+    fs.native-s3.enabled=true
+    s3.endpoint=http://{{ include "capiba.minio.fullname" . }}:{{ .Values.minio.service.apiPort }}
+    s3.path-style-access=true
+    s3.region={{ .Values.global.s3Region | default "us-east-1" }}
+    s3.aws-access-key=${ENV:TRINO_MINIO_ACCESS_KEY}
+    s3.aws-secret-key=${ENV:TRINO_MINIO_SECRET_KEY}
+  {{- if .Values.postgresql.enabled }}
+  # Complementary data warehouse in the Capiba PostgreSQL: dbt writes the
+  # serving models (dbt/models/serving/) here through this catalog.
+  dwh.properties: |
+    connector.name=postgresql
+    connection-url=jdbc:postgresql://{{ include "capiba.postgresql.fullname" . }}:{{ .Values.postgresql.service.port }}/{{ .Values.postgresql.dwh.dbname }}
+    connection-user=${ENV:TRINO_POSTGRES_USER}
+    connection-password=${ENV:TRINO_POSTGRES_PASSWORD}
+  {{- end }}
+{{- end }}

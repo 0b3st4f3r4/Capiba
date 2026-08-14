@@ -1,0 +1,130 @@
+Capiba instalado no namespace {{ .Release.Namespace }} com release {{ .Release.Name }}.
+
+{{- if .Values.ingress.enabled }}
+{{- $scheme := ternary "https" "http" .Values.ingress.tls.enabled }}
+{{- $port := ternary "8443" "8088" .Values.ingress.tls.enabled }}
+Acesso via ingress Traefik (DaemonSet, hostPorts 8088/8443; a porta 80 é do
+Apache do host). Mapeie os hosts no /etc/hosts com scripts/setup.sh:
+{{- if .Values.ingress.tls.enabled }}
+
+TLS com certificado self-signed (scripts/gen-certs.sh, secret
+{{ .Values.ingress.tls.secretName }}): aceite a exceção de segurança no
+browser. HTTP na 8088 segue disponível (sem redirect).
+{{- end }}
+
+  {{- $domain := .Values.ingress.domain }}
+  {{- if .Values.api.enabled }}
+  Portal:     {{ $scheme }}://api.{{ $domain }}:{{ $port }} (capiba-dashboard — login SSO)
+  {{- end }}
+  {{- if .Values.keycloak.enabled }}
+  Keycloak:   http://keycloak.{{ $domain }}:8088 (admin: {{ .Values.keycloak.admin.username }})
+  {{- end }}
+  {{- if .Values.grafana.enabled }}
+  Grafana:    {{ $scheme }}://grafana.{{ $domain }}:{{ $port }}
+  {{- end }}
+  {{- if .Values.airflow.enabled }}
+  Airflow:    {{ $scheme }}://airflow.{{ $domain }}:{{ $port }}
+  {{- end }}
+  {{- if .Values.marquez.enabled }}
+  Marquez:    {{ $scheme }}://marquez.{{ $domain }}:{{ $port }}
+  {{- end }}
+  {{- if .Values.icebergCatalog.enabled }}
+  Lakekeeper: {{ $scheme }}://iceberg.{{ $domain }}:{{ $port }}/ui/
+  {{- end }}
+  {{- if .Values.minio.enabled }}
+  MinIO UI:   {{ $scheme }}://minio.{{ $domain }}:{{ $port }}  (S3 API: {{ $scheme }}://s3.{{ $domain }}:{{ $port }})
+  {{- end }}
+  {{- if .Values.trino.enabled }}
+  Trino:      {{ $scheme }}://trino.{{ $domain }}:{{ $port }} (catálogos: bronze, silver, gold)
+  {{- end }}
+
+{{- if .Values.keycloak.enabled }}
+SSO (Keycloak, realm {{ .Values.keycloak.realm }}): portal, Grafana, Airflow,
+MinIO Console, Lakekeeper UI e Headlamp fazem login com o mesmo usuário.
+  Usuário dev: {{ .Values.keycloak.devUser.username }} / {{ .Values.keycloak.devUser.password }}
+  Keycloak admin: http://keycloak.{{ $domain }}:8088 ({{ .Values.keycloak.admin.username }} / {{ .Values.keycloak.admin.password }})
+  O issuer OIDC é HTTPS na 8443 — os pods confiam no cert self-signed do
+  ingress via CA capiba-tls montada pela chart; o rewrite de CoreDNS
+  (scripts/cluster.sh, passo 4) resolve keycloak.{{ $domain }} para o
+  ClusterIP do Traefik.
+Fallbacks locais (login direto, sem SSO):
+  MinIO root:  {{ .Values.minio.auth.rootUser }} / {{ .Values.minio.auth.rootPassword }}
+  Grafana admin: {{ .Values.grafana.auth.adminUser }} / {{ .Values.grafana.auth.adminPassword }}
+  Headlamp token: make dashboard-token
+{{- end }}
+
+Alternativa (clientes de linha de comando): make port-forward, com as portas
+locais api=8000, grafana=3000, marquez=3001, arangodb=8529, minio=9000/9001,
+iceberg-catalog=8181, keycloak=8182, airflow=8080, trino=8081.
+{{- else }}
+Serviços disponíveis:
+
+{{- if .Values.api.enabled }}
+  API Capiba:
+    kubectl port-forward svc/{{ include "capiba.api.fullname" . }} 8000:8000 -n {{ .Release.Namespace }}
+    URL: http://localhost:8000
+{{- end }}
+
+{{- if .Values.grafana.enabled }}
+  Grafana:
+    kubectl port-forward svc/{{ include "capiba.grafana.fullname" . }} 3000:3000 -n {{ .Release.Namespace }}
+    URL: http://localhost:3000
+{{- end }}
+
+{{- if .Values.minio.enabled }}
+  MinIO Console:
+    kubectl port-forward svc/{{ include "capiba.minio.fullname" . }} 9001:9001 -n {{ .Release.Namespace }}
+    URL: http://localhost:9001
+    Usuário: {{ .Values.minio.auth.rootUser }}
+{{- end }}
+
+{{- if .Values.arangodb.enabled }}
+  ArangoDB Web UI:
+    kubectl port-forward svc/{{ include "capiba.arangodb.fullname" . }} 8529:8529 -n {{ .Release.Namespace }}
+    URL: http://localhost:8529
+{{- end }}
+
+{{- if .Values.airflow.enabled }}
+  Airflow:
+    kubectl port-forward svc/{{ include "capiba.airflow.fullname" . }} 8080:8080 -n {{ .Release.Namespace }}
+    URL: http://localhost:8080
+{{- end }}
+
+{{- if .Values.marquez.enabled }}
+  Marquez (catálogo de dados / lineage):
+    kubectl port-forward svc/{{ include "capiba.marquez.fullname" . }} 3001:3000 -n {{ .Release.Namespace }}
+    URL: http://localhost:3001
+{{- end }}
+
+{{- if .Values.trino.enabled }}
+  Trino (SQL sobre o lake):
+    kubectl port-forward svc/{{ include "capiba.trino.fullname" . }} 8081:8080 -n {{ .Release.Namespace }}
+    URL: http://localhost:8081 (catálogos: bronze, silver, gold)
+{{- end }}
+
+{{- if .Values.icebergCatalog.enabled }}
+  Iceberg REST catalog (Lakekeeper):
+    kubectl port-forward svc/{{ include "capiba.icebergCatalog.fullname" . }} 8181:8181 -n {{ .Release.Namespace }}
+    URL: http://localhost:8181 (UI em /ui/, API em /catalog)
+{{- end }}
+{{- end }}
+
+Verifique o status dos pods:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Persistência:
+  {{ .Values.global.dataPath }} é a raiz do MinIO: cada subdiretório de
+  primeiro nível é um bucket (capiba-bronze, capiba-silver, capiba-gold,
+  capiba-artifacts, capiba-airflow-logs, capiba-backups).
+  ArangoDB e PostgreSQL usam PVs hostPath gerenciados pelo chart em:
+    {{ .Values.global.servicesDataPath }}
+  Compacte as pastas data/ e services/ para migrar/distribuir o
+  ambiente (ex: via FSX).
+
+  Buckets: crie o layout completo com "make init-buckets".
+  Código e DAGs do Airflow: publique com "make publish-artifacts"
+  (bucket capiba-artifacts, sem rebuild de imagem).
+
+  Todos os PVCs possuem helm.sh/resource-policy: keep, portanto NÃO são
+  removidos por "helm uninstall". Os PVs hostPath usam Retain, preservando
+  os arquivos no host mesmo após exclusão do PVC.

@@ -1,0 +1,72 @@
+# Pre-commit hooks for the Capiba project
+# Install with: make pre-commit
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        exclude: ^charts/.*/templates/
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ["--check-only", "--diff"]
+        files: ^(src/|tests/|scripts/)/
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        files: ^(src/|tests/|scripts/)/
+      - id: ruff-format
+        files: ^(src/|tests/|scripts/)/
+
+  # Security scan with bandit.
+  # Runs only when Python files change; requires the local .venv (make install).
+  - repo: local
+    hooks:
+      - id: bandit
+        name: bandit security scan
+        entry: .venv/bin/bandit -r src/
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # Type checking (mypy + basedpyright).
+  # Runs only when Python files change; requires the local .venv (make install).
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy type check
+        entry: .venv/bin/mypy src/
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: basedpyright
+        name: basedpyright type check
+        entry: .venv/bin/basedpyright
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # Test suite with coverage floor (fail_under = 85 in pyproject.toml).
+  # Runs only when Python files change; requires the local .venv (make install).
+  - repo: local
+    hooks:
+      - id: pytest-cov
+        name: pytest with coverage floor (85%)
+        entry: .venv/bin/python -m pytest tests/ -q --cov=src/capiba --cov-report=term-missing
+        language: system
+        types: [python]
+        pass_filenames: false

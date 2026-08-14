@@ -1,0 +1,26 @@
+# Daily ingestion of public contracts (declarative equivalent of the
+# legacy daily_ingestion DAG): PNCP + Transparency Portal -> bronze raw
+# payloads -> normalized silver contracts -> ArangoDB graph, with a run
+# report in gold and dbt/detect as post steps.
+name: daily_ingestion
+description: Daily ingestion of public contracts and bids
+schedule: "0 6 * * *" # 06:00 UTC
+window: previous_day # default window for the pipeline's sources
+sources:
+  - name: pncp # crawls the previous day (pipeline default window)
+  - name: transparency
+    # The Transparency Portal is crawled for the whole current month
+    # (daily incremental re-fetch), overriding the pipeline default —
+    # mirrors the legacy task_crawl_transparency behavior.
+    window: current_month
+formula: contracts_default
+validate:
+  ruleset: contract_rules
+destinations:
+  - lake_bronze # raw audit copies + raw_<source> Iceberg tables
+  - lake_silver # normalized contracts Iceberg table
+  - arangodb_graph # entities/relationships upserted into ArangoDB
+  - gold_report # run report object in the gold bucket
+post_steps:
+  - dbt_run # gold Iceberg marts from the silver contracts table
+  - detect # statistical fraud signals into gold fraud_signals

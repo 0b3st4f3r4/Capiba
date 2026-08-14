@@ -1,0 +1,14 @@
+component,pod_pattern,request_cpu_millicores,request_memory_bytes
+api,capiba-api-%,100,268435456
+postgresql,capiba-postgresql-%,100,268435456
+arangodb,capiba-arangodb-%,250,402653184
+redis,capiba-redis-%,100,134217728
+minio,capiba-minio-%,100,268435456
+iceberg-catalog,capiba-iceberg-catalog-%,50,134217728
+keycloak,capiba-keycloak-%,250,402653184
+grafana,capiba-grafana-%,100,201326592
+airflow,capiba-airflow-%,500,1073741824
+trino,capiba-trino-%,250,805306368
+marquez,capiba-marquez-%,100,402653184
+prometheus,capiba-prometheus-%,100,201326592
+kepler,capiba-kepler-%,25,67108864

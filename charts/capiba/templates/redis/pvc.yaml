@@ -1,0 +1,23 @@
+{{- if and .Values.redis.enabled .Values.redis.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "capiba.redis.fullname" . }}-data
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "redis" "context" .) | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.global.servicesDataPath }}
+  storageClassName: ""
+  volumeName: {{ include "capiba.redis.fullname" . }}-data-pv
+  {{- else if or .Values.global.storageClass .Values.redis.persistence.storageClass }}
+  storageClassName: {{ include "capiba.storageClass" (dict "global" .Values.global "persistence" .Values.redis.persistence) }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size }}
+{{- end }}

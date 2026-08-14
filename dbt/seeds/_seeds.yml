@@ -1,0 +1,26 @@
+version: 2
+
+seeds:
+  - name: requests
+    description: >-
+      Resource requests (CPU millicores, memory bytes) per platform
+      component, transcribed from charts/capiba/values.yaml. REGENERATE
+      this seed whenever the chart requests change (and rerun
+      `dbt seed`): the platform_cost_daily mart joins pod_usage_hourly
+      against it via the pod_pattern LIKE expression.
+    columns:
+      - name: component
+        description: Platform component name
+        tests:
+          - not_null
+          - unique
+      - name: pod_pattern
+        description: LIKE pattern matching the component pods
+        tests:
+          - not_null
+      - name: request_cpu_millicores
+        tests:
+          - not_null
+      - name: request_memory_bytes
+        tests:
+          - not_null

@@ -1,0 +1,230 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "capiba.airflow.fullname" . }}
+  labels:
+    {{- include "capiba.labels" . | nindent 4 }}
+    {{- include "capiba.componentLabels" (dict "component" "airflow" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.airflow.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "capiba.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: airflow
+  template:
+    metadata:
+      annotations:
+        # Roll pods automatically when the config/secret content changes
+        # (secret/configmap updates alone do not trigger a rollout)
+        checksum/config: {{ include (print $.Template.BasePath "/airflow/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/airflow/secret.yaml") . | sha256sum }}
+        # Shared capiba-config/capiba-secrets also feed this pod (envFrom)
+        checksum/shared-config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/shared-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/webserver-config: {{ include (print $.Template.BasePath "/airflow/webserver-config.yaml") . | sha256sum }}
+      labels:
+        {{- include "capiba.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: airflow
+    spec:
+      serviceAccountName: {{ include "capiba.airflow.fullname" . }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "capiba.postgresql.fullname" . }} {{ .Values.postgresql.service.port }}; do
+                echo "Aguardando PostgreSQL..."
+                sleep 2
+              done
+        # Build a CA bundle that trusts both public CAs (required by crawlers
+        # that hit public HTTPS APIs such as pncp.gov.br) and the self-signed
+        # capiba-tls CA (required for internal *.capiba.local ingress endpoints).
+        - name: combine-ca
+          image: "{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mkdir -p /etc/ssl/certs
+              cat /etc/capiba-tls/tls.crt > /etc/ssl/certs/ca-bundle.crt
+              cat "$(python -c 'import certifi; print(certifi.where())')" >> /etc/ssl/certs/ca-bundle.crt
+          volumeMounts:
+            - name: capiba-tls-ca
+              mountPath: /etc/capiba-tls
+              readOnly: true
+            - name: combined-ca
+              mountPath: /etc/ssl/certs
+        - name: sync-artifacts
+          image: "{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          env:
+            - name: ARTIFACTS_BUCKET
+              value: {{ .Values.airflow.artifacts.bucket | quote }}
+            - name: SYNC_DEST
+              value: /synced
+          envFrom:
+            - configMapRef:
+                name: {{ include "capiba.fullname" . }}-config
+            - secretRef:
+                name: {{ include "capiba.fullname" . }}-secrets
+          command:
+            - python
+            - /sync-script/sync_artifacts.py
+          volumeMounts:
+            - name: synced
+              mountPath: /synced
+            - name: sync-script
+              mountPath: /sync-script
+        - name: airflow-db-init
+          image: "{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          env:
+            - name: PYTHONPATH
+              value: /synced/src
+          envFrom:
+            - configMapRef:
+                name: {{ include "capiba.airflow.fullname" . }}-config
+            - secretRef:
+                name: {{ include "capiba.airflow.fullname" . }}-auth
+            {{- if .Values.api.enabled }}
+            - configMapRef:
+                name: {{ include "capiba.fullname" . }}-config
+            - secretRef:
+                name: {{ include "capiba.fullname" . }}-secrets
+            {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              airflow db migrate
+          volumeMounts:
+            - name: synced
+              mountPath: /opt/airflow/dags
+              subPath: dags
+            - name: logs
+              mountPath: /opt/airflow/logs
+      containers:
+        - name: airflow
+          image: "{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          # NOT `airflow standalone`: it forces SimpleAuthManager, ignoring the
+          # configured FAB auth manager (OAuth/SSO). Run the components
+          # explicitly in one container so the pod's resource limit covers all.
+          command:
+            - sh
+            - -ec
+          args:
+            - |
+              airflow scheduler &
+              airflow dag-processor &
+              airflow triggerer &
+              # --proxy-headers: TLS terminates at Traefik; trust the forwarded
+              # headers so OAuth redirect_uris are built with https://.
+              exec airflow api-server --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PYTHONPATH
+              value: /synced/src
+            # Trust both the self-signed ingress CA (capiba-tls) and the public
+            # CA bundle. The combined bundle is built by the `combine-ca` init
+            # container. This lets crawlers call public HTTPS APIs (e.g.
+            # pncp.gov.br) while still trusting internal *.capiba.local endpoints
+            # advertised by the OIDC issuer metadata.
+            - name: SSL_CERT_FILE
+              value: /etc/ssl/certs/ca-bundle.crt
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/ssl/certs/ca-bundle.crt
+          envFrom:
+            - configMapRef:
+                name: {{ include "capiba.airflow.fullname" . }}-config
+            - secretRef:
+                name: {{ include "capiba.airflow.fullname" . }}-auth
+            {{- if .Values.api.enabled }}
+            - configMapRef:
+                name: {{ include "capiba.fullname" . }}-config
+            - secretRef:
+                name: {{ include "capiba.fullname" . }}-secrets
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /api/v2/monitor/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v2/monitor/health
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.airflow.resources | nindent 12 }}
+          volumeMounts:
+            - name: synced
+              mountPath: /opt/airflow/dags
+              subPath: dags
+            - name: synced
+              mountPath: /synced
+            - name: logs
+              mountPath: /opt/airflow/logs
+            - name: webserver-config
+              mountPath: /opt/airflow/webserver_config.py
+              subPath: webserver_config.py
+            - name: capiba-tls-ca
+              mountPath: /etc/capiba-tls
+              readOnly: true
+            - name: combined-ca
+              mountPath: /etc/ssl/certs
+              readOnly: true
+        - name: artifact-sync
+          image: "{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          env:
+            - name: ARTIFACTS_BUCKET
+              value: {{ .Values.airflow.artifacts.bucket | quote }}
+            - name: SYNC_DEST
+              value: /synced
+            - name: SYNC_INTERVAL_SECONDS
+              value: {{ .Values.airflow.artifacts.syncIntervalSeconds | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "capiba.fullname" . }}-config
+            - secretRef:
+                name: {{ include "capiba.fullname" . }}-secrets
+          command:
+            - python
+            - /sync-script/sync_artifacts.py
+          volumeMounts:
+            - name: synced
+              mountPath: /synced
+            - name: sync-script
+              mountPath: /sync-script
+      volumes:
+        - name: synced
+          emptyDir: {}
+        - name: sync-script
+          configMap:
+            name: {{ include "capiba.airflow.fullname" . }}-sync-script
+        - name: logs
+          emptyDir: {}
+        - name: webserver-config
+          configMap:
+            name: {{ include "capiba.airflow.fullname" . }}-webserver-config
+        - name: capiba-tls-ca
+          secret:
+            secretName: capiba-tls
+            items:
+              - key: tls.crt
+                path: tls.crt
+        - name: combined-ca
+          emptyDir: {}
+{{- end }}
