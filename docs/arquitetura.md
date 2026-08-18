@@ -3,7 +3,12 @@
 ## Visão geral
 
 Capiba é um motor de captura de farsa institucional que transforma
-canais de dados públicos em sinais de detecção de corrupção.
+canais de dados públicos em sinais de detecção de corrupção, a serviço
+do **jornalismo de dados comunitário**: os sinais existem para embasar
+investigações de interesse público, não como fim em si mesmos. O processo
+editorial completo — obter, compreender, verificar, documentar, analisar,
+confirmar e publicar — está mapeado para os componentes da plataforma em
+`docs/jornalismo_dados.md`.
 
 No limite, o objetivo é construir **comunidades de dados**: empresas,
 clientes e instituições públicas contribuem com o compartilhamento de dados

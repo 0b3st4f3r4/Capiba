@@ -2,11 +2,13 @@
 
 **C**ruzamento e **A**nálise de **P**adrões e **I**ndícios em **B**ases **A**bertas.
 
-Motor de captura de farsa institucional via dados abertos.
+Motor de captura de farsa institucional via dados abertos, a serviço do jornalismo de dados comunitário.
 
 ## Objetivo
 
 Transformar canais de dados públicos em motores de detecção de corrupção e farsa em quaisquer instituições da sociedade civil. Coordenação via internet entre instituições públicas, privadas ou de caráter misto, para abertura e compartilhamento de dados com finalidade cooperativa na produção de investigações, denúncias e monitoramentos de interesse comum.
+
+O produto final é **jornalismo de dados a serviço da comunidade**: coleta, verificação, cruzamento e análise reproduzíveis de bases abertas, publicados como investigações de interesse público que o cidadão consegue entender — a plataforma organiza a evidência, a narrativa e a apuração são trabalho editorial. O método completo está em `docs/jornalismo_dados.md`.
 
 No limite, o projeto constrói **comunidades de dados**: empresas, clientes e instituições públicas contribuem com o compartilhamento de dados para formar **inteligência soberana em território nacional** — uma alternativa própria e comunitária às plataformas estrangeiras de imperialismo de dados e hipervigilância global.
 
@@ -86,6 +88,8 @@ Código em `src/capiba/`, organizado por vertical:
 
 ## Documentação
 
+- `docs/jornalismo_dados.md` — método de jornalismo de dados sobre a plataforma
+- `docs/oportunidades.md` — backlog de evolução orientado a jornalismo comunitário
 - `docs/arquitetura.md` — arquitetura do sistema
 - `docs/operadores.md` — catálogo de operadores de detecção
 - `docs/api.md` — especificação da API de sinais

@@ -4,7 +4,9 @@
 
 Capiba — **C**ruzamento e **A**nálise de **P**adrões e **I**ndícios em **B**ases **A**bertas.
 
-Motor de detecção de fraude via dados abertos. A missão de longo prazo é
+Motor de detecção de fraude via dados abertos, a serviço do
+**jornalismo de dados comunitário** (processo editorial em
+`docs/jornalismo_dados.md`). A missão de longo prazo é
 construir **comunidades de dados** — empresas, clientes e instituições
 públicas compartilhando dados para formar inteligência soberana em
 território nacional, como alternativa comunitária ao imperialismo de dados
@@ -104,6 +106,12 @@ inclusive negativos — publicados em `docs/results/R-D-*.md`. Detalhes em
 Governança de dados (mapeamento DAMA-DMBOK para os componentes, papéis de
 data steward/custodian, régua regulatória LGPD/LAI e visão de federação):
 `docs/governanca.md`.
+
+Jornalismo de dados a serviço da comunidade (processo editorial — obter,
+compreender, verificar, documentar, analisar, confirmar, publicar —
+mapeado para os componentes da plataforma): `docs/jornalismo_dados.md`.
+O backlog de evolução orientado a essa missão (itens dimensionados por
+sessão, com critério de aceitação) está em `docs/oportunidades.md`.
 
 Acesso às UIs sem port-forward: ingress Traefik (DaemonSet, hostPorts
 8088/8443 — a porta 80 é do Apache do host) em

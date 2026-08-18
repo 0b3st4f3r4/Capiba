@@ -10,7 +10,10 @@ ditas explicitamente.
 O contexto importa: a missão de longo prazo do Capiba é construir
 **comunidades de dados** — empresas, clientes e instituições públicas
 compartilhando dados para formar inteligência soberana em território
-nacional (ver README.md, "Objetivo"). Governança, aqui, é a disciplina que
+nacional (ver README.md, "Objetivo") — e a prática que dá sentido a esse
+compartilhamento é o **jornalismo de dados a serviço da comunidade** (o
+processo editorial completo está em `docs/jornalismo_dados.md`).
+Governança, aqui, é a disciplina que
 torna esse compartilhamento possível sem perder soberania: contratos
 declarativos, catálogo, linhagem e qualidade mensurável são o que permite a
 uma instituição contribuir dados com a garantia de saber o que entrou, de
@@ -219,6 +222,7 @@ gate.
 ## Referências
 
 - DAMA International, *DAMA-DMBOK: Data Management Body of Knowledge*, 2ª edição.
+- `docs/jornalismo_dados.md` — processo editorial de jornalismo de dados sobre a plataforma.
 - `docs/arquitetura.md` — camadas, stack e deploy.
 - `docs/ingestao.md` — framework declarativo de ingestão.
 - `docs/preregistrations/README.md` — doutrina de pré-registro de experimentos.
