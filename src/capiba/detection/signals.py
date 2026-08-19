@@ -12,6 +12,7 @@ Dependencies: capiba.detection.statistical, capiba.detection.ml_models
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
@@ -143,6 +144,40 @@ def anomalous_price(
         "benford_deviation": benford,
         "isolation_forest_rate": forest,
     }
+
+
+def collusion_signals(
+    pairs: list[set[str]],
+    min_wins: int,
+) -> list[dict[str, Any]]:
+    """Converts collusion pairs (``detect_collusion``) into signal rows.
+
+    Binary score (1.0) — a calibration placeholder validated by battery D-02;
+    PR-D-03 will calibrate the score semantics on real volume. One signal per
+    pair, addressed to the supplier pair itself: ``entity_id`` is the two
+    CNPJs sorted and joined by ``+`` (deterministic), and the raw pair is
+    preserved in ``details``.
+
+    Args:
+        pairs: Supplier pairs (sets of two CNPJs) from ``detect_collusion``.
+        min_wins: Eligibility threshold used to produce the pairs (metadata).
+
+    Returns:
+        Signal rows (entity_type, entity_id, signal_type, score, details).
+    """
+    signals: list[dict[str, Any]] = []
+    for pair in pairs:
+        suppliers = sorted(pair)
+        signals.append(
+            {
+                "entity_type": "supplier",
+                "entity_id": "+".join(suppliers),
+                "signal_type": SignalType.COLLUSION_NETWORK,
+                "score": 1.0,
+                "details": json.dumps({"min_wins": min_wins, "suppliers": suppliers}),
+            }
+        )
+    return signals
 
 
 def duration_outlier_share(

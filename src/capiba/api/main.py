@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from capiba.api import portal
-from capiba.api.routers import evidence, ranking, signals
+from capiba.api.routers import evidence, graph, ranking, signals
 from capiba.config import PORTAL_SESSION_SECRET
 from capiba.notification.scheduler import start_notification_scheduler
 
@@ -64,6 +64,7 @@ app.include_router(portal.router)
 app.include_router(signals.router)
 app.include_router(ranking.router)
 app.include_router(evidence.router)
+app.include_router(graph.router)
 
 
 @app.get("/health")

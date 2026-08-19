@@ -16,6 +16,7 @@ from capiba.detection.signals import SignalType
 __all__ = [
     "EvidenceItem",
     "EvidenceStored",
+    "OwnershipResponse",
     "RankingItem",
     "RankingResponse",
     "Signal",
@@ -80,3 +81,11 @@ class EvidenceItem(BaseModel):
     filename: str | None = None
     size: int | None = None
     timestamp: str | None = None
+
+
+class OwnershipResponse(BaseModel):
+    """Response of the GET /v1/graph/ownership/{cnpj} endpoint."""
+
+    entity: str = Field(..., pattern=r"^\d{14}$")
+    max_depth: int
+    paths: list[list[str]]

@@ -107,6 +107,11 @@ síncrono do `NotificationDispatcher` async) disparam do `task_detect`
 (sinais ≥ `NOTIFICATION_ALERT_SCORE`, default 0.7) e do
 `task_validate_pipeline` (relatório inválido ou erro de normalização > 5%);
 no-op quando `NOTIFICATION_RECIPIENTS` está vazio, nunca derrubam a task.
+O `task_detect` também emite o sinal de grafo `collusion_network`
+(`detect_collusion` sobre o ArangoDB, best-effort) com limiar
+`DETECTION_COLLUSION_MIN_WINS` (default 3, placeholder de calibração validado
+pela bateria D-02; PR-D-03 calibrará em volume real) e score binário 1.0;
+a cadeia de titularidade é exposta na API em `GET /v1/graph/ownership/{cnpj}`.
 O `task_validate_pipeline` também alimenta o `QualityMonitor`
 (`record_batch`, best-effort) e o `NotificationScheduler` (relatórios
 periódicos com as métricas reais do monitor) é iniciado no lifespan da API

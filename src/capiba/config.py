@@ -190,6 +190,15 @@ EVIDENCE_MAX_SIZE_VIDEO = int(
 )  # 2GB
 
 # =============================================================================
+# Detection
+# =============================================================================
+
+# Minimum wins per (buyer, supplier) for a pair to be flagged as a suspected
+# collusion network in the detect post step. Calibration placeholder validated
+# by battery D-02; PR-D-03 will calibrate on real volume.
+DETECTION_COLLUSION_MIN_WINS = int(os.getenv("DETECTION_COLLUSION_MIN_WINS", "3"))
+
+# =============================================================================
 # Notification (SMTP)
 # =============================================================================
 

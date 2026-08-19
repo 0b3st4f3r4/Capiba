@@ -34,6 +34,10 @@ class TestDefaults:
         assert config.NOTIFICATION_RECIPIENTS == []
         assert pytest.approx(0.7) == config.NOTIFICATION_ALERT_SCORE
 
+    def test_detection_defaults(self) -> None:
+        """Without env, the collusion min_wins placeholder is 3."""
+        assert config.DETECTION_COLLUSION_MIN_WINS == 3
+
     def test_evidence_required_metadata(self) -> None:
         assert "contract_id" in config.EVIDENCE_REQUIRED_METADATA
         assert "hash_sha256" in config.EVIDENCE_REQUIRED_METADATA

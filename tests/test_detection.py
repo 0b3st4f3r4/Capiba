@@ -15,6 +15,7 @@ from capiba.detection.signals import (
     SignalType,
     anomalous_price,
     benford_deviation,
+    collusion_signals,
     duration_outlier_share,
     isolation_forest_rate,
     single_bid_score,
@@ -431,3 +432,29 @@ class TestSharedSignals:
         assert duration_outlier_share([30.0, 30.0], minimum=4) is None
         share = duration_outlier_share([30.0, 30.0, 30.0, 3000.0], minimum=4)
         assert share == 0.25
+
+    def test_collusion_signals_format(self) -> None:
+        """Each pair must become a binary collusion_network signal."""
+        signals = collusion_signals([{"91000000000002", "91000000000001"}], min_wins=3)
+
+        assert len(signals) == 1
+        signal = signals[0]
+        assert signal["entity_type"] == "supplier"
+        assert signal["entity_id"] == "91000000000001+91000000000002"
+        assert signal["signal_type"] == SignalType.COLLUSION_NETWORK
+        assert signal["score"] == 1.0
+        assert json.loads(signal["details"]) == {
+            "min_wins": 3,
+            "suppliers": ["91000000000001", "91000000000002"],
+        }
+
+    def test_collusion_signals_deterministic_ordering(self) -> None:
+        """The entity_id must be the sorted CNPJs regardless of set order."""
+        first = collusion_signals([{"BBB", "AAA"}], min_wins=3)[0]
+        second = collusion_signals([{"AAA", "BBB"}], min_wins=3)[0]
+        assert first == second
+        assert first["entity_id"] == "AAA+BBB"
+
+    def test_collusion_signals_empty(self) -> None:
+        """No pairs must produce no signals."""
+        assert collusion_signals([], min_wins=3) == []

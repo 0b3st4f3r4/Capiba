@@ -116,13 +116,18 @@ class TestPersistContracts:
 class TestTaskDetect:
     """Tests for the fraud-signal detection task."""
 
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
-    def test_task_detect_writes_signals(self, mock_lake: MagicMock) -> None:
+    def test_task_detect_writes_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
         """Signals computed from the silver table must be written to gold."""
         mock_lake.read_silver_contracts.return_value = [
             _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
             for i in range(3)
         ]
+        mock_collusion.return_value = []
 
         summary = task_detect(ds="2026-01-01")
 
@@ -134,23 +139,73 @@ class TestTaskDetect:
         )
         assert {s["signal_type"] for s in signals} == {"concentration"}
 
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
-    def test_task_detect_read_failure(self, mock_lake: MagicMock) -> None:
+    def test_task_detect_adds_collusion_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Collusion pairs from the graph must be aggregated as signals."""
+        from capiba.config import DETECTION_COLLUSION_MIN_WINS
+
+        mock_lake.read_silver_contracts.return_value = []
+        mock_collusion.return_value = [{"91000000000002", "91000000000001"}]
+
+        summary = task_detect(ds="2026-01-01")
+
+        mock_collusion.assert_called_once_with(
+            mock_get_db.return_value, min_wins=DETECTION_COLLUSION_MIN_WINS
+        )
+        assert summary["signals"] == 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert signals[0]["signal_type"] == "collusion_network"
+        assert signals[0]["entity_id"] == "91000000000001+91000000000002"
+
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_arango_failure_keeps_statistical_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock
+    ) -> None:
+        """An ArangoDB failure must not abort the task nor drop the signals."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_get_db.side_effect = ConnectionError("arango down")
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert {s["signal_type"] for s in signals} == {"concentration"}
+
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_read_failure(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
         """Silver read failures must yield an empty signal set."""
         mock_lake.read_silver_contracts.side_effect = RuntimeError("lake down")
+        mock_collusion.return_value = []
 
         summary = task_detect(ds="2026-01-01")
 
         assert summary == {"signals": 0}
         mock_lake.write_fraud_signals.assert_not_called()
 
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
-    def test_task_detect_write_failure(self, mock_lake: MagicMock) -> None:
+    def test_task_detect_write_failure(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
         """Gold write failures must not abort the task."""
         mock_lake.read_silver_contracts.return_value = [
             _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
             for i in range(3)
         ]
+        mock_collusion.return_value = []
         mock_lake.write_fraud_signals.side_effect = RuntimeError("lake down")
 
         summary = task_detect(ds="2026-01-01")

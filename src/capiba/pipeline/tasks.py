@@ -22,11 +22,13 @@ from typing import Any
 
 import pandas as pd
 
-from capiba.config import DBT_PROJECT_DIR
+from capiba.config import DBT_PROJECT_DIR, DETECTION_COLLUSION_MIN_WINS
 from capiba.db.arangodb import get_capiba_db
+from capiba.detection.graphs import detect_collusion
 from capiba.detection.signals import (
     SignalType,
     anomalous_price,
+    collusion_signals,
     is_non_competitive,
     single_bid_score,
 )
@@ -318,6 +320,14 @@ def task_detect(**context: Any) -> dict[str, Any]:
         contracts = []
 
     signals = detect_fraud_signals(contracts)
+
+    # Best-effort: graph signals never fail the task (ArangoDB may be down).
+    try:
+        db = get_capiba_db()
+        pairs = detect_collusion(db, min_wins=DETECTION_COLLUSION_MIN_WINS)
+        signals.extend(collusion_signals(pairs, DETECTION_COLLUSION_MIN_WINS))
+    except Exception as e:
+        logger.warning("Collusion detection unavailable (ArangoDB): %s", e)
 
     try:
         if signals:

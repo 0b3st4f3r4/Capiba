@@ -32,14 +32,16 @@ flowchart TB
         router_signals["/v1/signals/{cnpj}"]
         router_ranking["/v1/ranking/municipalities"]
         router_evidence["/v1/evidence"]
+        router_graph["/v1/graph/ownership/{cnpj}"]
         portal["Portal /<br/>SSO OIDC"]
         services["Services<br/>consulta ArangoDB + operadores"]
         operators["Operadores<br/>statistical.py · ml_models.py"]
     end
 
-    client["Cliente HTTP / Browser"] --> router_signals & router_ranking & router_evidence & portal
+    client["Cliente HTTP / Browser"] --> router_signals & router_ranking & router_evidence & router_graph & portal
     router_signals --> services
     router_ranking --> services
+    router_graph --> arango
     router_evidence --> minio[("MinIO<br/>bucket bronze")]
     portal --> services
     services --> operators
@@ -131,6 +133,47 @@ Retorna ranking de municípios por índice de risco, ordenado decrescente.
       "total_contracts": 150,
       "total_value": "2500000.00"
     }
+  ]
+}
+```
+
+## Grafo
+
+### GET /v1/graph/ownership/{cnpj}
+
+Traça a cadeia de titularidade (beneficial ownership) de uma empresa,
+seguindo as arestas `owns` do grafo ArangoDB (`trace_ownership` em
+`detection/graphs.py`, semântica validada pela bateria D-02).
+
+**Path params:**
+
+- `cnpj` (string, required): CNPJ sem formatação (14 dígitos). Formato
+  inválido retorna `422`.
+
+**Query params:**
+
+- `max_depth` (integer, default: 3, min 1, max 10): profundidade máxima da
+  travessia.
+
+**Comportamento:**
+
+- CNPJ sem arestas `owns` retorna `200` com `paths: []`.
+- Caminhos são simples (sem vértice repetido; ciclos bloqueados) e ordenados
+  deterministicamente, com o vértice inicial incluído.
+
+**Erros:**
+
+- `503`: ArangoDB indisponível.
+
+**Response:**
+
+```json
+{
+  "entity": "12345678000195",
+  "max_depth": 3,
+  "paths": [
+    ["12345678000195", "partner-cpf-1"],
+    ["12345678000195", "partner-cpf-1", "98765432000100"]
   ]
 }
 ```
