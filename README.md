@@ -4,35 +4,25 @@
 
 **C**ruzamento e **A**nálise de **P**adrões e **I**ndícios em **B**ases **A**bertas.
 
-Motor de captura de farsa institucional via dados abertos, a serviço do jornalismo de dados comunitário.
+Motor de detecção de farsa institucional via dados abertos, a serviço do jornalismo de dados comunitário.
 
 ## Objetivo
 
 Transformar canais de dados públicos em motores de detecção de corrupção e farsa em quaisquer instituições da sociedade civil. Coordenação via internet entre instituições públicas, privadas ou de caráter misto, para abertura e compartilhamento de dados com finalidade cooperativa na produção de investigações, denúncias e monitoramentos de interesse comum.
 
-O produto final é **jornalismo de dados a serviço da comunidade**: coleta, verificação, cruzamento e análise reproduzíveis de bases abertas, publicados como investigações de interesse público que o cidadão consegue entender — a plataforma organiza a evidência, a narrativa e a apuração são trabalho editorial. O método completo está em `docs/jornalismo_dados.md`.
+O produto final é **jornalismo de dados a serviço da comunidade**: coleta, verificação, cruzamento e análise reproduzíveis de bases abertas, publicados como investigações de interesse público que o cidadão consegue entender. A plataforma organiza a evidência; a narrativa e a apuração são trabalho editorial. O método completo está em `docs/jornalismo_dados.md`.
 
-No limite, o projeto constrói **comunidades de dados**: empresas, clientes e instituições públicas contribuem com o compartilhamento de dados para formar **inteligência soberana em território nacional** — uma alternativa própria e comunitária às plataformas estrangeiras de imperialismo de dados e hipervigilância global.
+No limite, o projeto constrói **comunidades de dados**: empresas, clientes e instituições públicas compartilhando dados para formar **inteligência soberana em território nacional**, uma alternativa própria e comunitária às plataformas estrangeiras de imperialismo de dados e hipervigilância global.
 
 ## Stack
 
-- **Agente:** Kimi Code CLI
-- **Compressão:** RTK (rtk-ai/rtk)
-- **Editor:** Zed
-- **Linguagem:** Python 3.13+
-- **Orquestração:** Apache Airflow
-- **Storage:** ArangoDB (multi-modelo), MinIO (data lake e evidências); Redis habilitado por padrão (cache do monitor de qualidade e dos hot paths da API, degradando graciosamente sem ele)
-- **Lakehouse:** Apache Iceberg (Parquet no MinIO) com catálogo REST Lakekeeper; marts gold via dbt (dbt-trino)
-- **Query engine:** Trino (SQL sobre o lake; fonte de dados do Grafana)
-- **Catálogo de dados:** Marquez (lineage via OpenLineage) + dbt docs
-- **ML:** scikit-learn + spaCy
-- **API:** FastAPI (inclui o portal capiba-dashboard, login SSO)
-- **SSO:** Keycloak (realm `capiba`; um login para todas as UIs)
-- **Visualização:** Grafana (datasource Trino provisionado)
-- **Cluster local:** k3s nativo (GPU NVIDIA schedulável), dashboard Headlamp, ingress Traefik
+A plataforma fala Python 3.13 e nasce de um trabalho agêntico: o Kimi Code CLI escreve o código, o RTK comprime a conversa e o Zed é o editor onde tudo se assenta.
 
-PostgreSQL existe no cluster apenas como metastore (Airflow, Grafana,
-Keycloak, Lakekeeper e Marquez), não para a aplicação.
+O coração é um lago. O MinIO guarda os dados brutos e as evidências; o Apache Iceberg dá forma de tabela aos Parquets, com o Lakekeeper como catálogo; o Trino pergunta em SQL e o dbt (dbt-trino) transforma as respostas em marts gold. Ao lado do lago, o ArangoDB tece o grafo de relações entre empresas e pessoas, e o Redis segura o cache do monitor de qualidade e dos hot paths da API, desaparecendo sem drama quando desabilitado.
+
+Quem mantém a casa em ordem: o Airflow orquestra os pipelines, o Marquez cataloga a linhagem via OpenLineage, o Grafana dá rosto aos números, e Prometheus e Kepler vigiam o consumo e a energia do cluster. A FastAPI serve os sinais de risco e o portal capiba-dashboard; o Keycloak (realm `capiba`) é a porta de entrada única, um login para todas as UIs. Tudo isso mora num k3s local com GPU NVIDIA schedulável, dashboard Headlamp e ingress Traefik.
+
+O PostgreSQL veste dois uniformes. É metastore do Airflow, do Grafana, do Keycloak, do Lakekeeper e do Marquez; e é também o DWH de serving da aplicação, o database `dwh` para onde o dbt materializa os modelos de `dbt/models/serving/` através do catálogo Trino `dwh`, cópias dos marts gold para consumo de baixa latência fora do lago.
 
 ## Setup
 
@@ -40,18 +30,7 @@ Keycloak, Lakekeeper e Marquez), não para a aplicação.
 ./scripts/setup.sh
 ```
 
-Após o deploy (`scripts/helm-upgrade.sh`), as UIs ficam acessíveis via
-ingress em `https://<serviço>.capiba.local:8443` (api, grafana, marquez,
-iceberg, minio, trino, airflow) — o `setup.sh` mapeia os hosts no
-`/etc/hosts`. Todas as credenciais e segredos do ambiente local (SSO,
-bancos, MinIO, clientes OIDC, chaves de sessão) são lidos do `.env` pelo
-`scripts/helm-upgrade.sh`. O login é unificado via SSO (Keycloak, realm
-`capiba`, em `https://keycloak.capiba.local:8443`; usuário dev
-`capiba`/`capiba-sso` por padrão, configurável em `.env`). O certificado é
-self-signed (`scripts/gen-certs.sh`, secret `capiba-tls`), então o browser
-pede exceção de segurança; HTTP na porta 8088 continua disponível como
-alternativa. Clientes de linha de comando (dbt, pyiceberg) usam
-`make port-forward`.
+Após o deploy (`scripts/helm-upgrade.sh`), as UIs ficam acessíveis via ingress em `https://<serviço>.capiba.local:8443` (api, grafana, marquez, iceberg, minio, trino, airflow); o `setup.sh` mapeia os hosts no `/etc/hosts`. Todas as credenciais e segredos do ambiente local (SSO, bancos, MinIO, clientes OIDC, chaves de sessão) são lidos do `.env` pelo `scripts/helm-upgrade.sh`. O login é unificado via SSO em `https://keycloak.capiba.local:8443`, com o usuário dev `capiba`/`capiba-sso` por padrão, configurável no `.env`. O certificado é self-signed (`scripts/gen-certs.sh`, secret `capiba-tls`), então o browser pede exceção de segurança; HTTP na porta 8088 continua disponível como alternativa. Clientes de linha de comando (dbt, pyiceberg) usam `make port-forward`.
 
 ## Desenvolvimento agêntico
 
@@ -68,37 +47,13 @@ rtk gain
 
 ## Estrutura
 
-Código em `src/capiba/`, organizado por vertical:
+O código mora em `src/capiba/`, cortado em verticais que espelham a vida de um dado na plataforma. A `ingestion` sai ao mundo e busca os dados públicos; a `quality` confere e registra a linhagem do que chega; a `detection` procura padrões com estatística, ML, grafos e NLP; a `evidence` guarda as provas; a `db` conversa com o ArangoDB; a `api` devolve os sinais de risco em REST; a `notification` grita quando algo importa; o `pipeline` amarra as tarefas de ingestão. As transformações nomeadas ficam em `transformations/`, e o `config.py` lê a configuração do ambiente.
 
-- `src/capiba/ingestion/` — crawlers e normalização de dados públicos
-- `src/capiba/detection/` — operadores estatísticos, ML, grafos, NLP
-- `src/capiba/quality/` — validação e linhagem de dados
-- `src/capiba/evidence/` — armazenamento de evidências
-- `src/capiba/db/` — acesso ao ArangoDB
-- `src/capiba/api/` — interface REST para sinais de risco (FastAPI)
-- `src/capiba/notification/` — despacho de alertas
-- `src/capiba/pipeline/` — tarefas do pipeline de ingestão
-- `src/capiba/config.py` — configuração via variáveis de ambiente
-- `dags/` — DAGs do Airflow geradas pelo `pipeline_factory.py` a partir das
-  specs declarativas em `dags/pipelines/*.yaml`: `daily_ingestion` (crawls →
-  silver → marts gold → sinais de fraude), `monthly_federal_revenue` (dump
-  CNPJ da Receita) e `hourly_pod_usage` (uso de CPU/memória dos pods);
-  `lake_maintenance.py` (manutenção Iceberg via Trino) é uma DAG imperativa
-- `dbt/` — marts gold (dbt-trino sobre o catálogo Iceberg)
-- `charts/capiba/` — chart Helm da stack completa
-- `tests/` — testes por vertical slice
-- `scripts/` — utilitários CLI
-- `docs/` — documentação de arquitetura e operadores
+Os pipelines de ingestão são declarativos: specs YAML em `dags/pipelines/` que o `pipeline_factory.py` transforma em DAGs do Airflow. São elas `daily_ingestion` (crawls, silver, marts gold, sinais de fraude), `monthly_federal_revenue` (dump CNPJ da Receita), `weekly_sanctions` (sanções CEIS/CNEP do Portal da Transparência) e `hourly_pod_usage` (uso de CPU e memória dos pods); a `lake_maintenance.py`, manutenção das tabelas Iceberg via Trino, permanece uma DAG imperativa. Os marts gold vivem no projeto dbt em `dbt/`, o chart Helm da stack completa em `charts/capiba/`, os testes por vertical slice em `tests/`, os utilitários de linha de comando em `scripts/` e a documentação em `docs/`.
 
 ## Documentação
 
-- `docs/jornalismo_dados.md` — método de jornalismo de dados sobre a plataforma
-- `docs/oportunidades.md` — backlog de evolução orientado a jornalismo comunitário
-- `docs/arquitetura.md` — arquitetura do sistema
-- `docs/operadores.md` — catálogo de operadores de detecção
-- `docs/api.md` — especificação da API de sinais
-- `docs/ingestao.md` — pipeline de ingestão
-- `docs/apis_fontes.md` — análise das APIs de fontes externas
+A documentação vive em `docs/` e conta a plataforma de vários ângulos: o método editorial em `jornalismo_dados.md`, o backlog de evolução em `oportunidades.md`, a arquitetura do sistema em `arquitetura.md`, o catálogo de operadores de detecção em `operadores.md`, a especificação da API de sinais em `api.md`, o pipeline de ingestão em `ingestao.md`, a análise das APIs de fontes externas em `apis_fontes.md`, a governança de dados em `governanca.md` e as lacunas conhecidas em `gaps.md`. Os experimentos de detecção seguem doutrina de pré-registro em `docs/preregistrations/` e publicam seus resultados, inclusive os negativos, em `docs/results/`.
 
 ## Licença
 
