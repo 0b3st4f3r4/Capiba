@@ -444,3 +444,375 @@ post_steps: [dbt_run, detect]
         silver_rows = lake.read_silver_contracts()
         assert len(silver_rows) == 1
         assert str(silver_rows[0]["dt"]) == "2026-01-15"
+
+
+def _cnpj_zip(path: Path, member: str, rows: list[str]) -> Path:
+    """Writes a fixture CNPJ dump ZIP with one member."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(member, "\n".join(rows))
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
+def _fake_cnpj_download(destination: Path, *_args: Any, **_kwargs: Any) -> list[Path]:
+    """Fake federal_revenue download with entity + reference ZIPs."""
+    return [
+        _cnpj_zip(
+            destination / "Empresas0.zip",
+            "K3241.K03200Y0.D50610.EMPRECSV",
+            [
+                "12345678;EMPRESA A;2062;49;1000,00;05;",
+                "87654321;EMPRESA B;2062;49;2000,00;05;PE",
+                "999;INVALIDA;2062;49;10,00;05;",
+            ],
+        ),
+        _cnpj_zip(
+            destination / "Socios0.zip",
+            "K3241.K03200Y0.D50610.SOCIOCSV",
+            ["12345678;2;JOAO SILVA;***123456**;22;20150101;;;;;5"],
+        ),
+        _fake_zip(destination / "Cnaes.zip"),
+    ]
+
+
+def _mock_graph_db() -> MagicMock:
+    """A mocked ArangoDB whose collections are stable per-name mocks."""
+    db = MagicMock()
+    collections: dict[str, MagicMock] = {}
+    db.collection.side_effect = lambda name: collections.setdefault(
+        name, MagicMock(name=name)
+    )
+    db._capiba_collections = collections
+    return db
+
+
+class TestFileDumpNormalize:
+    """Tests of the streaming normalize step of the file_dump formula."""
+
+    def _spec(self, destinations: list[str]) -> PipelineSpec:
+        return PipelineSpec.model_validate(
+            {
+                "name": "test_dump_silver",
+                "window": "previous_month",
+                "sources": ["federal_revenue"],
+                "formula": "file_dump",
+                "destinations": destinations,
+            }
+        )
+
+    def test_normalize_to_silver(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Entity ZIPs flow (chunked) to the silver tables; Cnaes is skipped."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "federal_revenue",
+            SourceDef(download=_fake_cnpj_download),
+        )
+
+        report = run_pipeline(
+            self._spec(["lake_bronze", "lake_silver"]), date(2026, 2, 2)
+        )
+
+        assert report.success is True
+        assert [s.name for s in report.steps] == [
+            "download_federal_revenue",
+            "normalize_federal_revenue",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+        ]
+        normalize = report.steps[1]
+        assert normalize.rows_out == 3
+        assert normalize.errors == 1  # the invalid Empresas row
+
+        assert report.outputs["federal_revenue_entities"] == {
+            "companies": 2,
+            "partners": 1,
+        }
+        silver = report.outputs["destination_lake_silver"]
+        assert silver["entities"] == {"federal_revenue": {"companies": 2, "partners": 1}}
+
+        companies = [r for batch in lake.read_silver_entities("companies") for r in batch]
+        assert {r["cnpj_basico"] for r in companies} == {"12345678", "87654321"}
+        partners = [r for batch in lake.read_silver_entities("partners") for r in batch]
+        assert len(partners) == 1
+        assert partners[0]["nome"] == "JOAO SILVA"
+
+    def test_graph_destination_loads_from_silver(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """arangodb_graph bulk-upserts companies/partners read from the silver."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "federal_revenue",
+            SourceDef(download=_fake_cnpj_download),
+        )
+        db = _mock_graph_db()
+        monkeypatch.setattr(tasks, "get_capiba_db", lambda: db)
+
+        report = run_pipeline(
+            self._spec(["lake_bronze", "arangodb_graph"]), date(2026, 2, 2)
+        )
+
+        assert report.success is True
+        graph = report.outputs["destination_arangodb_graph"]
+        assert graph == {"companies": 2, "partners": 1, "edges": 1, "errors": 0}
+        collections: dict[str, MagicMock] = db._capiba_collections
+        company_docs = collections["companies"].import_bulk.call_args.args[0]
+        assert {d["_key"] for d in company_docs} == {"12345678", "87654321"}
+        edge_docs = collections["partner_of"].import_bulk.call_args.args[0]
+        assert edge_docs[0]["_to"] == "companies/12345678"
+
+    def test_graph_destination_best_effort(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Without ArangoDB the graph destination degrades to a step error."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "federal_revenue",
+            SourceDef(download=_fake_cnpj_download),
+        )
+
+        def _no_db() -> Any:
+            raise ConnectionError("arangodb down")
+
+        monkeypatch.setattr(tasks, "get_capiba_db", _no_db)
+
+        report = run_pipeline(self._spec(["arangodb_graph"]), date(2026, 2, 2))
+
+        assert report.success is True
+        step = report.steps[-1]
+        assert step.name == "destination_arangodb_graph"
+        assert step.errors == 1
+        assert "error" in report.outputs["destination_arangodb_graph"]
+
+    def test_silver_write_failure_is_best_effort(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failing silver chunk write is counted, not fatal to the run."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "federal_revenue",
+            SourceDef(download=_fake_cnpj_download),
+        )
+        monkeypatch.setattr(
+            lake,
+            "write_silver_entities",
+            MagicMock(side_effect=RuntimeError("lake down")),
+        )
+
+        report = run_pipeline(self._spec(["lake_silver"]), date(2026, 2, 2))
+
+        assert report.success is True
+        normalize = next(s for s in report.steps if s.name == "normalize_federal_revenue")
+        assert normalize.rows_out == 0
+        # 1 invalid row + 2 failed chunk writes (companies + partners chunks)
+        assert normalize.errors == 3
+
+    def test_no_normalize_without_entity_destinations(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Specs without lake_silver/arangodb_graph keep the old behavior."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "federal_revenue",
+            SourceDef(download=_fake_cnpj_download),
+        )
+
+        report = run_pipeline(self._spec(["lake_bronze"]), date(2026, 2, 2))
+
+        assert report.success is True
+        assert [s.name for s in report.steps] == [
+            "download_federal_revenue",
+            "destination_lake_bronze",
+        ]
+
+
+class TestTaskNormalizeDump:
+    """Tests for the Airflow task_normalize_dump wrapper."""
+
+    def _spec_file(self, tmp_path: Path, destinations: str) -> Path:
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(
+            f"""\
+name: dump_task
+window: previous_month
+sources: [federal_revenue]
+formula: file_dump
+destinations: [{destinations}]
+""",
+            encoding="utf-8",
+        )
+        return spec_path
+
+    def test_noop_without_entity_destinations(self, tmp_path: Path) -> None:
+        """Specs without silver/graph destinations are a no-op summary."""
+        from capiba.pipeline.tasks import task_normalize_dump
+
+        ti = MagicMock()
+        summary = task_normalize_dump(
+            "federal_revenue", str(self._spec_file(tmp_path, "lake_bronze")),
+            ti=ti, ds="2026-02-02",
+        )
+
+        assert summary == {
+            "source": "federal_revenue",
+            "entities": {},
+            "skipped": True,
+        }
+
+    def test_noop_for_source_without_parser(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sources not in the dump parser registry are a no-op."""
+        from capiba.pipeline.tasks import task_normalize_dump
+
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "dump_no_parser",
+            SourceDef(download=lambda *_a, **_k: []),
+        )
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(
+            """\
+name: dump_task_no_parser
+window: previous_month
+sources: [dump_no_parser]
+formula: file_dump
+destinations: [lake_silver]
+""",
+            encoding="utf-8",
+        )
+
+        summary = task_normalize_dump(
+            "dump_no_parser", str(spec_path), ti=MagicMock(), ds="2026-02-02"
+        )
+
+        assert summary["skipped"] is True
+
+    def test_reads_bronze_files_and_writes_silver(
+        self, tmp_path: Path, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Manifest files are read back from bronze and parsed to silver."""
+        from capiba.pipeline.tasks import task_normalize_dump
+
+        zip_path = _cnpj_zip(
+            tmp_path / "Empresas0.zip",
+            "K3241.K03200Y0.D50610.EMPRECSV",
+            ["12345678;EMPRESA A;2062;49;1000,00;05;PE"],
+        )
+        data = zip_path.read_bytes()
+        mock_read = MagicMock(return_value=data)
+        monkeypatch.setattr(lake, "read_bronze_file", mock_read)
+
+        ti = MagicMock()
+        ti.xcom_pull.return_value = {
+            "reference_month": "2026-01",
+            "files": [
+                {
+                    "file": "Empresas0.zip",
+                    "bytes": len(data),
+                    "sha256": "x",
+                    "lake_key": "federal_revenue/files/dt=2026-02-02/Empresas0.zip",
+                },
+                {"file": "Cnaes.zip", "bytes": 1, "sha256": "y", "lake_key": "ref"},
+            ],
+        }
+
+        summary = task_normalize_dump(
+            "federal_revenue",
+            str(self._spec_file(tmp_path, "lake_silver")),
+            ti=ti,
+            ds="2026-02-02",
+        )
+
+        assert summary["entities"] == {"companies": 1}
+        assert summary["errors"] == 0
+        # The reference ZIP is skipped without touching the lake
+        assert mock_read.call_count == 1
+        rows = [r for batch in lake.read_silver_entities("companies") for r in batch]
+        assert [r["cnpj_basico"] for r in rows] == ["12345678"]
+        ti.xcom_push.assert_called_once_with(
+            key="entities_federal_revenue", value=summary
+        )
+
+
+class TestTaskDestinationFileDump:
+    """Tests for the file_dump branches of task_destination."""
+
+    def _spec_file(self, tmp_path: Path, destinations: str) -> Path:
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(
+            f"""\
+name: dump_dest
+window: previous_month
+sources: [federal_revenue]
+formula: file_dump
+destinations: [{destinations}]
+""",
+            encoding="utf-8",
+        )
+        return spec_path
+
+    def test_arangodb_graph_loads_cnpj_entities(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The graph destination delegates to the silver CNPJ graph load."""
+        from capiba.pipeline.tasks import task_destination
+
+        persist = MagicMock(return_value={"companies": 2, "partners": 1})
+        monkeypatch.setattr(tasks, "persist_cnpj_entities", persist)
+
+        summary = task_destination(
+            "arangodb_graph",
+            str(self._spec_file(tmp_path, "arangodb_graph")),
+            ti=MagicMock(),
+            ds="2026-02-02",
+        )
+
+        assert summary == {"companies": 2, "partners": 1}
+        persist.assert_called_once_with(execution_date="2026-02-02")
+
+    def test_lake_silver_reports_normalize_counts(self, tmp_path: Path) -> None:
+        """The silver destination only reports the streaming write counts."""
+        from capiba.pipeline.tasks import task_destination
+
+        ti = MagicMock()
+        ti.xcom_pull.return_value = {
+            "source": "federal_revenue",
+            "entities": {"companies": 2},
+            "errors": 0,
+        }
+
+        summary = task_destination(
+            "lake_silver",
+            str(self._spec_file(tmp_path, "lake_silver")),
+            ti=ti,
+            ds="2026-02-02",
+        )
+
+        assert summary == {
+            "entities": {
+                "federal_revenue": {
+                    "source": "federal_revenue",
+                    "entities": {"companies": 2},
+                    "errors": 0,
+                }
+            }
+        }

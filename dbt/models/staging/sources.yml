@@ -21,6 +21,53 @@ sources:
             description: Contract identifier in the source system
             tests:
               - not_null
+              - unique
+
+      - name: companies
+        description: >-
+          Companies from the Federal Revenue CNPJ dump (Empresas* files),
+          keyed by cnpj_basico (silver Iceberg table written by the
+          monthly_federal_revenue pipeline).
+        # Freshness: the monthly DAG appends once a month (when the
+        # Empresas* files are enabled); alert when ingested_at gets stale.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 32, period: day}
+          error_after: {count: 62, period: day}
+        columns:
+          - name: cnpj_basico
+            description: First 8 digits of the CNPJ (company identifier)
+            tests:
+              - not_null
+
+      - name: establishments
+        description: >-
+          Establishments (matriz/filiais) from the CNPJ dump
+          (Estabelecimentos* files), keyed by the full 14-digit CNPJ.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 32, period: day}
+          error_after: {count: 62, period: day}
+        columns:
+          - name: cnpj
+            description: Full 14-digit CNPJ of the establishment
+            tests:
+              - not_null
+
+      - name: partners
+        description: >-
+          Partners (sócios) from the CNPJ dump (Socios* files), keyed by
+          partner_id — a hash of company + name + qualification (the
+          cnpj_cpf_socio column is usually masked in the public dump).
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 32, period: day}
+          error_after: {count: 62, period: day}
+        columns:
+          - name: partner_id
+            description: Stable partner identifier (hash, 32 chars)
+            tests:
+              - not_null
 
   - name: lake_bronze
     # Trino catalog of the bronze warehouse (Lakekeeper Iceberg REST)
@@ -38,3 +85,41 @@ sources:
         freshness:
           warn_after: {count: 2, period: hour}
           error_after: {count: 4, period: hour}
+        columns:
+          - name: dt
+            description: Ingestion date partition
+            tests:
+              - not_null
+          - name: ingested_at
+            description: Snapshot collection timestamp
+            tests:
+              - not_null
+          - name: payload_json
+            description: JSON array of per-container usage records
+            tests:
+              - not_null
+
+      - name: raw_federal_revenue
+        description: >-
+          Manifest of the Federal Revenue CNPJ dump files downloaded by the
+          monthly_federal_revenue pipeline (payload_json holds the reference
+          month and the per-file name/bytes/sha256/lake_key manifest).
+        # Freshness: the monthly DAG appends once a month; alert when the
+        # latest ingested_at gets stale.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 32, period: day}
+          error_after: {count: 62, period: day}
+        columns:
+          - name: dt
+            description: Ingestion date partition
+            tests:
+              - not_null
+          - name: ingested_at
+            description: Manifest write timestamp
+            tests:
+              - not_null
+          - name: payload_json
+            description: JSON manifest of the downloaded dump files
+            tests:
+              - not_null

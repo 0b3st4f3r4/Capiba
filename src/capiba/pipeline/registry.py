@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from capiba.ingestion.cnpj import parse_cnpj_zip
 from capiba.ingestion.crawler_federal_revenue import download_cnpj_dump
 from capiba.ingestion.crawler_pncp import fetch_contracts as pncp_fetch_contracts
 from capiba.ingestion.crawler_transparency import (
@@ -122,6 +123,13 @@ NORMALIZER_REGISTRY: dict[str, Callable[[dict[str, Any]], Contract]] = {
 
 RULESET_REGISTRY: dict[str, list[ValidationRule]] = {
     "contract_rules": CONTRACT_RULES,
+}
+
+# Streaming parser per dump source: parse(zip_path, chunk_size) yields
+# (entity, records, errors) chunks. Used by the file_dump formula when the
+# spec declares the lake_silver/arangodb_graph destinations.
+DUMP_PARSER_REGISTRY: dict[str, Callable[..., Any]] = {
+    "federal_revenue": parse_cnpj_zip,
 }
 
 # Explicit transformation entries; names not present here are resolved by

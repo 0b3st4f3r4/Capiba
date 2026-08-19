@@ -35,16 +35,22 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from capiba.config import FEDERAL_REVENUE_FILES
+from capiba.ingestion.cnpj import entity_for_zip
 from capiba.pipeline import lake
 from capiba.pipeline.registry import (
     DESTINATION_REGISTRY,
+    DUMP_PARSER_REGISTRY,
     FORMULA_REGISTRY,
     NORMALIZER_REGISTRY,
     RULESET_REGISTRY,
     SOURCE_REGISTRY,
     get_transformation,
 )
-from capiba.pipeline.tasks import persist_contracts, validate_contracts
+from capiba.pipeline.tasks import (
+    persist_cnpj_entities,
+    persist_contracts,
+    validate_contracts,
+)
 from capiba.pipeline.window import DateRange, resolve_window
 from capiba.quality.validators import QualityValidator
 
@@ -94,6 +100,9 @@ class FormulaResult:
     contracts: list[dict[str, Any]] = field(default_factory=list)
     validation: dict[str, Any] | None = None
     manifests: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Per-source silver entity row counts (file_dump streaming normalize);
+    # counts only — the rows themselves are never accumulated in memory.
+    entities: dict[str, dict[str, int]] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -259,15 +268,24 @@ def _formula_file_dump(
     steps: list[StepMetrics],
     window_override: DateRange | None = None,
 ) -> FormulaResult:
-    """Formula: download dump files -> bronze files + manifest.
+    """Formula: download dump files -> bronze files + manifest (+ normalize).
 
     Mirrors the legacy ``task_crawl_federal_revenue``: the reference month
     comes from the (month-aligned) window, files are downloaded to a temp
     dir, uploaded to the bronze bucket and recorded in a manifest. An empty
     manifest fails the run loudly — a missing share must not be recorded as
     a successful run.
+
+    When the spec declares the ``lake_silver``/``arangodb_graph``
+    destinations and the source has a registered dump parser, a streaming
+    ``normalize_<source>`` step parses the entity ZIPs
+    (Empresas/Estabelecimentos/Socios) chunk by chunk into the silver
+    entity tables — the tempdir stays alive for both steps of the same
+    source and the multi-GB dumps never materialize in memory. Non-entity
+    files (Cnaes.zip etc.) are skipped with a log.
     """
     result = FormulaResult()
+    destination_names = {d.name for d in spec.destinations}
 
     for source in spec.sources:
         date_range = window_override or resolve_window(
@@ -284,15 +302,20 @@ def _formula_file_dump(
 
         params = {"files": FEDERAL_REVENUE_FILES, **source.params}
 
-        def _download(
-            download: Callable[..., list[Path]] = download,
-            source_name: str = source.name,
-            reference_month: str = reference_month,
-            params: dict[str, Any] = params,
-        ) -> tuple[dict[str, Any], int, int]:
-            manifest: list[dict[str, Any]] = []
-            with tempfile.TemporaryDirectory() as tmp:
+        downloaded_paths: list[Path] = []
+        with tempfile.TemporaryDirectory() as tmp:
+
+            def _download(
+                download: Callable[..., list[Path]] = download,
+                source_name: str = source.name,
+                reference_month: str = reference_month,
+                params: dict[str, Any] = params,
+                tmp: str = tmp,
+                downloaded_paths: list[Path] = downloaded_paths,
+            ) -> tuple[dict[str, Any], int, int]:
+                manifest: list[dict[str, Any]] = []
                 downloaded = download(Path(tmp), reference_month, **params)
+                downloaded_paths.extend(downloaded)
                 for path in downloaded:
                     data = path.read_bytes()
                     key = lake.write_bronze_file(
@@ -306,21 +329,63 @@ def _formula_file_dump(
                             "lake_key": key,
                         }
                     )
-            if not manifest:
-                raise RuntimeError(
-                    f"No files downloaded for source '{source_name}'"
-                    f" (reference month {reference_month})"
-                )
-            payload = {"reference_month": reference_month, "files": manifest}
-            return payload, len(manifest), 0
+                if not manifest:
+                    raise RuntimeError(
+                        f"No files downloaded for source '{source_name}'"
+                        f" (reference month {reference_month})"
+                    )
+                payload = {"reference_month": reference_month, "files": manifest}
+                return payload, len(manifest), 0
 
-        result.manifests[source.name] = _run_step(
-            steps, f"download_{source.name}", _download
-        )
-        result.outputs[f"{source.name}_reference_month"] = reference_month
-        result.outputs[f"{source.name}_files"] = len(
-            result.manifests[source.name]["files"]
-        )
+            result.manifests[source.name] = _run_step(
+                steps, f"download_{source.name}", _download
+            )
+            result.outputs[f"{source.name}_reference_month"] = reference_month
+            result.outputs[f"{source.name}_files"] = len(
+                result.manifests[source.name]["files"]
+            )
+
+            parser = DUMP_PARSER_REGISTRY.get(source.name)
+            if parser is None or not destination_names & {
+                "lake_silver",
+                "arangodb_graph",
+            }:
+                continue
+
+            def _normalize_dump(
+                parser: Callable[..., Any] = parser,
+                source_name: str = source.name,
+                downloaded_paths: list[Path] = downloaded_paths,
+            ) -> tuple[dict[str, int], int, int]:
+                counts: dict[str, int] = {}
+                total_rows = 0
+                errors = 0
+                for zip_path in downloaded_paths:
+                    if entity_for_zip(zip_path.name) is None:
+                        logger.info("Skipping non-entity dump file: %s", zip_path.name)
+                        continue
+                    for entity, records, parse_errors in parser(zip_path):
+                        errors += parse_errors
+                        if not records:
+                            continue
+                        try:
+                            lake.write_silver_entities(
+                                entity, records, run_date=execution_date
+                            )
+                            counts[entity] = counts.get(entity, 0) + len(records)
+                            total_rows += len(records)
+                        except Exception as exc:
+                            errors += 1
+                            logger.warning(
+                                "Failed to write %s chunk to the silver layer: %s",
+                                entity,
+                                exc,
+                            )
+                return counts, total_rows, errors
+
+            counts = _run_step(steps, f"normalize_{source.name}", _normalize_dump)
+            result.entities[source.name] = counts
+            result.outputs[f"{source.name}_entities"] = counts
 
     return result
 
@@ -383,7 +448,14 @@ def _dest_lake_bronze(
 def _dest_lake_silver(
     spec: PipelineSpec, execution_date: date, result: FormulaResult
 ) -> tuple[dict[str, Any], int | None, int]:
-    """Best-effort: normalized contracts to the silver Iceberg table."""
+    """Best-effort: normalized contracts to the silver Iceberg table.
+
+    For the file_dump formula the streaming entity writes already happened
+    in the ``normalize_<source>`` step, so this destination only reports
+    the collected entity counts.
+    """
+    if spec.formula == "file_dump":
+        return {"entities": result.entities}, None, 0
     try:
         table = lake.write_silver(result.contracts, run_date=execution_date)
     except Exception as exc:
@@ -395,7 +467,15 @@ def _dest_lake_silver(
 def _dest_arangodb_graph(
     spec: PipelineSpec, execution_date: date, result: FormulaResult
 ) -> tuple[dict[str, Any], int | None, int]:
-    """Best-effort: contracts upserted into the ArangoDB graph."""
+    """Best-effort: contracts upserted into the ArangoDB graph.
+
+    For the file_dump formula, loads the graph from the silver CNPJ entity
+    tables (companies/partners + partner_of edges) in batches instead.
+    """
+    if spec.formula == "file_dump":
+        summary = persist_cnpj_entities(execution_date=execution_date.isoformat())
+        errors = 1 if "error" in summary else 0
+        return summary, None, errors
     summary = persist_contracts(
         result.contracts, execution_date=execution_date.isoformat()
     )

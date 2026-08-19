@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import httpx
 import numpy as np
@@ -18,6 +19,7 @@ from fastapi.testclient import TestClient
 from capiba import config
 from capiba.api import portal, services
 from capiba.api.main import app
+from capiba.detection import signals as signal_ops
 
 CNPJ = "12345678000195"
 
@@ -158,6 +160,35 @@ class TestHealth:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+
+class TestLifespan:
+    """Tests for the API lifespan (notification scheduler activation)."""
+
+    def test_scheduler_started_and_stopped_with_app(self) -> None:
+        """The lifespan must start the scheduler on boot and stop it cleanly."""
+        scheduler = MagicMock()
+        with (
+            patch(
+                "capiba.api.main.start_notification_scheduler",
+                return_value=scheduler,
+            ) as mock_start,
+            TestClient(app) as client,
+        ):
+            response = client.get("/health")
+            assert response.status_code == 200
+            mock_start.assert_called_once_with()
+        scheduler.stop.assert_called_once()
+
+    def test_no_scheduler_is_a_noop(self) -> None:
+        """Without recipients (None) the lifespan must not stop anything."""
+        with (
+            patch(
+                "capiba.api.main.start_notification_scheduler", return_value=None
+            ),
+            TestClient(app) as client,
+        ):
+            assert client.get("/health").status_code == 200
 
 
 @pytest.mark.usefixtures("db_with_signals")
@@ -317,7 +348,7 @@ def db_competitive(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def db_benford_deviation(monkeypatch: pytest.MonkeyPatch) -> None:
+def db_benford_amounts(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fixture: mocked database with amounts deviating from Benford's Law."""
     contracts = [
         _doc(f"C{i:03d}", f"9{i:03d}.00", "pregao_eletronico") for i in range(1, 13)
@@ -391,11 +422,11 @@ class TestSignalsBelowThresholds:
         assert data["alert"] is False
 
 
-@pytest.mark.usefixtures("db_benford_deviation")
+@pytest.mark.usefixtures("db_benford_amounts")
 class TestSignalsAnomalousPrice:
     """Tests for the Benford deviation branch of the price signal."""
 
-    def test_benford_deviation_detected(self, client: TestClient) -> None:
+    def test_benford_detected(self, client: TestClient) -> None:
         """Amounts deviating from Benford's Law must emit anomalous_price."""
         response = client.get(f"/v1/signals/{CNPJ}")
         assert response.status_code == 200
@@ -643,7 +674,7 @@ class TestSignalHelpers:
             def predict(self, features: Any) -> Any:
                 return np.array([-1, -1, -1] + [1] * 12)
 
-        monkeypatch.setattr(services, "train_if", lambda features: FakeModel())
+        monkeypatch.setattr(signal_ops, "train_if", lambda features: FakeModel())
 
         signal = services._signal_anomalous_price(contracts)
 

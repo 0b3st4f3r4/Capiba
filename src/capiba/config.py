@@ -200,6 +200,15 @@ NOTIFICATION_EMAIL_PASSWORD = os.getenv("NOTIFICATION_EMAIL_PASSWORD", "")
 NOTIFICATION_EMAIL_FROM = os.getenv("NOTIFICATION_EMAIL_FROM", "capiba@example.org")
 NOTIFICATION_EMAIL_TLS = os.getenv("NOTIFICATION_EMAIL_TLS", "true").lower() == "true"
 
+# Alert recipients (comma-separated e-mails). Empty disables pipeline
+# notifications entirely (no-op with a debug log).
+NOTIFICATION_RECIPIENTS = [
+    r.strip() for r in os.getenv("NOTIFICATION_RECIPIENTS", "").split(",") if r.strip()
+]
+# Minimum signal score that triggers a detection alert (same threshold as
+# _ALERT_THRESHOLD in capiba.api.services).
+NOTIFICATION_ALERT_SCORE = float(os.getenv("NOTIFICATION_ALERT_SCORE", "0.7"))
+
 # =============================================================================
 # Portal dashboard (SSO via Keycloak)
 # =============================================================================

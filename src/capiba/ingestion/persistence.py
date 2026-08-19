@@ -12,11 +12,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from arango.database import StandardDatabase
 
 from capiba.db.arangodb import upsert_edge, upsert_vertex
+from capiba.ingestion.cnpj import partner_key
 from capiba.ingestion.normalizer import Contract
 from capiba.quality.lineage import LineageTracker
 
@@ -147,6 +149,124 @@ def bulk_upsert_contracts(
         total,
     )
     return {"total": total, "succeeded": succeeded, "errors": errors}
+
+
+def _batches(
+    items: Iterable[dict[str, Any]], batch_size: int
+) -> Iterator[list[dict[str, Any]]]:
+    """Splits an iterable into fixed-size lists."""
+    batch: list[dict[str, Any]] = []
+    for item in items:
+        batch.append(item)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+_COMPANY_DOC_FIELDS = [
+    "cnpj_basico",
+    "razao_social",
+    "natureza_juridica",
+    "qualificacao_responsavel",
+    "capital_social",
+    "porte_empresa",
+    "ente_federativo",
+]
+
+_PARTNER_DOC_FIELDS = [
+    "cnpj_basico",
+    "identificador",
+    "nome",
+    "qualificacao",
+    "data_entrada",
+    "faixa_etaria",
+]
+
+
+def bulk_upsert_cnpj(
+    db: StandardDatabase,
+    companies: Iterable[dict[str, Any]],
+    partners: Iterable[dict[str, Any]],
+    batch_size: int = 1000,
+) -> dict[str, Any]:
+    """Persists CNPJ entities (silver rows) in the ArangoDB graph in bulk.
+
+    Vertex keys: companies are keyed by ``cnpj_basico``; partners by their
+    ``partner_id`` (hash of company + name + qualification — the masked
+    ``cnpj_cpf_socio`` is never a key). Every partner also yields a
+    ``partner_of`` edge pointing at its company.
+
+    Args:
+        db: Connection to the Capiba database.
+        companies: Silver ``companies`` rows.
+        partners: Silver ``partners`` rows.
+        batch_size: Documents per ``import_bulk`` call.
+
+    Returns:
+        Summary ``{companies, partners, edges, errors}``.
+    """
+    summary = {"companies": 0, "partners": 0, "edges": 0, "errors": 0}
+
+    def _import(collection: str, docs: list[dict[str, Any]], counter: str) -> None:
+        if not docs:
+            return
+        try:
+            db.collection(collection).import_bulk(docs, on_duplicate="replace")
+            summary[counter] += len(docs)
+        except Exception as exc:
+            summary["errors"] += 1
+            logger.warning(
+                "Failed to import %d documents into %s: %s", len(docs), collection, exc
+            )
+
+    for batch in _batches(companies, batch_size):
+        docs = [
+            {
+                "_key": _sanitize_key(str(company["cnpj_basico"])),
+                **{f: company.get(f) for f in _COMPANY_DOC_FIELDS},
+            }
+            for company in batch
+        ]
+        _import("companies", docs, "companies")
+
+    for batch in _batches(partners, batch_size):
+        partner_docs: list[dict[str, Any]] = []
+        edge_docs: list[dict[str, Any]] = []
+        for partner in batch:
+            partner_id = str(
+                partner.get("partner_id")
+                or partner_key(
+                    str(partner.get("cnpj_basico") or ""),
+                    partner.get("nome"),
+                    partner.get("qualificacao"),
+                )
+            )
+            partner_docs.append(
+                {
+                    "_key": partner_id,
+                    "partner_id": partner_id,
+                    **{f: partner.get(f) for f in _PARTNER_DOC_FIELDS},
+                }
+            )
+            company_key = partner.get("cnpj_basico")
+            if company_key:
+                company_key = _sanitize_key(str(company_key))
+                edge_docs.append(
+                    {
+                        "_key": f"partners_{partner_id}__companies_{company_key}",
+                        "_from": f"partners/{partner_id}",
+                        "_to": f"companies/{company_key}",
+                        "qualificacao": partner.get("qualificacao"),
+                        "data_entrada": partner.get("data_entrada"),
+                    }
+                )
+        _import("partners", partner_docs, "partners")
+        _import("partner_of", edge_docs, "edges")
+
+    logger.info("CNPJ persistence finished: %s", summary)
+    return summary
 
 
 def _schema_hash(contract: Contract) -> str:

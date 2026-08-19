@@ -37,6 +37,7 @@ from capiba.ingestion.normalizer import (
 from capiba.ingestion.persistence import (
     _sanitize_key,
     _schema_hash,
+    bulk_upsert_cnpj,
     bulk_upsert_contracts,
     upsert_contract,
 )
@@ -591,3 +592,101 @@ class TestPersistenceBulk:
 
         assert summary == {"total": 3, "succeeded": 2, "errors": 1}
         assert mock_upsert.call_count == 3
+
+
+class TestBulkUpsertCnpj:
+    """Tests for the CNPJ graph bulk load (companies/partners/partner_of)."""
+
+    def _db(self) -> tuple[MagicMock, dict[str, MagicMock]]:
+        """A mocked db whose collections are stable per-name mocks."""
+        db = MagicMock()
+        collections: dict[str, MagicMock] = {}
+        db.collection.side_effect = lambda name: collections.setdefault(
+            name, MagicMock(name=name)
+        )
+        return db, collections
+
+    def test_company_vertices_keyed_by_cnpj_basico(self) -> None:
+        """Company vertices are imported in bulk with cnpj_basico keys."""
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[
+                {"cnpj_basico": "12345678", "razao_social": "ACME", "dt": "2026-01-15"},
+                {"cnpj_basico": "87654321", "razao_social": "BETA"},
+            ],
+            partners=[],
+        )
+
+        assert summary == {"companies": 2, "partners": 0, "edges": 0, "errors": 0}
+        import_bulk = collections["companies"].import_bulk
+        docs = import_bulk.call_args.args[0]
+        assert [d["_key"] for d in docs] == ["12345678", "87654321"]
+        assert docs[0]["razao_social"] == "ACME"
+        assert "dt" not in docs[0]  # lake metadata stays out of the vertex
+        assert import_bulk.call_args.kwargs == {"on_duplicate": "replace"}
+
+    def test_partner_vertices_and_edges(self) -> None:
+        """Partner vertices yield partner_of edges into their companies."""
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[],
+            partners=[
+                {
+                    "partner_id": "p1" * 16,
+                    "cnpj_basico": "12345678",
+                    "nome": "JOAO SILVA",
+                    "qualificacao": "22",
+                }
+            ],
+        )
+
+        assert summary == {"companies": 0, "partners": 1, "edges": 1, "errors": 0}
+        partner_doc = collections["partners"].import_bulk.call_args.args[0][0]
+        assert partner_doc["_key"] == "p1" * 16
+        assert partner_doc["nome"] == "JOAO SILVA"
+        edge_doc = collections["partner_of"].import_bulk.call_args.args[0][0]
+        assert edge_doc["_from"] == f"partners/{'p1' * 16}"
+        assert edge_doc["_to"] == "companies/12345678"
+        assert edge_doc["qualificacao"] == "22"
+
+    def test_partner_key_fallback_without_partner_id(self) -> None:
+        """Rows without partner_id get the hash key (never the masked doc)."""
+        from capiba.ingestion.cnpj import partner_key
+
+        db, collections = self._db()
+
+        bulk_upsert_cnpj(
+            db,
+            companies=[],
+            partners=[
+                {"cnpj_basico": "12345678", "nome": "JOAO", "qualificacao": "22"}
+            ],
+        )
+
+        partner_doc = collections["partners"].import_bulk.call_args.args[0][0]
+        assert partner_doc["_key"] == partner_key("12345678", "JOAO", "22")
+
+    def test_batch_failures_are_counted(self) -> None:
+        """A failed import_bulk is an error count, not an exception."""
+        db, collections = self._db()
+        db.collection("companies").import_bulk.side_effect = RuntimeError("db down")
+
+        summary = bulk_upsert_cnpj(
+            db, companies=[{"cnpj_basico": "12345678"}], partners=[]
+        )
+
+        assert summary == {"companies": 0, "partners": 0, "edges": 0, "errors": 1}
+
+    def test_batching_splits_imports(self) -> None:
+        """Items larger than batch_size are split into multiple imports."""
+        db, collections = self._db()
+        companies = [{"cnpj_basico": f"{i:08d}"} for i in range(5)]
+
+        summary = bulk_upsert_cnpj(db, companies=companies, partners=[], batch_size=2)
+
+        assert summary["companies"] == 5
+        assert collections["companies"].import_bulk.call_count == 3

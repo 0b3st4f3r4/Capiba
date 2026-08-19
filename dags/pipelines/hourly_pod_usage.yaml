@@ -12,3 +12,7 @@ sources:
 formula: metrics_collect
 destinations:
   - lake_bronze # raw audit copy + raw_pod_usage Iceberg table
+post_steps:
+  # Refresh the pod_usage_hourly/platform_cost_daily marts right after each
+  # hourly snapshot (the factory generates a granular dbt_run task).
+  - dbt_run

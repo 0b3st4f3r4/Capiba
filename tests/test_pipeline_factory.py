@@ -45,6 +45,19 @@ destinations:
   - lake_bronze
 """
 
+DUMP_GRAPH_SPEC = """\
+name: factory_dump_graph
+schedule: "23 5 2 * *"
+window: previous_month
+sources:
+  - name: federal_revenue
+formula: file_dump
+destinations:
+  - lake_bronze
+  - lake_silver
+  - arangodb_graph
+"""
+
 MANUAL_SPEC = """\
 name: factory_manual
 sources:
@@ -131,6 +144,10 @@ class TestBuildDags:
         assert "capiba://gold/reports/factory_test" in outlet_uris
         # post steps contribute the dbt marts and fraud signals assets
         assert "capiba://gold/contracts_daily" in outlet_uris
+        assert "capiba://gold/pod_usage_hourly" in outlet_uris
+        assert "capiba://gold/platform_cost_daily" in outlet_uris
+        assert "capiba://dwh/serving_supplier_stats" in outlet_uris
+        assert "capiba://dwh/serving_municipality_daily" in outlet_uris
         assert "capiba://gold/fraud_signals" in outlet_uris
 
     def test_dump_pipeline_assets(self, factory, tmp_path: Path) -> None:
@@ -146,6 +163,41 @@ class TestBuildDags:
         outlet_uris = {a.uri for a in dag.get_task("download_federal_revenue").outlets}
         assert "capiba://bronze/raw_federal_revenue" in outlet_uris
         assert "capiba://bronze/federal_revenue/files" in outlet_uris
+
+    def test_dump_pipeline_with_graph_destinations(
+        self, factory, tmp_path: Path
+    ) -> None:
+        """A file_dump spec with silver/graph destinations gets a normalize task."""
+        (tmp_path / "dump_graph.yaml").write_text(DUMP_GRAPH_SPEC, encoding="utf-8")
+
+        dags = factory.build_dags(tmp_path)
+        dag = dags["factory_dump_graph"]
+
+        assert {t.task_id for t in dag.tasks} == {
+            "download_federal_revenue",
+            "normalize_federal_revenue",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_arangodb_graph",
+        }
+        assert dag.get_task("download_federal_revenue").downstream_task_ids == {
+            "normalize_federal_revenue"
+        }
+        assert dag.get_task("normalize_federal_revenue").downstream_task_ids == {
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_arangodb_graph",
+        }
+
+        outlet_uris = {
+            a.uri for a in dag.get_task("normalize_federal_revenue").outlets
+        }
+        assert "capiba://silver/companies" in outlet_uris
+        assert "capiba://silver/establishments" in outlet_uris
+        assert "capiba://silver/partners" in outlet_uris
+        assert "capiba://arangodb/companies" in outlet_uris
+        assert "capiba://arangodb/partners" in outlet_uris
+        assert "capiba://silver/contracts" not in outlet_uris
 
     def test_unscheduled_pipeline(self, factory, tmp_path: Path) -> None:
         """A spec without schedule yields a manually triggered DAG."""
@@ -210,3 +262,23 @@ class TestRealPipelines:
             "monthly_federal_revenue",
             "lake_maintenance",
         } <= set(bag.dag_ids)
+
+    def test_hourly_pod_usage_refreshes_marts(self, factory) -> None:
+        """The hourly pod usage pipeline refreshes the usage marts (dbt_run)."""
+        dag = factory.hourly_pod_usage
+
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_pod_usage",
+            "destination_lake_bronze",
+            "dbt_run",
+        }
+        assert dag.get_task("destination_lake_bronze").downstream_task_ids == {
+            "dbt_run"
+        }
+
+        crawl = dag.get_task("crawl_pod_usage")
+        assert {a.uri for a in crawl.inlets} == {"capiba://source/pod_usage"}
+        outlet_uris = {a.uri for a in crawl.outlets}
+        assert "capiba://bronze/raw_pod_usage" in outlet_uris
+        assert "capiba://gold/pod_usage_hourly" in outlet_uris
+        assert "capiba://gold/platform_cost_daily" in outlet_uris

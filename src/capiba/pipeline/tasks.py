@@ -23,19 +23,26 @@ import pandas as pd
 
 from capiba.config import DBT_PROJECT_DIR
 from capiba.db.arangodb import get_capiba_db
+from capiba.detection.signals import (
+    SignalType,
+    anomalous_price,
+    is_non_competitive,
+    single_bid_score,
+)
 from capiba.detection.statistical import (
-    benford_score,
     duration_outlier,
     hhi_index,
 )
 from capiba.ingestion.crawler_pncp import fetch_contracts
 from capiba.ingestion.crawler_transparency import fetch_purchases
 from capiba.ingestion.normalizer import Contract
-from capiba.ingestion.persistence import bulk_upsert_contracts
+from capiba.ingestion.persistence import bulk_upsert_cnpj, bulk_upsert_contracts
 from capiba.ingestion.validator import checksum, detect_duplicates
+from capiba.notification.alerts import notify_fraud_signals, notify_validation_failure
 from capiba.pipeline import lake
 from capiba.pipeline.registry import (
     DESTINATION_REGISTRY,
+    DUMP_PARSER_REGISTRY,
     NORMALIZER_REGISTRY,
     SOURCE_REGISTRY,
 )
@@ -170,6 +177,40 @@ def persist_contracts(
         summary = {"error": str(e)}
 
     return summary
+
+
+def persist_cnpj_entities(execution_date: str | None = None) -> dict[str, Any]:
+    """Persists the silver CNPJ entities in the ArangoDB graph, in batches.
+
+    Reads the silver ``companies``/``partners`` tables batch by batch and
+    bulk-upserts the graph vertices and ``partner_of`` edges, so the large
+    dump tables never materialize in memory.
+
+    Args:
+        execution_date: Execution date (metadata only).
+
+    Returns:
+        Persistence summary ``{companies, partners, edges, errors}``
+        (or ``{"error": ...}`` on failure).
+    """
+    totals = {"companies": 0, "partners": 0, "edges": 0, "errors": 0}
+    try:
+        db = get_capiba_db()
+        for entity in ("companies", "partners"):
+            for batch in lake.read_silver_entities(entity):
+                summary = bulk_upsert_cnpj(
+                    db,
+                    companies=batch if entity == "companies" else [],
+                    partners=batch if entity == "partners" else [],
+                )
+                for key in totals:
+                    totals[key] += summary[key]
+    except Exception as e:
+        logger.error("CNPJ persistence failed: %s", e)
+        return {"error": str(e), **totals}
+
+    logger.info("CNPJ graph load finished: %s", totals)
+    return totals
 
 
 def task_crawl_pncp(**context: Any) -> list[dict[str, Any]]:
@@ -316,13 +357,21 @@ def task_persist(**context: Any) -> dict[str, Any]:
 def detect_fraud_signals(contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Computes statistical fraud signals over the silver contracts.
 
-    Signals (score semantics: higher = more suspicious):
-    - ``benford_deviation`` per supplier: deviation of contract amounts from
-      Benford's Law (``1 - conformance``); requires >= 10 amounts.
-    - ``supplier_concentration`` per buyer: HHI of the supplier market
-      shares; requires >= 3 contracts.
-    - ``duration_outlier_share`` per supplier: share of contracts whose
-      validity duration is an IQR outlier; requires >= 3 durations.
+    Signals (canonical vocabulary of ``capiba.detection.signals.SignalType``;
+    score semantics: higher = more suspicious):
+
+    - ``anomalous_price`` per supplier: composite of the Benford deviation
+      (>= 10 positive amounts) and the IsolationForest anomaly rate over
+      (log amount, duration) (>= 15 contracts); the score is the max of the
+      eligible components, both preserved in ``details`` (null when a
+      component is ineligible).
+    - ``single_bid`` per supplier: rate of contracts in non-competitive
+      modality (dispensa/inexigibilidade); emitted only when the rate is
+      positive and the supplier has >= 3 contracts.
+    - ``concentration`` per buyer: HHI of the supplier market shares;
+      requires >= 3 contracts.
+    - ``anomalous_duration`` per supplier: share of contracts whose validity
+      duration is a pooled IQR outlier; emitted only when the share > 0.
 
     Args:
         contracts: Silver contract rows (nested ``buyer``/``supplier``).
@@ -346,23 +395,42 @@ def detect_fraud_signals(contracts: list[dict[str, Any]]) -> list[dict[str, Any]
         pd.to_datetime(df["validity_end"], errors="coerce")
         - pd.to_datetime(df["validity_start"], errors="coerce")
     ).dt.days
+    if "modality" not in df.columns:
+        df["modality"] = None
 
     signals: list[dict[str, Any]] = []
 
     for supplier_id, group in df.dropna(subset=["supplier_id"]).groupby("supplier_id"):
-        amounts = group["amount_float"].dropna()
-        if len(amounts) >= 10:
-            conformance = benford_score(amounts)
-            if not pd.isna(conformance):
-                signals.append(
-                    {
-                        "entity_type": "supplier",
-                        "entity_id": str(supplier_id),
-                        "signal_type": "benford_deviation",
-                        "score": round(1.0 - conformance, 4),
-                        "details": json.dumps({"contracts": len(amounts)}),
-                    }
-                )
+        composite = anomalous_price(group["amount_float"], group["duration_days"])
+        if composite is not None:
+            score, components = composite
+            signals.append(
+                {
+                    "entity_type": "supplier",
+                    "entity_id": str(supplier_id),
+                    "signal_type": SignalType.ANOMALOUS_PRICE,
+                    "score": score,
+                    "details": json.dumps({**components, "contracts": int(len(group))}),
+                }
+            )
+
+        non_competitive = int(group["modality"].map(is_non_competitive).sum())
+        rate = single_bid_score(group["modality"])
+        if rate > 0 and len(group) >= 3:
+            signals.append(
+                {
+                    "entity_type": "supplier",
+                    "entity_id": str(supplier_id),
+                    "signal_type": SignalType.SINGLE_BID,
+                    "score": rate,
+                    "details": json.dumps(
+                        {
+                            "contracts": int(len(group)),
+                            "non_competitive": non_competitive,
+                        }
+                    ),
+                }
+            )
 
     hhi_df = df[["buyer_id", "supplier_id", "amount_float"]].rename(
         columns={"amount_float": "amount"}
@@ -374,7 +442,7 @@ def detect_fraud_signals(contracts: list[dict[str, Any]]) -> list[dict[str, Any]
                 {
                     "entity_type": "buyer",
                     "entity_id": str(buyer_id),
-                    "signal_type": "supplier_concentration",
+                    "signal_type": SignalType.CONCENTRATION,
                     "score": hhi,
                     "details": json.dumps(
                         {
@@ -398,7 +466,7 @@ def detect_fraud_signals(contracts: list[dict[str, Any]]) -> list[dict[str, Any]
                     {
                         "entity_type": "supplier",
                         "entity_id": str(supplier_id),
-                        "signal_type": "duration_outlier_share",
+                        "signal_type": SignalType.ANOMALOUS_DURATION,
                         "score": round(float(share), 4),
                         "details": json.dumps({"contracts": len(group)}),
                     }
@@ -432,6 +500,9 @@ def task_detect(**context: Any) -> dict[str, Any]:
             lake.write_fraud_signals(signals, run_date=run_date)
     except Exception as e:
         logger.warning("Failed to write fraud signals to the gold layer: %s", e)
+
+    # Best-effort: alerts never fail the task.
+    notify_fraud_signals(signals, run_date)
 
     return {"signals": len(signals)}
 
@@ -620,6 +691,81 @@ def task_download_source(
     return payload
 
 
+def task_normalize_dump(source_name: str, spec_path: str, **context: Any) -> dict[str, Any]:
+    """Task: parse a dump source's bronze files into the silver entity tables.
+
+    Streaming counterpart of the runner's ``normalize_<source>`` step of the
+    file_dump formula: the download tempdir is gone in another worker, so
+    the bronze files of the manifest are read back, parsed in chunks and
+    appended to the silver tables chunk by chunk. Non-entity files
+    (Cnaes.zip etc.) are skipped; sources without a registered dump parser
+    or specs without the lake_silver/arangodb_graph destinations are a
+    no-op.
+
+    Args:
+        source_name: Name of the dump source to normalize.
+        spec_path: Path of the YAML pipeline spec.
+        context: Airflow context.
+
+    Returns:
+        Summary with per-entity row counts and parse/write errors.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from capiba.ingestion.cnpj import entity_for_zip
+
+    run_date = _lake_run_date(context) or date.today()
+    spec = _load_spec(spec_path)
+    ti = context["ti"]
+
+    parser = DUMP_PARSER_REGISTRY.get(source_name)
+    destination_names = {d.name for d in spec.destinations}
+    if parser is None or not destination_names & {"lake_silver", "arangodb_graph"}:
+        summary: dict[str, Any] = {"source": source_name, "entities": {}, "skipped": True}
+        ti.xcom_push(key=f"entities_{source_name}", value=summary)
+        return summary
+
+    manifest = (
+        ti.xcom_pull(task_ids=f"download_{source_name}", key=f"manifest_{source_name}")
+        or {}
+    )
+
+    counts: dict[str, int] = {}
+    errors = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        for entry in manifest.get("files", []):
+            filename = entry["file"]
+            if entity_for_zip(filename) is None:
+                logger.info("Skipping non-entity dump file: %s", filename)
+                continue
+            try:
+                data = lake.read_bronze_file(entry["lake_key"])
+            except Exception as exc:
+                errors += 1
+                logger.warning("Failed to read bronze file %s: %s", filename, exc)
+                continue
+            zip_path = Path(tmp) / filename
+            zip_path.write_bytes(data)
+            for entity, records, parse_errors in parser(zip_path):
+                errors += parse_errors
+                if not records:
+                    continue
+                try:
+                    lake.write_silver_entities(entity, records, run_date=run_date)
+                    counts[entity] = counts.get(entity, 0) + len(records)
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "Failed to write %s chunk to the silver layer: %s", entity, exc
+                    )
+
+    summary = {"source": source_name, "entities": counts, "errors": errors}
+    ti.xcom_push(key=f"entities_{source_name}", value=summary)
+    logger.info("Dump normalization finished for %s: %s", source_name, summary)
+    return summary
+
+
 def task_normalize_pipeline(spec_path: str, **context: Any) -> list[dict[str, Any]]:
     """Task: normalize all crawled raw records into the unified schema.
 
@@ -660,6 +806,51 @@ def task_normalize_pipeline(spec_path: str, **context: Any) -> list[dict[str, An
     return contracts
 
 
+def _record_quality_batch(
+    pipeline_name: str,
+    contracts: list[dict[str, Any]],
+    report: dict[str, Any],
+) -> None:
+    """Feeds the continuous quality monitor with the validated batch.
+
+    Profiles the batch (registering it as the monitor baseline and checking
+    the thresholds) and records the batch metrics — total, duplicates,
+    normalization errors and quality-rule failures per severity — so the
+    notification scheduler can report real numbers. Best-effort: any
+    failure (missing Redis included) is logged and swallowed; validation
+    never depends on the monitor.
+    """
+    from capiba.quality.monitor import QualityMonitor
+    from capiba.quality.profiling import profile_dataset
+
+    try:
+        dataset = f"pipeline:{pipeline_name}"
+        monitor = QualityMonitor()
+        if contracts:
+            df = pd.json_normalize(contracts, sep="_")
+            profile = profile_dataset(df, dataset)
+            monitor.register_baseline(dataset, profile)
+            monitor.check(dataset, profile)
+
+        failures: dict[str, int] = {}
+        for rule in report.get("quality_rules") or []:
+            if "error" in rule or rule.get("violations", 0) > 0:
+                severity = rule.get("severity", "unknown")
+                failures[severity] = failures.get(severity, 0) + 1
+
+        monitor.record_batch(
+            dataset,
+            {
+                "total": report.get("total", 0),
+                "duplicates": report.get("duplicates", 0),
+                "normalization_errors": report.get("normalization_errors", 0),
+                "quality_rule_failures": failures,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Failed to record quality metrics for %s: %s", pipeline_name, exc)
+
+
 def task_validate_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
     """Task: validate normalized contracts.
 
@@ -688,6 +879,11 @@ def task_validate_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("Failed to apply quality ruleset: %s", exc)
 
+    # Best-effort: alerts never fail the task.
+    notify_validation_failure(report, spec.name)
+    # Best-effort: feed the continuous quality monitor (no-op without Redis).
+    _record_quality_batch(spec.name, contracts, report)
+
     ti.xcom_push(key="validation_report", value=report)
     return report
 
@@ -712,6 +908,23 @@ def task_destination(
         raise ValueError(f"Unknown destination '{destination_name}'")
 
     ti = context["ti"]
+
+    # file_dump specs load the graph from the silver entity tables and the
+    # silver destination only reports the streaming normalize counts (the
+    # writes already happened in the normalize_<source> task).
+    if spec.formula == "file_dump":
+        if destination_name == "arangodb_graph":
+            return persist_cnpj_entities(execution_date=run_date.isoformat())
+        if destination_name == "lake_silver":
+            entities: dict[str, Any] = {}
+            for source in spec.sources:
+                value = ti.xcom_pull(
+                    task_ids=f"normalize_{source.name}", key=f"entities_{source.name}"
+                )
+                if value is not None:
+                    entities[source.name] = value
+            return {"entities": entities}
+
     raw: dict[str, Any] = {}
     for source in spec.sources:
         if destination_name == "lake_bronze":
@@ -724,16 +937,9 @@ def task_destination(
 
     contracts = ti.xcom_pull(task_ids="normalize", key="normalized_contracts") or []
 
-    # Build a minimal FormulaResult-like object for the handler.
-    class _Result:
-        def __init__(self) -> None:
-            self.raw = raw
-            self.contracts = contracts
-            self.manifests = raw
-            self.outputs: dict[str, Any] = {}
-            self.validation: dict[str, Any] | None = None
+    from capiba.pipeline.runner import FormulaResult
 
-    result = _Result()
+    result = FormulaResult(raw=raw, contracts=contracts, manifests=raw)
     summary = handler(spec, run_date, result)
     return summary  # type: ignore[no-any-return]
 

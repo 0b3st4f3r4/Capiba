@@ -8,6 +8,9 @@ models:
         description: SIAFI code of the buying agency
         tests:
           - not_null
+          # A SIAFI code identifies a single agency; a duplicate means the
+          # same code arrived with inconsistent name/level/UF attributes.
+          - unique
       - name: contracts
         tests:
           - not_null

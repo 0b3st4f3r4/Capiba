@@ -8,20 +8,20 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from capiba.detection.signals import SignalType
 
-class SignalType(StrEnum):
-    """Detection signal types."""
-
-    SINGLE_BID = "single_bid"
-    CONCENTRATION = "concentration"
-    COLLUSION_NETWORK = "collusion_network"
-    ANOMALOUS_PRICE = "anomalous_price"
-    SEMANTIC_GAP = "semantic_gap"
-    ANOMALOUS_DURATION = "anomalous_duration"
+__all__ = [
+    "EvidenceItem",
+    "EvidenceStored",
+    "RankingItem",
+    "RankingResponse",
+    "Signal",
+    "SignalType",
+    "SignalsResponse",
+]
 
 
 class Signal(BaseModel):
@@ -57,3 +57,26 @@ class RankingResponse(BaseModel):
     period_start: date
     period_end: date
     ranking: list[RankingItem]
+
+
+class EvidenceStored(BaseModel):
+    """Response of the POST /v1/evidence endpoint (EvidenceStorage.store)."""
+
+    sha256: str
+    bucket: str
+    object_name: str
+    type: str
+    size_bytes: int
+    timestamp: str
+
+
+class EvidenceItem(BaseModel):
+    """Item of the GET /v1/evidence/contract/{contract_id} listing."""
+
+    sha256: str | None = None
+    bucket: str
+    object_name: str | None = None
+    type: str | None = None
+    filename: str | None = None
+    size: int | None = None
+    timestamp: str | None = None

@@ -317,3 +317,149 @@ def test_write_fraud_signals_empty_creates_table(local_catalog: Path) -> None:
 
     table = lake.get_catalog(config.ICEBERG_WAREHOUSE_GOLD).load_table(identifier)
     assert table.scan().to_arrow().num_rows == 0
+
+
+def _company_row(cnpj_basico: str = "12345678") -> dict[str, Any]:
+    """Builds a minimal Company-valid serializable record."""
+    return {
+        "cnpj_basico": cnpj_basico,
+        "razao_social": "EMPRESA TESTE LTDA",
+        "natureza_juridica": "2062",
+        "qualificacao_responsavel": "49",
+        "capital_social": "1000.50",
+        "porte_empresa": "05",
+        "ente_federativo": "PE",
+    }
+
+
+def test_write_silver_entities_roundtrip_typed(local_catalog: Path) -> None:
+    """Silver entity tables store typed rows partitioned by dt."""
+    identifier = lake.write_silver_entities(
+        "companies", [_company_row()], run_date=RUN_DATE
+    )
+
+    assert identifier == "capiba.companies"
+    table = lake.get_catalog(config.ICEBERG_WAREHOUSE_SILVER).load_table(identifier)
+    rows = table.scan().to_arrow()
+    assert rows.num_rows == 1
+    assert rows.column("cnpj_basico")[0].as_py() == "12345678"
+    assert rows.column("capital_social")[0].as_py() == Decimal("1000.50")
+    assert rows.column("dt")[0].as_py() == RUN_DATE
+    spec = table.spec()
+    assert [f.name for f in spec.fields] == ["dt"]
+
+
+def test_write_silver_entities_establishments_and_partners(
+    local_catalog: Path,
+) -> None:
+    """Establishment/partner rows keep bool and date columns typed."""
+    lake.write_silver_entities(
+        "establishments",
+        [
+            {
+                "cnpj": "12345678000195",
+                "cnpj_basico": "12345678",
+                "is_matriz": True,
+                "data_inicio_atividade": "2015-06-01",
+                "uf": "PE",
+            }
+        ],
+        run_date=RUN_DATE,
+    )
+    lake.write_silver_entities(
+        "partners",
+        [
+            {
+                "partner_id": "a" * 32,
+                "cnpj_basico": "12345678",
+                "nome": "JOAO SILVA",
+                "data_entrada": "2015-01-01",
+            }
+        ],
+        run_date=RUN_DATE,
+    )
+
+    catalog = lake.get_catalog(config.ICEBERG_WAREHOUSE_SILVER)
+    establishments = catalog.load_table("capiba.establishments").scan().to_arrow()
+    assert establishments.column("is_matriz")[0].as_py() is True
+    assert establishments.column("data_inicio_atividade")[0].as_py() == date(2015, 6, 1)
+    partners = catalog.load_table("capiba.partners").scan().to_arrow()
+    assert partners.column("partner_id")[0].as_py() == "a" * 32
+    assert partners.column("data_entrada")[0].as_py() == date(2015, 1, 1)
+
+
+def test_write_silver_entities_appends_and_skips_invalid(local_catalog: Path) -> None:
+    """Chunked appends accumulate rows; invalid rows are skipped."""
+    lake.write_silver_entities("companies", [_company_row()], run_date=RUN_DATE)
+    lake.write_silver_entities(
+        "companies",
+        [{"cnpj_basico": "broken"}, _company_row("87654321")],
+        run_date=RUN_DATE,
+    )
+
+    table = lake.get_catalog(config.ICEBERG_WAREHOUSE_SILVER).load_table(
+        "capiba.companies"
+    )
+    assert table.scan().to_arrow().num_rows == 2
+
+
+def test_write_silver_entities_unknown_entity(local_catalog: Path) -> None:
+    """An unknown entity name is a config error, not a silent no-op."""
+    with pytest.raises(ValueError, match="Unknown silver entity"):
+        lake.write_silver_entities("cnaes", [{}], run_date=RUN_DATE)
+
+
+def test_read_silver_entities_roundtrip_in_batches(local_catalog: Path) -> None:
+    """Reads back every typed row written to a silver entity table."""
+    lake.write_silver_entities(
+        "companies",
+        [_company_row(), _company_row("87654321")],
+        run_date=RUN_DATE,
+    )
+
+    batches = list(lake.read_silver_entities("companies"))
+
+    rows = [row for batch in batches for row in batch]
+    assert {row["cnpj_basico"] for row in rows} == {"12345678", "87654321"}
+    assert rows[0]["dt"] == RUN_DATE
+
+
+def test_read_silver_entities_without_table(local_catalog: Path) -> None:
+    """A missing silver entity table reads as empty, not an error."""
+    assert list(lake.read_silver_entities("partners")) == []
+
+
+def test_list_bronze_files_prefix(mock_client: MagicMock) -> None:
+    """Bronze file listings use the <source>/files/dt=<date>/ prefix."""
+    mock_client.list_objects.return_value = iter(
+        [
+            MagicMock(object_name="federal_revenue/files/dt=2026-01-15/Empresas0.zip"),
+            MagicMock(object_name="federal_revenue/files/dt=2026-01-15/Cnaes.zip"),
+        ]
+    )
+
+    keys = lake.list_bronze_files("federal_revenue", run_date=RUN_DATE)
+
+    assert keys == [
+        "federal_revenue/files/dt=2026-01-15/Empresas0.zip",
+        "federal_revenue/files/dt=2026-01-15/Cnaes.zip",
+    ]
+    args, kwargs = mock_client.list_objects.call_args
+    assert args[0] == config.LAKE_BUCKET_BRONZE
+    assert kwargs["prefix"] == "federal_revenue/files/dt=2026-01-15/"
+
+
+def test_read_bronze_file_roundtrip(mock_client: MagicMock) -> None:
+    """Bronze file reads return the raw bytes and release the connection."""
+    response = MagicMock()
+    response.read.return_value = b"\x50\x4b zip-bytes"
+    mock_client.get_object.return_value = response
+
+    data = lake.read_bronze_file("federal_revenue/files/dt=2026-01-15/dump.zip")
+
+    assert data == b"\x50\x4b zip-bytes"
+    mock_client.get_object.assert_called_once_with(
+        config.LAKE_BUCKET_BRONZE, "federal_revenue/files/dt=2026-01-15/dump.zip"
+    )
+    response.close.assert_called_once()
+    response.release_conn.assert_called_once()

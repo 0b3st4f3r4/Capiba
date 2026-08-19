@@ -3,6 +3,15 @@
 # configured dump files of the previous reference month, lands the ZIPs
 # under federal_revenue/files/ in the bronze bucket and records a manifest
 # in the raw_federal_revenue Iceberg table. An empty manifest fails the run.
+#
+# With the lake_silver/arangodb_graph destinations, the Empresas*/
+# Estabelecimentos*/Socios* ZIPs are also parsed (streaming, chunked — the
+# GB-sized dumps never load fully in memory) into the silver tables
+# companies/establishments/partners, and companies/partners flow into the
+# ArangoDB graph (partner_of edges). Those large files are opt-in via
+# params.files/FEDERAL_REVENUE_FILES (default: only the small reference
+# tables, which are skipped by the parser); non-entity files such as
+# Cnaes.zip are ignored by the normalize step.
 name: monthly_federal_revenue
 description: Monthly Federal Revenue (CNPJ) reference dump crawl
 schedule: "23 5 2 * *" # 2nd of the month, 05:23 UTC (previous month's dump)
@@ -14,3 +23,5 @@ sources:
 formula: file_dump
 destinations:
   - lake_bronze # manifest recorded in the bronze layer
+  - lake_silver # reports the streaming entity counts (writes happen in normalize)
+  - arangodb_graph # companies/partners vertices + partner_of edges from the silver

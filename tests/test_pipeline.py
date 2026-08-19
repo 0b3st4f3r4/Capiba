@@ -417,7 +417,7 @@ class TestTaskDetect:
         assert mock_lake.write_fraud_signals.call_args.kwargs["run_date"] == date(
             2026, 1, 1
         )
-        assert {s["signal_type"] for s in signals} == {"supplier_concentration"}
+        assert {s["signal_type"] for s in signals} == {"concentration"}
 
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_read_failure(self, mock_lake: MagicMock) -> None:
@@ -484,3 +484,73 @@ class TestTaskDbtRun:
 
         mock_run_dbt.assert_called_once_with("run")
         assert summary == {"dbt": "run", "project_dir": DBT_PROJECT_DIR}
+
+
+class TestRecordQualityBatch:
+    """Tests for the quality-monitor hook of the validate task."""
+
+    @patch("capiba.quality.monitor.QualityMonitor")
+    def test_records_profile_and_batch_metrics(self, mock_cls: MagicMock) -> None:
+        """A non-empty batch must be profiled, checked and recorded."""
+        from capiba.pipeline.tasks import _record_quality_batch
+
+        monitor = mock_cls.return_value
+        contracts = [
+            {"id": "C001", "amount": "100.0", "buyer": {"siafi_code": "1"}},
+            {"id": "C002", "amount": "200.0", "buyer": {"siafi_code": "2"}},
+        ]
+        report = {
+            "total": 2,
+            "duplicates": 0,
+            "normalization_errors": 1,
+            "quality_rules": [
+                {"rule": "r1", "severity": "error", "violations": 3},
+                {"rule": "r2", "severity": "warning", "error": "boom"},
+                {"rule": "r3", "severity": "info", "violations": 0},
+            ],
+        }
+
+        _record_quality_batch("daily_ingestion", contracts, report)
+
+        monitor.register_baseline.assert_called_once()
+        assert monitor.register_baseline.call_args.args[0] == "pipeline:daily_ingestion"
+        monitor.check.assert_called_once()
+        monitor.record_batch.assert_called_once_with(
+            "pipeline:daily_ingestion",
+            {
+                "total": 2,
+                "duplicates": 0,
+                "normalization_errors": 1,
+                "quality_rule_failures": {"error": 1, "warning": 1},
+            },
+        )
+
+    @patch("capiba.quality.monitor.QualityMonitor")
+    def test_empty_batch_records_without_profile(self, mock_cls: MagicMock) -> None:
+        """An empty batch skips the profile but still records the metrics."""
+        from capiba.pipeline.tasks import _record_quality_batch
+
+        monitor = mock_cls.return_value
+
+        _record_quality_batch("daily_ingestion", [], {"total": 0, "duplicates": 0})
+
+        monitor.register_baseline.assert_not_called()
+        monitor.check.assert_not_called()
+        monitor.record_batch.assert_called_once_with(
+            "pipeline:daily_ingestion",
+            {
+                "total": 0,
+                "duplicates": 0,
+                "normalization_errors": 0,
+                "quality_rule_failures": {},
+            },
+        )
+
+    @patch("capiba.quality.monitor.QualityMonitor")
+    def test_monitor_failure_is_swallowed(self, mock_cls: MagicMock) -> None:
+        """A monitor failure (e.g. Redis down) must never break the task."""
+        from capiba.pipeline.tasks import _record_quality_batch
+
+        mock_cls.side_effect = RuntimeError("redis down")
+
+        _record_quality_batch("daily_ingestion", [{"id": "C001"}], {"total": 1})

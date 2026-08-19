@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -38,6 +39,7 @@ from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.transforms import IdentityTransform
 from pyiceberg.types import (
+    BooleanType,
     DateType,
     DecimalType,
     DoubleType,
@@ -65,9 +67,12 @@ from capiba.config import (
     MINIO_SECRET_KEY,
     MINIO_SECURE,
 )
+from capiba.ingestion.cnpj import Company, Establishment, Partner
 from capiba.ingestion.normalizer import Contract
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from capiba.pipeline.runner import PipelineReport
 
 logger = logging.getLogger(__name__)
@@ -122,6 +127,70 @@ CONTRACTS_PARTITION_SPEC = PartitionSpec(
         source_id=24, field_id=1000, transform=IdentityTransform(), name="dt"
     )
 )
+
+# Iceberg schemas of the silver CNPJ entity tables (Federal Revenue dump),
+# partitioned by the ingestion date ``dt`` like the contracts table.
+COMPANIES_SCHEMA = Schema(
+    NestedField(1, "cnpj_basico", StringType(), required=True),
+    NestedField(2, "razao_social", StringType(), required=False),
+    NestedField(3, "natureza_juridica", StringType(), required=False),
+    NestedField(4, "qualificacao_responsavel", StringType(), required=False),
+    NestedField(5, "capital_social", DecimalType(38, 2), required=False),
+    NestedField(6, "porte_empresa", StringType(), required=False),
+    NestedField(7, "ente_federativo", StringType(), required=False),
+    NestedField(8, "dt", DateType(), required=False),
+    NestedField(9, "ingested_at", TimestamptzType(), required=False),
+)
+
+COMPANIES_PARTITION_SPEC = PartitionSpec(
+    PartitionField(source_id=8, field_id=1000, transform=IdentityTransform(), name="dt")
+)
+
+ESTABLISHMENTS_SCHEMA = Schema(
+    NestedField(1, "cnpj", StringType(), required=True),
+    NestedField(2, "cnpj_basico", StringType(), required=False),
+    NestedField(3, "is_matriz", BooleanType(), required=False),
+    NestedField(4, "nome_fantasia", StringType(), required=False),
+    NestedField(5, "situacao_cadastral", StringType(), required=False),
+    NestedField(6, "data_situacao_cadastral", DateType(), required=False),
+    NestedField(7, "data_inicio_atividade", DateType(), required=False),
+    NestedField(8, "cnae_principal", StringType(), required=False),
+    NestedField(9, "uf", StringType(), required=False),
+    NestedField(10, "municipio", StringType(), required=False),
+    NestedField(11, "cep", StringType(), required=False),
+    NestedField(12, "email", StringType(), required=False),
+    NestedField(13, "dt", DateType(), required=False),
+    NestedField(14, "ingested_at", TimestamptzType(), required=False),
+)
+
+ESTABLISHMENTS_PARTITION_SPEC = PartitionSpec(
+    PartitionField(
+        source_id=13, field_id=1000, transform=IdentityTransform(), name="dt"
+    )
+)
+
+PARTNERS_SCHEMA = Schema(
+    NestedField(1, "partner_id", StringType(), required=True),
+    NestedField(2, "cnpj_basico", StringType(), required=False),
+    NestedField(3, "identificador", StringType(), required=False),
+    NestedField(4, "nome", StringType(), required=False),
+    NestedField(5, "qualificacao", StringType(), required=False),
+    NestedField(6, "data_entrada", DateType(), required=False),
+    NestedField(7, "faixa_etaria", StringType(), required=False),
+    NestedField(8, "dt", DateType(), required=False),
+    NestedField(9, "ingested_at", TimestamptzType(), required=False),
+)
+
+PARTNERS_PARTITION_SPEC = PartitionSpec(
+    PartitionField(source_id=8, field_id=1000, transform=IdentityTransform(), name="dt")
+)
+
+# Silver entity tables: name -> (schema, partition spec, pydantic model).
+ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
+    "companies": (COMPANIES_SCHEMA, COMPANIES_PARTITION_SPEC, Company),
+    "establishments": (ESTABLISHMENTS_SCHEMA, ESTABLISHMENTS_PARTITION_SPEC, Establishment),
+    "partners": (PARTNERS_SCHEMA, PARTNERS_PARTITION_SPEC, Partner),
+}
 
 # Iceberg schema of the bronze ``raw_<source>`` tables: the full payload kept
 # as a JSON string, one row per crawl run.
@@ -328,6 +397,50 @@ def write_bronze_file(
     return key
 
 
+def list_bronze_files(source: str, run_date: date | None = None) -> list[str]:
+    """Lists the object keys of a source's raw file uploads for a run date.
+
+    Counterpart of ``write_bronze_file``: keys live under
+    ``<source>/files/dt=YYYY-MM-DD/`` in the bronze bucket.
+
+    Args:
+        source: Source name (e.g. ``federal_revenue``).
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        Object keys (possibly empty).
+    """
+    prefix = f"{source}/files/dt={_partition_day(run_date).isoformat()}/"
+    keys = [
+        obj.object_name
+        for obj in get_client().list_objects(
+            LAKE_BUCKET_BRONZE, prefix=prefix, recursive=True
+        )
+        if obj.object_name is not None
+    ]
+    logger.info("Bronze files listed: %s (%d keys)", prefix, len(keys))
+    return keys
+
+
+def read_bronze_file(key: str) -> bytes:
+    """Reads back a raw file uploaded with ``write_bronze_file``.
+
+    Args:
+        key: Object key in the bronze bucket.
+
+    Returns:
+        The raw file contents.
+    """
+    response = get_client().get_object(LAKE_BUCKET_BRONZE, key)
+    try:
+        data = response.read()
+    finally:
+        response.close()
+        response.release_conn()
+    logger.info("Lake file read: %s/%s (%d bytes)", LAKE_BUCKET_BRONZE, key, len(data))
+    return data
+
+
 def write_bronze_table(source: str, payload: Any, run_date: date | None = None) -> str:
     """Appends a raw source payload to the bronze Iceberg table.
 
@@ -407,6 +520,70 @@ def read_silver_contracts() -> list[dict[str, Any]]:
         return []
     rows = table.scan().to_pandas().to_dict("records")
     return cast(list[dict[str, Any]], rows)
+
+
+def write_silver_entities(
+    entity: str, rows: list[dict[str, Any]], run_date: date | None = None
+) -> str:
+    """Appends CNPJ entity records to the entity's silver Iceberg table.
+
+    Safe to call many times per run (one append per parsed chunk, so the
+    dump never materializes in memory). Records are revalidated against
+    the entity model, like ``write_silver`` does with ``Contract``.
+
+    Args:
+        entity: Entity name (``companies``/``establishments``/``partners``).
+        rows: Serializable entity records (one parsed chunk).
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        The Iceberg table identifier written.
+    """
+    if entity not in ENTITY_TABLES:
+        raise ValueError(f"Unknown silver entity '{entity}'")
+    schema, spec, model = ENTITY_TABLES[entity]
+    table = _ensure_table(ICEBERG_WAREHOUSE_SILVER, entity, schema, spec)
+
+    partition = _partition_day(run_date)
+    ingested_at = datetime.now(UTC)
+    valid_rows: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            record = model.model_validate(row).model_dump()
+        except Exception as e:
+            logger.warning("Skipping invalid %s row for the silver table: %s", entity, e)
+            continue
+        valid_rows.append({**record, "dt": partition, "ingested_at": ingested_at})
+
+    if valid_rows:
+        table.append(pa.Table.from_pylist(valid_rows, schema=_arrow_schema(table)))
+    logger.info("Silver Iceberg table appended: %s (%d rows)", entity, len(valid_rows))
+    return f"{ICEBERG_NAMESPACE}.{entity}"
+
+
+def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
+    """Reads the silver table of an entity in batches.
+
+    Batched so graph loads over the large CNPJ tables do not exhaust
+    memory. A missing table yields nothing (logged), like the other
+    silver/gold readers.
+
+    Args:
+        entity: Entity name (``companies``/``establishments``/``partners``).
+
+    Yields:
+        Lists of entity rows as dicts (one list per Arrow record batch).
+    """
+    if entity not in ENTITY_TABLES:
+        raise ValueError(f"Unknown silver entity '{entity}'")
+    catalog = get_catalog(ICEBERG_WAREHOUSE_SILVER)
+    try:
+        table = catalog.load_table(f"{ICEBERG_NAMESPACE}.{entity}")
+    except NoSuchTableError:
+        logger.info("Silver %s table not found; nothing to read", entity)
+        return
+    for batch in table.scan().to_arrow().to_batches():
+        yield batch.to_pylist()
 
 
 def read_fraud_signals() -> list[dict[str, Any]]:

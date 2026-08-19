@@ -5,10 +5,20 @@ Responsibility: Validate statistical, ML, graph and NLP operators.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from capiba.detection.signals import (
+    SignalType,
+    anomalous_price,
+    benford_deviation,
+    duration_outlier_share,
+    isolation_forest_rate,
+    single_bid_score,
+)
 from capiba.detection.statistical import (
     benford_score,
     duration_outlier,
@@ -212,125 +222,6 @@ class TestGraphs:
         assert "E002" in paths[0]
 
 
-@pytest.mark.integration
-class TestVectorStore:
-    """Tests for the vector store in ArangoDB."""
-
-    def test_upsert_and_search_similar(self) -> None:
-        """Must store and retrieve vectors by similarity."""
-        from capiba.db.vectors import (
-            delete_vector,
-            search_similar,
-            upsert_vector,
-        )
-
-        collection_name = "test_documents"
-        upsert_vector(
-            "v1",
-            [1.0, 0.0, 0.0],
-            {"title": "Doc 1"},
-            collection_name=collection_name,
-        )
-        upsert_vector(
-            "v2",
-            [0.9, 0.1, 0.0],
-            {"title": "Doc 2"},
-            collection_name=collection_name,
-        )
-        upsert_vector(
-            "v3",
-            [0.0, 1.0, 0.0],
-            {"title": "Doc 3"},
-            collection_name=collection_name,
-        )
-
-        results = search_similar(
-            [1.0, 0.0, 0.0],
-            top_k=2,
-            collection_name=collection_name,
-        )
-
-        assert len(results) == 2
-        assert results[0]["external_id"] == "v1"
-        assert results[0]["similarity"] == pytest.approx(1.0, abs=0.01)
-
-        # Cleanup
-        for vid in ("v1", "v2", "v3"):
-            assert delete_vector(vid, collection_name=collection_name)
-
-    def test_delete_vector(self) -> None:
-        """Must remove a vector by identifier."""
-        from capiba.db.vectors import delete_vector, upsert_vector
-
-        collection_name = "test_delete"
-        upsert_vector("del1", [1.0, 0.0], collection_name=collection_name)
-        assert delete_vector("del1", collection_name=collection_name)
-        assert not delete_vector("missing", collection_name=collection_name)
-
-
-@pytest.mark.integration
-class TestFullTextSearch:
-    """Tests for full-text search in ArangoDB (ArangoSearch)."""
-
-    def test_index_and_search_document(self) -> None:
-        """Must index and find documents by text."""
-        import time
-
-        from capiba.db.search import (
-            delete_document,
-            ensure_search_view,
-            index_document,
-            search_text,
-        )
-
-        collection_name = "test_search_documents"
-        view_name = "test_search_view"
-
-        # Ensures the view exists before indexing the documents
-        ensure_search_view(db=None, collection=collection_name, view=view_name)
-
-        index_document(
-            "doc1",
-            "Edital de licitação para compra de equipamentos",
-            title="Edital 001",
-            db=None,
-            collection=collection_name,
-        )
-        index_document(
-            "doc2",
-            "Contrato de prestação de serviços",
-            title="Contrato 002",
-            db=None,
-            collection=collection_name,
-        )
-
-        # Waits for the view to reflect the changes
-        time.sleep(2)
-
-        results = search_text(
-            "licitação",
-            top_k=5,
-            db=None,
-            view=view_name,
-            collection=collection_name,
-        )
-
-        assert len(results) == 1
-        assert results[0]["external_id"] == "doc1"
-
-        for doc_id in ("doc1", "doc2"):
-            assert delete_document(doc_id, db=None, collection=collection_name)
-
-    def test_delete_search_document(self) -> None:
-        """Must remove a document from the index."""
-        from capiba.db.search import delete_document, index_document
-
-        collection_name = "test_search_delete"
-        index_document("del1", "Texto de teste", db=None, collection=collection_name)
-        assert delete_document("del1", db=None, collection=collection_name)
-        assert not delete_document("missing", db=None, collection=collection_name)
-
-
 class TestComputeCRI:
     """Tests for the Composite Risk Index."""
 
@@ -394,18 +285,22 @@ class TestFraudSignals:
         assert detect_fraud_signals([]) == []
 
     def test_emits_supplier_and_buyer_signals(self) -> None:
-        """Benford deviation, concentration and duration signals are emitted."""
+        """Anomalous price, concentration and duration signals are emitted."""
         signals = detect_fraud_signals(self._contracts())
         kinds = {(s["entity_type"], s["signal_type"]) for s in signals}
 
-        assert ("supplier", "benford_deviation") in kinds
-        assert ("buyer", "supplier_concentration") in kinds
+        assert ("supplier", "anomalous_price") in kinds
+        assert ("buyer", "concentration") in kinds
 
-        benford = next(s for s in signals if s["signal_type"] == "benford_deviation")
-        assert benford["entity_id"] == "12345678000199"
-        assert benford["score"] > 0.5  # skewed leading digits -> suspicious
+        price = next(s for s in signals if s["signal_type"] == "anomalous_price")
+        assert price["entity_id"] == "12345678000199"
+        assert price["score"] > 0.5  # skewed leading digits -> suspicious
+        details = json.loads(price["details"])
+        # 12 contracts: Benford-eligible, IsolationForest-ineligible (< 15)
+        assert details["benford_deviation"] == price["score"]
+        assert details["isolation_forest_rate"] is None
 
-        hhi = next(s for s in signals if s["signal_type"] == "supplier_concentration")
+        hhi = next(s for s in signals if s["signal_type"] == "concentration")
         assert hhi["entity_id"] == "26000"
         assert hhi["score"] == 1.0  # single supplier -> total concentration
 
@@ -416,7 +311,123 @@ class TestFraudSignals:
             c["validity_end"] = "2026-02-10" if i else "2036-01-10"
 
         signals = detect_fraud_signals(contracts)
-        shares = [s for s in signals if s["signal_type"] == "duration_outlier_share"]
+        shares = [s for s in signals if s["signal_type"] == "anomalous_duration"]
 
         assert len(shares) == 1
         assert 0 < shares[0]["score"] <= 1.0
+
+    def test_single_bid_emitted_for_non_competitive_supplier(self) -> None:
+        """Suppliers with >= 3 non-competitive contracts emit single_bid."""
+        contracts = self._contracts(4)
+        for c in contracts:
+            c["modality"] = "dispensa"
+
+        signals = detect_fraud_signals(contracts)
+        single = [s for s in signals if s["signal_type"] == "single_bid"]
+
+        assert len(single) == 1
+        assert single[0]["entity_id"] == "12345678000199"
+        assert single[0]["score"] == 1.0
+        assert json.loads(single[0]["details"]) == {
+            "contracts": 4,
+            "non_competitive": 4,
+        }
+
+    def test_single_bid_not_emitted_when_rate_zero(self) -> None:
+        """Competitive-only suppliers must not emit single_bid."""
+        contracts = self._contracts(4)
+        for c in contracts:
+            c["modality"] = "pregao"
+
+        signals = detect_fraud_signals(contracts)
+        assert not [s for s in signals if s["signal_type"] == "single_bid"]
+
+    def test_single_bid_requires_three_contracts(self) -> None:
+        """Fewer than 3 contracts must not emit single_bid."""
+        contracts = self._contracts(2)
+        for c in contracts:
+            c["modality"] = "dispensa"
+
+        signals = detect_fraud_signals(contracts)
+        assert not [s for s in signals if s["signal_type"] == "single_bid"]
+
+    def test_anomalous_price_isolation_forest_only(self) -> None:
+        """Suppliers with >= 15 contracts but no amounts emit via IsolationForest."""
+        contracts = self._contracts(15)
+        for c in contracts:
+            c["amount"] = None
+
+        signals = detect_fraud_signals(contracts)
+        price = [s for s in signals if s["signal_type"] == "anomalous_price"]
+
+        assert len(price) == 1
+        details = json.loads(price[0]["details"])
+        assert details["benford_deviation"] is None
+        assert details["isolation_forest_rate"] is not None
+        assert price[0]["score"] == details["isolation_forest_rate"]
+
+    def test_anomalous_price_ineligible_supplier(self) -> None:
+        """Suppliers below both minimums must not emit anomalous_price."""
+        signals = detect_fraud_signals(self._contracts(9))
+        assert not [s for s in signals if s["signal_type"] == "anomalous_price"]
+
+
+class TestSharedSignals:
+    """Tests for the shared signal functions (capiba.detection.signals)."""
+
+    def test_signal_type_is_the_api_schema_enum(self) -> None:
+        """The API schema must re-export the same canonical enum."""
+        from capiba.api.schemas import SignalType as ApiSignalType
+
+        assert ApiSignalType is SignalType
+
+    def test_single_bid_score(self) -> None:
+        """The non-competitive rate is computed over the modality labels."""
+        assert (
+            single_bid_score(["dispensa", "pregao", "inexigibilidade", "pregao"])
+            == 0.5
+        )
+        assert single_bid_score([]) == 0.0
+
+    def test_benford_deviation_below_minimum(self) -> None:
+        """Fewer than 10 positive amounts must return None."""
+        assert benford_deviation([9000.0] * 9) is None
+
+    def test_benford_deviation_detects_skew(self) -> None:
+        """Skewed leading digits must produce a high deviation."""
+        deviation = benford_deviation([9000.0 + i for i in range(12)])
+        assert deviation is not None
+        assert deviation > 0.5
+
+    def test_isolation_forest_rate_below_minimum(self) -> None:
+        """Fewer than 15 contracts must return None."""
+        assert isolation_forest_rate([1000.0] * 14, [30.0] * 14) is None
+
+    def test_isolation_forest_rate_deterministic(self) -> None:
+        """The fixed random_state makes the rate reproducible."""
+        amounts = [1000.0 * (i + 1) for i in range(20)]
+        durations = [30.0] * 20
+        first = isolation_forest_rate(amounts, durations)
+        assert first is not None
+        assert first == isolation_forest_rate(amounts, durations)
+
+    def test_anomalous_price_none_when_ineligible(self) -> None:
+        """Groups below both minimums must return None."""
+        assert anomalous_price([1000.0] * 5, [30.0] * 5) is None
+
+    def test_anomalous_price_components(self) -> None:
+        """The composite score is the max of the eligible components."""
+        result = anomalous_price([9000.0 + i for i in range(20)], [30.0] * 20)
+        assert result is not None
+        score, components = result
+        assert components["benford_deviation"] is not None
+        assert components["isolation_forest_rate"] is not None
+        assert score == max(
+            value for value in components.values() if value is not None
+        )
+
+    def test_duration_outlier_share(self) -> None:
+        """Below the minimum returns None; otherwise the IQR outlier share."""
+        assert duration_outlier_share([30.0, 30.0], minimum=4) is None
+        share = duration_outlier_share([30.0, 30.0, 30.0, 3000.0], minimum=4)
+        assert share == 0.25

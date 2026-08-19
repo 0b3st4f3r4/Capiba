@@ -51,6 +51,77 @@ class QualityMonitor:
             "duplicates_pct": {"max": 0.05, "severity": "error"},
         }
 
+    def record_batch(self, dataset: str, metrics: dict[str, Any]) -> None:
+        """Appends a validation batch's metrics to the dataset history.
+
+        Best effort: without Redis the batch simply is not recorded (the
+        gold layer holds the validation history).
+
+        Args:
+            dataset: Dataset identifier name.
+            metrics: Batch metrics (total, duplicates, normalization
+                errors, quality-rule failures per severity, ...).
+        """
+        key = f"capiba:quality:metrics:{dataset}"
+        entry = {"timestamp": datetime.now(UTC).isoformat(), **metrics}
+        try:
+            existing = self.redis.get(key)
+            history = json.loads(existing) if existing else []
+            history.append(entry)
+            self.redis.setex(key, REDIS_TTL_DEFAULT * 24 * 30, json.dumps(history[-90:]))
+        except redis.RedisError as exc:
+            logger.warning(
+                "Redis unavailable; batch metrics not recorded (%s): %s",
+                dataset,
+                exc,
+            )
+
+    def get_metrics(
+        self, dataset: str, since: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        """Reads the recorded batch metrics history of a dataset.
+
+        Args:
+            dataset: Dataset identifier name.
+            since: When set, only entries at/after this instant are
+                returned (naive datetimes are treated as UTC).
+
+        Returns:
+            Metric entries (each with a ``timestamp``); empty when Redis
+            is unavailable or nothing was recorded.
+        """
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
+        try:
+            raw = self.redis.get(f"capiba:quality:metrics:{dataset}")
+        except redis.RedisError as exc:
+            logger.warning(
+                "Redis unavailable; metrics not read (%s): %s", dataset, exc
+            )
+            return []
+        entries: list[dict[str, Any]] = json.loads(raw) if raw else []
+        if since is None:
+            return entries
+        return [
+            e
+            for e in entries
+            if datetime.fromisoformat(str(e.get("timestamp", ""))) >= since
+        ]
+
+    def list_datasets(self) -> list[str]:
+        """Lists datasets with recorded batch metrics (empty without Redis)."""
+        prefix = "capiba:quality:metrics:"
+        try:
+            keys = self.redis.scan_iter(f"{prefix}*")
+            # redis-py returns bytes unless decode_responses is enabled.
+            names = [
+                key.decode() if isinstance(key, bytes) else str(key) for key in keys
+            ]
+            return sorted(name.removeprefix(prefix) for name in names)
+        except redis.RedisError as exc:
+            logger.warning("Redis unavailable; datasets not listed: %s", exc)
+            return []
+
     def register_baseline(self, dataset: str, profile: DatasetProfile) -> None:
         """Registers a quality baseline in Redis.
 

@@ -94,21 +94,6 @@ class TestDispatcher:
         assert "quality_alert" in dispatcher._templates
         assert "detection_alert" in dispatcher._templates
 
-    async def test_dispatch_unsupported_channel(self) -> None:
-        """Must return False for an unsupported channel."""
-        dispatcher = NotificationDispatcher()
-
-        alert = NotificationAlert(
-            title="Test",
-            message="Test",
-            priority=Priority.LOW,
-            channel=NotificationChannel.SMS,
-            recipients=["+5511999999999"],
-        )
-
-        result = await dispatcher.dispatch(alert)
-        assert result is False
-
     async def test_dispatch_email_success(self) -> None:
         """Must send the e-mail and return True."""
         dispatcher = NotificationDispatcher()

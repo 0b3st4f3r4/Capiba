@@ -1,4 +1,4 @@
-"""Notification dispatcher — e-mail, webhook, SMS.
+"""Notification dispatcher — e-mail and webhook.
 
 Chunk: dispatcher
 Responsibility: Send quality, detection and system
@@ -34,7 +34,6 @@ class NotificationChannel(StrEnum):
 
     EMAIL = "email"
     WEBHOOK = "webhook"
-    SMS = "sms"
 
 
 class Priority(StrEnum):

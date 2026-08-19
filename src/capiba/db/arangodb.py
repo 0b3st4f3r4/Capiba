@@ -34,8 +34,32 @@ VERTEX_COLLECTIONS = [
     "contracts",
     "buyers",
     "companies",
+    "partners",
 ]
-EDGE_COLLECTIONS = ["participates", "won", "owns"]
+EDGE_COLLECTIONS = ["participates", "won", "owns", "partner_of"]
+
+EDGE_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "edge_collection": "participates",
+        "from_vertex_collections": ["suppliers"],
+        "to_vertex_collections": ["bids"],
+    },
+    {
+        "edge_collection": "won",
+        "from_vertex_collections": ["suppliers"],
+        "to_vertex_collections": ["bids", "contracts"],
+    },
+    {
+        "edge_collection": "owns",
+        "from_vertex_collections": ["companies"],
+        "to_vertex_collections": ["companies"],
+    },
+    {
+        "edge_collection": "partner_of",
+        "from_vertex_collections": ["partners"],
+        "to_vertex_collections": ["companies"],
+    },
+]
 
 
 def get_arango_client() -> ArangoClient:
@@ -83,29 +107,28 @@ def ensure_collections(db: StandardDatabase) -> None:
 
 
 def ensure_graph(db: StandardDatabase) -> Graph:
-    """Ensures the Capiba graph exists."""
-    if db.has_graph(ARANGODB_GRAPH_NAME):
-        return db.graph(ARANGODB_GRAPH_NAME)
+    """Ensures the Capiba graph exists, with every edge definition.
 
-    edge_definitions = [
-        {
-            "edge_collection": "participates",
-            "from_vertex_collections": ["suppliers"],
-            "to_vertex_collections": ["bids"],
-        },
-        {
-            "edge_collection": "won",
-            "from_vertex_collections": ["suppliers"],
-            "to_vertex_collections": ["bids", "contracts"],
-        },
-        {
-            "edge_collection": "owns",
-            "from_vertex_collections": ["companies"],
-            "to_vertex_collections": ["companies"],
-        },
-    ]
+    Idempotent for graphs created by older versions: edge definitions
+    missing from an existing graph are added in place (clusters created
+    before ``partner_of`` keep working).
+    """
+    if db.has_graph(ARANGODB_GRAPH_NAME):
+        graph = db.graph(ARANGODB_GRAPH_NAME)
+        for definition in EDGE_DEFINITIONS:
+            if not graph.has_edge_definition(definition["edge_collection"]):
+                graph.create_edge_definition(
+                    edge_collection=definition["edge_collection"],
+                    from_vertex_collections=definition["from_vertex_collections"],
+                    to_vertex_collections=definition["to_vertex_collections"],
+                )
+                logger.info(
+                    "Edge definition added: %s", definition["edge_collection"]
+                )
+        return graph
+
     graph = cast(
-        Graph, db.create_graph(ARANGODB_GRAPH_NAME, edge_definitions=edge_definitions)
+        Graph, db.create_graph(ARANGODB_GRAPH_NAME, edge_definitions=EDGE_DEFINITIONS)
     )
     logger.info("Graph created: %s", ARANGODB_GRAPH_NAME)
     return graph

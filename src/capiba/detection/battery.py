@@ -19,9 +19,52 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from capiba.detection.signals import (
+    MIN_BENFORD_AMOUNTS,
+    MIN_ISOLATION_FOREST_CONTRACTS,
+    SignalType,
+)
 from capiba.pipeline.tasks import detect_fraud_signals
 
 _BASE = date(2026, 1, 1)
+
+
+def _buyer_supplier_counts(buyer_spec: dict[str, Any]) -> list[int]:
+    """Splits a buyer's contracts among its suppliers (mirrors the generator)."""
+    counts = [round(buyer_spec["contracts"] * share) for share in buyer_spec["supplier_shares"]]
+    counts[-1] += buyer_spec["contracts"] - sum(counts)  # exact split despite rounding
+    return counts
+
+
+def _expected_signal_counts(config: dict[str, Any]) -> dict[SignalType, int]:
+    """Derives the expected per-seed signal counts from the eligibility rules.
+
+    ``anomalous_price``: one signal per supplier eligible to any component —
+    Benford (>= MIN_BENFORD_AMOUNTS amounts) or IsolationForest (>=
+    MIN_ISOLATION_FOREST_CONTRACTS contracts). Buyer suppliers always carry
+    an amount (1000.0); the planted duration supplier carries null amounts,
+    so it is eligible only via IsolationForest. ``concentration``: one per
+    buyer. ``single_bid``: none — the synthetic population is all modality
+    "pregao" (rate 0, never emitted).
+    """
+    n_price = sum(
+        spec["count"]
+        for spec in config["suppliers"].values()
+        if spec["contracts_per_supplier"] >= MIN_BENFORD_AMOUNTS
+    )
+    for buyer in config["buyers"]:
+        n_price += sum(
+            1
+            for count in _buyer_supplier_counts(buyer)
+            if count >= MIN_BENFORD_AMOUNTS or count >= MIN_ISOLATION_FOREST_CONTRACTS
+        )
+    if config["durations"]["planted"]["contracts"] >= MIN_ISOLATION_FOREST_CONTRACTS:
+        n_price += 1  # duration supplier: IsolationForest-only (null amounts)
+    return {
+        SignalType.ANOMALOUS_PRICE: n_price,
+        SignalType.CONCENTRATION: len(config["buyers"]),
+        SignalType.SINGLE_BID: 0,
+    }
 
 
 def _log_uniform(rng: random.Random, low: float, high: float) -> float:
@@ -178,10 +221,7 @@ def evaluate(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str,
         and the overall battery verdict.
     """
     exp = config["expectations"]
-    n_benford = (
-        config["suppliers"]["control"]["count"]
-        + config["suppliers"]["planted_benford"]["count"]
-    )
+    expected_counts = _expected_signal_counts(config)
     n_buyers = len(config["buyers"])
     threshold = exp["benford_fp_threshold"]
 
@@ -200,26 +240,40 @@ def evaluate(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str,
             by_type.setdefault(signal["signal_type"], []).append(signal)
 
         # P1 — conservation of the signal count per type
-        benford = by_type.get("benford_deviation", [])
-        hhi = by_type.get("supplier_concentration", [])
-        duration = by_type.get("duration_outlier_share", [])
-        if len(benford) != n_benford:
-            p1_failures.append(f"seed {seed}: {len(benford)} benford != {n_benford}")
+        price = by_type.get(SignalType.ANOMALOUS_PRICE, [])
+        hhi = by_type.get(SignalType.CONCENTRATION, [])
+        duration = by_type.get(SignalType.ANOMALOUS_DURATION, [])
+        single = by_type.get(SignalType.SINGLE_BID, [])
+        if len(price) != expected_counts[SignalType.ANOMALOUS_PRICE]:
+            p1_failures.append(
+                f"seed {seed}: {len(price)} anomalous_price"
+                f" != {expected_counts[SignalType.ANOMALOUS_PRICE]}"
+            )
         if len(hhi) != n_buyers:
             p1_failures.append(f"seed {seed}: {len(hhi)} hhi != {n_buyers}")
+        if len(single) != expected_counts[SignalType.SINGLE_BID]:
+            p1_failures.append(f"seed {seed}: {len(single)} unexpected single_bid")
         if any(s["entity_id"] != meta["duration_outlier_supplier"] for s in duration):
             p1_failures.append(f"seed {seed}: duration signal from wrong supplier")
-        if len(signals) != n_benford + n_buyers + len(duration):
+        if len(signals) != (
+            expected_counts[SignalType.ANOMALOUS_PRICE]
+            + n_buyers
+            + len(duration)
+            + len(single)
+        ):
             p1_failures.append(f"seed {seed}: total {len(signals)}")
 
-        # P2/P3 — Benford calibration and power
+        # P2/P3 — Benford calibration and power (component of anomalous_price)
         control_ids = set(meta["control_suppliers"])
         planted_ids = set(meta["planted_suppliers"])
-        for signal in benford:
+        for signal in price:
+            benford_dev = json.loads(signal["details"]).get("benford_deviation")
+            if benford_dev is None:
+                continue  # IsolationForest-only signal (duration supplier)
             if signal["entity_id"] in control_ids:
-                control_fp += int(signal["score"] >= threshold)
+                control_fp += int(benford_dev >= threshold)
             elif signal["entity_id"] in planted_ids:
-                planted_hits += int(signal["score"] >= threshold)
+                planted_hits += int(benford_dev >= threshold)
 
         # P4 — exact HHI anchors
         hhi_by_buyer = {s["entity_id"]: s["score"] for s in hhi}

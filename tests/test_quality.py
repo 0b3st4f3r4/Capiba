@@ -7,6 +7,7 @@ and the lineage tracker.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -297,3 +298,72 @@ class TestMonitor:
 
         assert len(alerts) == 1
         assert alerts[0].metric == "quality_score"
+
+    def test_record_batch_appends_metrics(self, monitor: QualityMonitor) -> None:
+        """Batch metrics must be appended to the dataset history."""
+        monitor.redis.get.return_value = json.dumps(
+            [{"timestamp": "2026-08-17T00:00:00+00:00", "total": 5}]
+        )
+
+        monitor.record_batch("pipeline:daily", {"total": 10, "duplicates": 1})
+
+        key, ttl, payload = monitor.redis.setex.call_args[0]
+        assert key == "capiba:quality:metrics:pipeline:daily"
+        assert ttl > 0
+        history = json.loads(payload)
+        assert len(history) == 2
+        assert history[1]["total"] == 10
+        assert "timestamp" in history[1]
+
+    def test_record_batch_degrades_without_redis(
+        self, monitor: QualityMonitor
+    ) -> None:
+        """A Redis failure must not break the batch recording."""
+        monitor.redis.get.side_effect = redis.ConnectionError("boom")
+
+        monitor.record_batch("pipeline:daily", {"total": 10})
+
+    def test_get_metrics_filters_by_since(self, monitor: QualityMonitor) -> None:
+        """Only entries at/after ``since`` must be returned."""
+        monitor.redis.get.return_value = json.dumps(
+            [
+                {"timestamp": "2026-08-10T00:00:00+00:00", "total": 1},
+                {"timestamp": "2026-08-18T00:00:00+00:00", "total": 2},
+            ]
+        )
+
+        entries = monitor.get_metrics(
+            "pipeline:daily", since=datetime(2026, 8, 15, tzinfo=UTC)
+        )
+
+        assert entries == [
+            {"timestamp": "2026-08-18T00:00:00+00:00", "total": 2}
+        ]
+
+    def test_get_metrics_empty_without_redis(self, monitor: QualityMonitor) -> None:
+        """A Redis failure must yield an empty history."""
+        monitor.redis.get.side_effect = redis.ConnectionError("boom")
+
+        assert monitor.get_metrics("pipeline:daily") == []
+
+    def test_list_datasets(self, monitor: QualityMonitor) -> None:
+        """Datasets must come from the metrics keys, without the prefix."""
+        monitor.redis.scan_iter.return_value = iter(
+            [
+                "capiba:quality:metrics:pipeline:daily_ingestion",
+                "capiba:quality:metrics:pipeline:hourly_pod_usage",
+            ]
+        )
+
+        assert monitor.list_datasets() == [
+            "pipeline:daily_ingestion",
+            "pipeline:hourly_pod_usage",
+        ]
+
+    def test_list_datasets_empty_without_redis(
+        self, monitor: QualityMonitor
+    ) -> None:
+        """A Redis failure must yield an empty dataset list."""
+        monitor.redis.scan_iter.side_effect = redis.ConnectionError("boom")
+
+        assert monitor.list_datasets() == []

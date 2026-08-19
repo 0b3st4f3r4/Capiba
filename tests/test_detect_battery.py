@@ -85,9 +85,37 @@ def test_battery_writes_raw_outputs(tmp_path: Path) -> None:
     seeds = CONFIG["seeds"]
     for seed in seeds:
         lines = (tmp_path / f"seed_{seed}.jsonl").read_text().strip().splitlines()
-        assert len(lines) == 83  # 80 benford + 2 hhi + 1 duration
+        # 81 anomalous_price (80 Benford-eligible + 1 IsolationForest-only
+        # duration supplier) + 2 concentration + 1 anomalous_duration
+        assert len(lines) == 84
     summary = json.loads((tmp_path / "summary.json").read_text())
     assert summary["battery"] == "D-01b"
+
+
+def test_anomalous_price_components_in_details() -> None:
+    """anomalous_price details carry the Benford/IsolationForest components."""
+    contracts, meta = battery.generate_contracts(CONFIG, seed=11)
+    signals = battery.detect_fraud_signals(contracts)
+    by_entity = {
+        s["entity_id"]: json.loads(s["details"])
+        for s in signals
+        if s["signal_type"] == "anomalous_price"
+    }
+    # Benford-eligible suppliers (20 contracts) carry both components
+    control = by_entity[meta["control_suppliers"][0]]
+    assert control["benford_deviation"] is not None
+    assert control["isolation_forest_rate"] is not None
+    # The duration supplier (null amounts) is IsolationForest-only
+    duration = by_entity[meta["duration_outlier_supplier"]]
+    assert duration["benford_deviation"] is None
+    assert duration["isolation_forest_rate"] is not None
+
+
+def test_no_single_bid_in_synthetic_population() -> None:
+    """All synthetic contracts are modality 'pregao': single_bid never fires."""
+    contracts, _ = battery.generate_contracts(CONFIG, seed=11)
+    signals = battery.detect_fraud_signals(contracts)
+    assert not [s for s in signals if s["signal_type"] == "single_bid"]
 
 
 def test_evaluate_detects_refutation() -> None:

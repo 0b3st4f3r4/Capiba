@@ -26,12 +26,14 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk.definitions.asset import Asset
 
 from capiba.pipeline.openlineage import register_capiba_openlineage
+from capiba.pipeline.registry import DUMP_PARSER_REGISTRY
 from capiba.pipeline.spec import PipelineSpec, load_spec
 from capiba.pipeline.tasks import (
     task_crawl_source,
     task_destination,
     task_download_source,
     task_gold_report,
+    task_normalize_dump,
     task_normalize_pipeline,
     task_post_step,
     task_validate_pipeline,
@@ -60,9 +62,20 @@ SOURCE_INLETS = {
     "pncp": Asset(uri="capiba://source/pncp"),
     "transparency": Asset(uri="capiba://source/transparency"),
     "federal_revenue": Asset(uri="capiba://source/federal_revenue"),
+    # In-cluster metrics-server API (`kubectl top` outside the cluster).
+    "pod_usage": Asset(uri="capiba://source/pod_usage"),
 }
 
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
+# Silver CNPJ entity tables (file_dump normalize) and their graph load.
+SILVER_CNPJ_ENTITIES = [
+    Asset(uri=f"capiba://silver/{entity}")
+    for entity in ("companies", "establishments", "partners")
+]
+ARANGO_CNPJ_ENTITIES = [
+    Asset(uri="capiba://arangodb/companies"),
+    Asset(uri="capiba://arangodb/partners"),
+]
 ARANGO_CONTRACTS = Asset(uri="capiba://arangodb/contracts")
 GOLD_FRAUD_SIGNALS = Asset(uri="capiba://gold/fraud_signals")
 GOLD_MARTS = [
@@ -72,6 +85,17 @@ GOLD_MARTS = [
         "contracts_daily",
         "data_quality_daily",
         "supplier_stats",
+        "pod_usage_hourly",
+        "platform_cost_daily",
+    )
+]
+# Serving models materialized by dbt in the PostgreSQL DWH (Trino catalog
+# `dwh`), not in the gold Iceberg warehouse — hence the dedicated scheme.
+DWH_SERVING_MARTS = [
+    Asset(uri=f"capiba://dwh/{mart}")
+    for mart in (
+        "serving_supplier_stats",
+        "serving_municipality_daily",
     )
 ]
 
@@ -91,13 +115,20 @@ def _outlets(spec: PipelineSpec) -> list[Asset]:
             if source.name == "federal_revenue":
                 outlets.append(Asset(uri="capiba://bronze/federal_revenue/files"))
     if "lake_silver" in destination_names:
-        outlets.append(SILVER_CONTRACTS)
+        if spec.formula == "file_dump":
+            outlets.extend(SILVER_CNPJ_ENTITIES)
+        else:
+            outlets.append(SILVER_CONTRACTS)
     if "arangodb_graph" in destination_names:
-        outlets.append(ARANGO_CONTRACTS)
+        if spec.formula == "file_dump":
+            outlets.extend(ARANGO_CNPJ_ENTITIES)
+        else:
+            outlets.append(ARANGO_CONTRACTS)
     if "gold_report" in destination_names:
         outlets.append(Asset(uri=f"capiba://gold/reports/{spec.name}"))
     if "dbt_run" in spec.post_steps:
         outlets.extend(GOLD_MARTS)
+        outlets.extend(DWH_SERVING_MARTS)
     if "detect" in spec.post_steps:
         outlets.append(GOLD_FRAUD_SIGNALS)
     return outlets
@@ -109,6 +140,10 @@ def _crawl_task_id(source_name: str) -> str:
 
 def _download_task_id(source_name: str) -> str:
     return f"download_{source_name}"
+
+
+def _normalize_dump_task_id(source_name: str) -> str:
+    return f"normalize_{source_name}"
 
 
 def _destination_task_id(destination_name: str) -> str:
@@ -165,6 +200,30 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
 
         # --- Formula-specific intermediate steps -----------------------------
         intermediate_tail: list[PythonOperator] = list(source_tasks)
+
+        if spec.formula == "file_dump" and {d.name for d in spec.destinations} & {
+            "lake_silver",
+            "arangodb_graph",
+        }:
+            # Streaming normalize of the dump entity files into the silver
+            # tables — one granular task per source with a registered parser.
+            new_tail: list[PythonOperator] = []
+            for src_task, source in zip(source_tasks, spec.sources, strict=True):
+                if source.name not in DUMP_PARSER_REGISTRY:
+                    new_tail.append(src_task)
+                    continue
+                normalize = PythonOperator(
+                    task_id=_normalize_dump_task_id(source.name),
+                    python_callable=partial(
+                        task_normalize_dump,
+                        source_name=source.name,
+                        spec_path=str(spec_path),
+                    ),
+                    outlets=shared_outlets,
+                )
+                src_task >> normalize
+                new_tail.append(normalize)
+            intermediate_tail = new_tail
 
         if spec.formula == "contracts_default":
             normalize = PythonOperator(

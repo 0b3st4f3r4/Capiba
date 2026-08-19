@@ -10,12 +10,10 @@ Dependencies: capiba.db.arangodb, capiba.detection
 from __future__ import annotations
 
 import logging
-import math
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from arango.database import StandardDatabase
 from fastapi import HTTPException
@@ -30,24 +28,23 @@ from capiba.api.schemas import (
 )
 from capiba.config import REDIS_TTL_RANKING, REDIS_TTL_SIGNALS
 from capiba.db.arangodb import execute_aql, get_capiba_db
-from capiba.detection.ml_models import train_if
-from capiba.detection.statistical import (
-    benford_score,
-    duration_outlier,
-    hhi_index,
-    single_bid_rate,
+from capiba.detection.signals import (
+    benford_deviation,
+    duration_outlier_share,
+    isolation_forest_rate,
+    single_bid_score,
 )
+from capiba.detection.statistical import hhi_index
 
 logger = logging.getLogger(__name__)
 
-# Signal emission thresholds
+# Signal emission thresholds (eligibility minimums live in
+# capiba.detection.signals: MIN_BENFORD_AMOUNTS, MIN_ISOLATION_FOREST_CONTRACTS)
 _THRESHOLD_NON_COMPETITIVE = 0.5
 _THRESHOLD_HHI = 0.25  # classic high-concentration reference
 _THRESHOLD_BENFORD_P = 0.05
-_MIN_BENFORD = 10
 _THRESHOLD_DURATION_OUTLIER = 0.2
 _MIN_DURATION = 4
-_MIN_ISOLATION_FOREST = 15
 _THRESHOLD_ISOLATION_FOREST = 0.2
 
 # Composite index weights (renormalized over the emitted signals)
@@ -291,17 +288,10 @@ def _signal_single_bid(contracts: list[dict[str, Any]]) -> Signal | None:
     """Rate of non-competitive modalities as a single-bid proxy.
 
     Persisted contracts do not store 'num_participants';
-    dispensa/inexigibilidade are structurally dispute-free processes,
-    fed to the single_bid_rate operator as a single participant.
+    dispensa/inexigibilidade are structurally dispute-free processes
+    (see ``capiba.detection.signals.is_non_competitive``).
     """
-    participants = pd.DataFrame(
-        {
-            "num_participants": [
-                1 if _non_competitive(c.get("modality")) else 2 for c in contracts
-            ]
-        }
-    )
-    rate = single_bid_rate(participants)
+    rate = single_bid_score(c.get("modality") for c in contracts)
     if rate < _THRESHOLD_NON_COMPETITIVE:
         return None
     return Signal(
@@ -356,29 +346,24 @@ def _signal_anomalous_price(contracts: list[dict[str, Any]]) -> Signal | None:
     score = 0.0
     evidence: str | None = None
 
-    amounts = pd.Series([_float_amount(c) for c in contracts], dtype=float)
-    positives = amounts[amounts > 0].dropna()
-    if len(positives) >= _MIN_BENFORD:
-        conformance = benford_score(positives)
-        if not math.isnan(conformance) and conformance < _THRESHOLD_BENFORD_P:
-            score = round(1 - conformance, 4)
-            evidence = f"Benford's Law deviation (p={conformance:.4f})"
+    amounts = [_float_amount(c) for c in contracts]
+    benford = benford_deviation(amounts)
+    if benford is not None and (1 - benford) < _THRESHOLD_BENFORD_P:
+        score = benford
+        evidence = f"Benford's Law deviation (p={1 - benford:.4f})"
 
-    if len(contracts) >= _MIN_ISOLATION_FOREST:
-        features = pd.DataFrame(
-            {
-                "log_amount": np.log1p(amounts.fillna(0).clip(lower=0)),
-                "duration_days": [_duration_days(c) or 0.0 for c in contracts],
-            }
+    durations = [_duration_days(c) for c in contracts]
+    forest_rate = isolation_forest_rate(amounts, durations)
+    if (
+        forest_rate is not None
+        and forest_rate >= _THRESHOLD_ISOLATION_FOREST
+        and forest_rate > score
+    ):
+        score = forest_rate
+        evidence = (
+            f"{forest_rate:.0%} of contracts anomalous in amount/duration "
+            "(IsolationForest)"
         )
-        model = train_if(features)
-        anomaly_rate = float((model.predict(features) == -1).mean())
-        if anomaly_rate >= _THRESHOLD_ISOLATION_FOREST and anomaly_rate > score:
-            score = round(anomaly_rate, 4)
-            evidence = (
-                f"{anomaly_rate:.0%} of contracts anomalous in amount/duration "
-                "(IsolationForest)"
-            )
 
     if score <= 0:
         return None
@@ -388,24 +373,16 @@ def _signal_anomalous_price(contracts: list[dict[str, Any]]) -> Signal | None:
 def _signal_anomalous_duration(contracts: list[dict[str, Any]]) -> Signal | None:
     """Proportion of contracts with anomalous validity (IQR outliers)."""
     durations = [d for d in (_duration_days(c) for c in contracts) if d is not None]
-    if len(durations) < _MIN_DURATION:
+    rate = duration_outlier_share(durations, minimum=_MIN_DURATION)
+    if rate is None or rate < _THRESHOLD_DURATION_OUTLIER:
         return None
-
-    outliers = duration_outlier(pd.DataFrame({"duration_days": durations}))
-    rate = float(outliers.mean())
-    if rate < _THRESHOLD_DURATION_OUTLIER:
-        return None
+    # rate is the exact share (k / n), so rate * n recovers the outlier count
+    outlier_count = int(round(rate * len(durations)))
     return Signal(
         type=SignalType.ANOMALOUS_DURATION,
         score=round(rate, 4),
-        evidence=f"{int(outliers.sum())} of {len(durations)} contracts with anomalous validity (IQR)",
+        evidence=f"{outlier_count} of {len(durations)} contracts with anomalous validity (IQR)",
     )
-
-
-def _non_competitive(modality: Any) -> bool:
-    """Checks whether the modality is non-competitive (dispensa/inexigibilidade)."""
-    text = str(modality or "").lower()
-    return "dispensa" in text or "inexigibilidade" in text
 
 
 def _supplier_id(doc: dict[str, Any]) -> str:

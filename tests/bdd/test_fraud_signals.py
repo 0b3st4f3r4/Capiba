@@ -80,6 +80,18 @@ def contracts_duration_outlier(context: dict[str, Any], count: int, cnpj: str) -
     ]
 
 
+@given(
+    parsers.parse('{count:d} contracts of supplier "{cnpj}" in modality "{modality}"')
+)
+def contracts_in_modality(
+    context: dict[str, Any], count: int, cnpj: str, modality: str
+) -> None:
+    context["contracts"] = [
+        {**_contract(f"c{i}", 1000.0 * (i + 1), cnpj, "26000"), "modality": modality}
+        for i in range(count)
+    ]
+
+
 @when("the fraud signals are computed")
 def compute(context: dict[str, Any]) -> None:
     context["signals"] = detect_fraud_signals(context["contracts"])

@@ -131,8 +131,35 @@ class TestArangoDBConnector:
             "participates",
             "won",
             "owns",
+            "partner_of",
         }
         assert result is mock_db.create_graph.return_value
+
+    def test_ensure_graph_adds_missing_edge_definition(self, mock_db: MagicMock) -> None:
+        """Must add edge definitions missing from an existing graph."""
+        mock_db.has_graph.return_value = True
+        graph = mock_db.graph.return_value
+        graph.has_edge_definition.side_effect = lambda name: name != "partner_of"
+
+        result = arangodb.ensure_graph(mock_db)
+
+        mock_db.create_graph.assert_not_called()
+        graph.create_edge_definition.assert_called_once_with(
+            edge_collection="partner_of",
+            from_vertex_collections=["partners"],
+            to_vertex_collections=["companies"],
+        )
+        assert result is graph
+
+    def test_ensure_graph_complete_is_a_noop(self, mock_db: MagicMock) -> None:
+        """A graph with every edge definition needs no changes."""
+        mock_db.has_graph.return_value = True
+        graph = mock_db.graph.return_value
+        graph.has_edge_definition.return_value = True
+
+        arangodb.ensure_graph(mock_db)
+
+        graph.create_edge_definition.assert_not_called()
 
     def test_get_capiba_db_initializes_everything(self, mock_db: MagicMock) -> None:
         """Must ensure database, collections and graph."""
@@ -483,3 +510,122 @@ class TestVectorStore:
             vectors.delete_vector("v1", db=None)
 
         mock_get_db.assert_called_once_with()
+
+
+@pytest.mark.integration
+class TestVectorStoreIntegration:
+    """Tests for the vector store in ArangoDB."""
+
+    def test_upsert_and_search_similar(self) -> None:
+        """Must store and retrieve vectors by similarity."""
+        from capiba.db.vectors import (
+            delete_vector,
+            search_similar,
+            upsert_vector,
+        )
+
+        collection_name = "test_documents"
+        upsert_vector(
+            "v1",
+            [1.0, 0.0, 0.0],
+            {"title": "Doc 1"},
+            collection_name=collection_name,
+        )
+        upsert_vector(
+            "v2",
+            [0.9, 0.1, 0.0],
+            {"title": "Doc 2"},
+            collection_name=collection_name,
+        )
+        upsert_vector(
+            "v3",
+            [0.0, 1.0, 0.0],
+            {"title": "Doc 3"},
+            collection_name=collection_name,
+        )
+
+        results = search_similar(
+            [1.0, 0.0, 0.0],
+            top_k=2,
+            collection_name=collection_name,
+        )
+
+        assert len(results) == 2
+        assert results[0]["external_id"] == "v1"
+        assert results[0]["similarity"] == pytest.approx(1.0, abs=0.01)
+
+        # Cleanup
+        for vid in ("v1", "v2", "v3"):
+            assert delete_vector(vid, collection_name=collection_name)
+
+    def test_delete_vector(self) -> None:
+        """Must remove a vector by identifier."""
+        from capiba.db.vectors import delete_vector, upsert_vector
+
+        collection_name = "test_delete"
+        upsert_vector("del1", [1.0, 0.0], collection_name=collection_name)
+        assert delete_vector("del1", collection_name=collection_name)
+        assert not delete_vector("missing", collection_name=collection_name)
+
+
+@pytest.mark.integration
+class TestFullTextSearchIntegration:
+    """Tests for full-text search in ArangoDB (ArangoSearch)."""
+
+    def test_index_and_search_document(self) -> None:
+        """Must index and find documents by text."""
+        import time
+
+        from capiba.db.search import (
+            delete_document,
+            ensure_search_view,
+            index_document,
+            search_text,
+        )
+
+        collection_name = "test_search_documents"
+        view_name = "test_search_view"
+
+        # Ensures the view exists before indexing the documents
+        ensure_search_view(db=None, collection=collection_name, view=view_name)
+
+        index_document(
+            "doc1",
+            "Edital de licitação para compra de equipamentos",
+            title="Edital 001",
+            db=None,
+            collection=collection_name,
+        )
+        index_document(
+            "doc2",
+            "Contrato de prestação de serviços",
+            title="Contrato 002",
+            db=None,
+            collection=collection_name,
+        )
+
+        # Waits for the view to reflect the changes
+        time.sleep(2)
+
+        results = search_text(
+            "licitação",
+            top_k=5,
+            db=None,
+            view=view_name,
+            collection=collection_name,
+        )
+
+        assert len(results) == 1
+        assert results[0]["external_id"] == "doc1"
+
+        for doc_id in ("doc1", "doc2"):
+            assert delete_document(doc_id, db=None, collection=collection_name)
+
+    def test_delete_search_document(self) -> None:
+        """Must remove a document from the index."""
+        from capiba.db.search import delete_document, index_document
+
+        collection_name = "test_search_delete"
+        index_document("del1", "Texto de teste", db=None, collection=collection_name)
+        assert delete_document("del1", db=None, collection=collection_name)
+        assert not delete_document("missing", db=None, collection=collection_name)
