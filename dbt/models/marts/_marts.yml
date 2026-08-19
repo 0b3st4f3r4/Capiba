@@ -1,6 +1,41 @@
 version: 2
 
 models:
+  - name: contract_red_flags
+    description: >-
+      Per-contract red flags and deterministic CRI (Fazekas & Kocsis,
+      PR-D-04); flags are 1/0/NULL, CRI is the mean of the non-null
+      flags. Real-data invariants P6-P8 are enforced by the singular
+      tests in dbt/tests/contract_red_flags_*.sql.
+    columns:
+      - name: contract_id
+        description: Silver contract identifier (one row per contract)
+        tests:
+          - not_null
+          - unique
+      - name: bronze_matched
+        description: Whether a bronze PNCP payload matched the contract
+        tests:
+          - not_null
+
+  - name: red_flags_by_supplier
+    description: Red flags and CRI aggregated by supplier
+    columns:
+      - name: supplier_id
+        description: Supplier identifier (CNPJ or CPF)
+        tests:
+          - not_null
+          - unique
+
+  - name: red_flags_by_agency
+    description: Red flags and CRI aggregated by buying agency
+    columns:
+      - name: siafi_code
+        description: SIAFI code of the buying agency
+        tests:
+          - not_null
+          - unique
+
   - name: contracts_by_agency
     description: Contracts aggregated by buying agency
     columns:

@@ -3,7 +3,7 @@
 - **Pré-registro**: bateria D-04
 - **Criado em**: 2026-08-19
 - **Última atualização**: 2026-08-19
-- **Status**: rascunho para revisão humana
+- **Status**: registrado, aprovado em 2026-08-19, não executado
 - **Alvo**: mart gold de red flags por contrato e CRI composto
   **determinístico** (média das flags não nulas), materializado via dbt a
   partir do `payload_json` do bronze (`raw_pncp`) e dos contratos silver.
@@ -52,8 +52,9 @@ fonte e limiar declarados:
 
 - **`f_non_competitive`** — modalidade não competitiva
   (`is_non_competitive(modality)`, silver): dispensa/inexigibilidade.
-  Nunca nula (modalidade `not_informed` computa como 0 — registro da
-  limitação da proxy).
+  Nunca nula **quando a modalidade é conhecida**; modalidade ausente ou
+  `not_informed` computa como NULL (dado insuficiente — ver a emenda
+  datada em Revisões, que alinha esta semântica ao caso K8/P4).
 - **`f_short_window`** — janela de submissão curta:
   `dataEncerramentoProposta − dataAberturaProposta < 7 days` (payload
   bronze). Limiar de 7 dias é **placeholder declarado**, calibrável em PR
@@ -153,3 +154,12 @@ estiver concluído, via `dbt test` sobre os testes declarados no mart.
 ## Revisões
 
 - 2026-08-19: criação (rascunho para revisão humana).
+- 2026-08-19: aprovação humana; início da implementação (engenharia).
+- 2026-08-19 (emenda pré-execução): o texto original de §3 declarava
+  `f_non_competitive` "nunca nula", com `not_informed` computando 0 —
+  em contradição com o caso K8/P4, que exige CRI NULL para contrato
+  `not_informed` sem datas e sem valores. A predição registrada (P4) é
+  soberana: `f_non_competitive` passa a ser NULL quando a modalidade é
+  ausente ou `not_informed`, pelo mesmo princípio das demais flags
+  (dado insuficiente ≠ flag zero). Emenda pré-execução, sem reescrita
+  do histórico.

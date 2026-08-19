@@ -144,10 +144,15 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    pacote e compara o score — critério de aceitação coberto por BDD). Endpoint
    `GET /v1/signals/{key}/evidence` lista os pacotes do sinal; o download segue
    pelo `GET /v1/evidence/{sha256}`.
-3. (aberto) **CRI de Fazekas & Kocsis (O1).** Mart gold com red flags: proposta
-   única, prazo curto de submissão, modalidade restritiva, razão valor
-   final/adjudicado, aditivos. O `compute_cri` existe sem uso; requer
-   pré-registro PR-D-*.
+3. (em andamento) **CRI de Fazekas & Kocsis (O1).** Pré-registrado e
+   validado no regime sintético (PR-D-04/R-D-04, 5/5): semântica de
+   referência em `detection/red_flags.py` (3 flags — modalidade não
+   competitiva, janela curta de submissão, razão valor final/estimado —
+   1/0/NULL, CRI = média das não nulas) e mart gold `contract_red_flags`
+   (+ agregados por fornecedor/órgão) com data tests dbt dos invariantes
+   reais P6–P8, pendentes da conclusão do backfill. O `compute_cri`
+   supervisionado segue sem uso (gap de ML supervisionado); proposta
+   única real aguarda a fonte `contratacoes/propostas` do PNCP.
 4. (aberto) **Red flags de aditivos (O2).** Fonte PNCP `contratos/atualizacao`;
    percentual de contratos com aditivo por órgão/fornecedor no gold.
 5. (aberto) **Screening de sanções e PEPs (O3).** CEIS/CNEP/CEAF

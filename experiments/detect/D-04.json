@@ -1,0 +1,90 @@
+{
+  "id": "D-04",
+  "description": "Red flags de contrato e CRI deterministico (Fazekas & Kocsis, O1): semantica exata sobre casos plantados K1-K9, inclusive fronteiras de limiar e disciplina de nulos. Ver docs/preregistrations/PR-D-04.md.",
+  "runner": "flags",
+  "seeds": [7, 17, 27, 37, 47],
+  "short_window_days": 7,
+  "cases": [
+    {
+      "id": "K1",
+      "description": "Caso base: todas as flags 0 (pregao, janela 10 dias, razao 0.9)",
+      "modality": "pregao",
+      "window_days": 10,
+      "ratio": 0.9,
+      "malformed": false,
+      "expected": {"f_non_competitive": 0, "f_short_window": 0, "f_price_ratio": 0, "cri": 0.0}
+    },
+    {
+      "id": "K2",
+      "description": "Caso cheio: todas as flags 1 (dispensa, janela 6 dias, razao 1.2)",
+      "modality": "dispensa",
+      "window_days": 6,
+      "ratio": 1.2,
+      "malformed": false,
+      "expected": {"f_non_competitive": 1, "f_short_window": 1, "f_price_ratio": 1, "cri": 1.0}
+    },
+    {
+      "id": "K3",
+      "description": "Fronteira de janela: exatamente 7 dias NAO dispara (demais flags 0)",
+      "modality": "pregao",
+      "window_days": 7,
+      "ratio": 0.9,
+      "malformed": false,
+      "expected": {"f_non_competitive": 0, "f_short_window": 0, "f_price_ratio": 0, "cri": 0.0}
+    },
+    {
+      "id": "K4",
+      "description": "Fronteira de janela: 6 dias dispara (demais flags 0)",
+      "modality": "pregao",
+      "window_days": 6,
+      "ratio": 0.9,
+      "malformed": false,
+      "expected": {"f_non_competitive": 0, "f_short_window": 1, "f_price_ratio": 0, "cri": 0.3333}
+    },
+    {
+      "id": "K5",
+      "description": "Fronteira de razao: exatamente 1.0 NAO dispara (demais flags 0)",
+      "modality": "pregao",
+      "window_days": 10,
+      "ratio": 1.0,
+      "malformed": false,
+      "expected": {"f_non_competitive": 0, "f_short_window": 0, "f_price_ratio": 0, "cri": 0.0}
+    },
+    {
+      "id": "K6",
+      "description": "Fronteira de razao: 1.01 dispara (demais flags 0)",
+      "modality": "pregao",
+      "window_days": 10,
+      "ratio": 1.01,
+      "malformed": false,
+      "expected": {"f_non_competitive": 0, "f_short_window": 0, "f_price_ratio": 1, "cri": 0.3333}
+    },
+    {
+      "id": "K7",
+      "description": "Nulo parcial: sem datas de proposta -> f_short_window NULL; CRI = media das demais",
+      "modality": "pregao",
+      "window_days": null,
+      "ratio": 1.01,
+      "malformed": false,
+      "expected": {"f_non_competitive": 0, "f_short_window": null, "f_price_ratio": 1, "cri": 0.5}
+    },
+    {
+      "id": "K8",
+      "description": "Nulo total: modalidade not_informed, sem datas e sem valores -> CRI NULL",
+      "modality": "not_informed",
+      "window_days": null,
+      "ratio": null,
+      "malformed": false,
+      "expected": {"f_non_competitive": null, "f_short_window": null, "f_price_ratio": null, "cri": null}
+    },
+    {
+      "id": "K9",
+      "description": "Controle de parsing: datas e valores malformados -> flags NULL, sem erro de execucao",
+      "modality": "pregao",
+      "window_days": 10,
+      "ratio": 0.9,
+      "malformed": true,
+      "expected": {"f_non_competitive": 0, "f_short_window": null, "f_price_ratio": null, "cri": 0.0}
+    }
+  ]
+}

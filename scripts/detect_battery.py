@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from capiba.detection import battery, battery_graphs  # noqa: E402
+from capiba.detection import battery, battery_flags, battery_graphs  # noqa: E402
 
 
 def main() -> int:
@@ -35,9 +35,12 @@ def main() -> int:
     config = json.loads(args.config.read_text())
     out_dir = args.out or Path("results") / "detect" / config["id"]
 
-    runner = (
-        battery_graphs if config.get("requires_infra") == "arangodb" else battery
-    )
+    if config.get("runner") == "flags":
+        runner = battery_flags
+    elif config.get("requires_infra") == "arangodb":
+        runner = battery_graphs
+    else:
+        runner = battery
     runner.run_battery(config, out_dir)
     summary = json.loads((out_dir / "summary.json").read_text())
 
