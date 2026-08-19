@@ -11,17 +11,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
+from urllib.parse import quote
 
 import httpx
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from capiba import config
 from capiba.api import services
+from capiba.db import triage as triage_db
 from capiba.db.arangodb import execute_aql
+from capiba.db.triage import TriageError, TriageStatus
 from capiba.pipeline import lake
 
 logger = logging.getLogger(__name__)
@@ -200,3 +203,76 @@ async def logout(request: Request) -> Response:
     """Clears the session and returns to the portal."""
     request.session.clear()
     return RedirectResponse("/")
+
+
+def _reviewer_of(user: dict[str, Any] | None, form_reviewer: str) -> str:
+    """Reviewer identity: the form input wins, then the SSO username."""
+    return form_reviewer.strip() or (user or {}).get("preferred_username", "")
+
+
+@router.get("/triage")
+async def triage_page(
+    request: Request, status: TriageStatus = TriageStatus.PENDING_REVIEW
+) -> Response:
+    """Editorial triage queue (O10): signals under review + precision report.
+
+    Degrades gracefully: with ArangoDB down the page renders with an
+    "indisponível" notice instead of failing.
+    """
+    user = request.session.get("user")
+    if config.SSO_ENABLED and user is None:
+        return RedirectResponse("/auth/login", status_code=302)
+    entries: list[dict[str, Any]] | None = None
+    metrics: list[dict[str, Any]] | None = None
+    try:
+        db = services.get_db()
+        entries = triage_db.list_reviews(db, status=status)
+        metrics = triage_db.precision_report(db)
+    except Exception as exc:
+        logger.warning("Triage page data unavailable: %s", exc)
+    return templates.TemplateResponse(
+        request,
+        "triage.html",
+        {
+            "user": user,
+            "reviewer": _reviewer_of(user, ""),
+            "status": str(status),
+            "statuses": [str(s) for s in TriageStatus],
+            "entries": entries,
+            "metrics": metrics,
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@router.post("/triage/review")
+async def triage_review(
+    request: Request,
+    key: Annotated[str, Form()],
+    status: Annotated[TriageStatus, Form()],
+    reviewer: Annotated[str, Form()] = "",
+    reason: Annotated[str | None, Form()] = None,
+    filter: Annotated[str, Form()] = str(TriageStatus.PENDING_REVIEW),
+) -> Response:
+    """Applies an editorial transition from the triage page form.
+
+    The reviewer is the form input (synced from the page's reviewer bar)
+    or, when empty, the SSO session username. Validation failures
+    (missing reason, invalid transition, unknown key) redirect back to
+    the queue with an error banner — form posts never answer 4xx pages.
+    """
+    user = request.session.get("user")
+    if config.SSO_ENABLED and user is None:
+        return RedirectResponse("/auth/login", status_code=302)
+    try:
+        db = services.get_db()
+        triage_db.apply_review(
+            db, key, status, _reviewer_of(user, reviewer), reason=reason or None
+        )
+    except HTTPException as exc:
+        return RedirectResponse(f"/triage?error={quote(str(exc.detail))}", 303)
+    except KeyError:
+        return RedirectResponse(f"/triage?error={quote('sinal não encontrado')}", 303)
+    except TriageError as exc:
+        return RedirectResponse(f"/triage?error={quote(str(exc))}", 303)
+    return RedirectResponse(f"/triage?status={quote(filter)}", 303)

@@ -124,15 +124,16 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
 Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
 (ordem sugerida: O9/O10 → O1/O2 → grafo/O3/O4 → O7 → demais).
 
-1. (parcial) **Triagem editorial de sinais (O10).** API entregue: coleção
+1. (feito) **Triagem editorial de sinais (O10).** Coleção
    ArangoDB `signal_reviews` (`db/triage.py`, chave estável
    `{entity_type}:{entity_id}:{signal_type}`, estado `pending_review` →
    `confirmed`/`rejected`/`published`, revisor obrigatório e motivo no
    descarte, `published` terminal, histórico de revisões); o `task_detect`
    registra sinais novos como `pending_review` (best-effort); rotas `GET
    /v1/triage/signals`, `POST /v1/triage/signals/{key}/review` e `GET
-   /v1/triage/metrics` (precisão por operador derivada dos rótulos). Pendente:
-   a página de triagem no portal (UI).
+   /v1/triage/metrics` (precisão por operador derivada dos rótulos); página
+   `/triage` no portal (fila por estado, ações de confirmar/rejeitar/
+   publicar, revisor da sessão SSO ou do campo, relatório de precisão).
 2. (feito) **Pacote de evidências reproduzível por sinal (O9).** O `task_detect`
    armazena no `EvidenceStorage` (best-effort) um pacote de lote por run (linhas
    silver + `source_rows_sha256` + janela + versão do código, essencial porque

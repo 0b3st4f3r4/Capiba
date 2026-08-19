@@ -196,6 +196,8 @@ portal abre sem login. As rotas do portal e do fluxo de autenticação:
 | `GET /auth/login` | Inicia o fluxo OIDC (redirect para o Keycloak); com SSO desabilitado, redireciona de volta para `/` |
 | `GET /auth/callback` | Callback do fluxo OIDC: valida o token (issuer público), grava o `userinfo` na sessão e redireciona para `/` |
 | `GET /auth/logout` | Limpa a sessão e redireciona para `/` |
+| `GET /triage` | Página de triagem editorial (O10): fila de sinais por estado (`?status=`), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
+| `POST /triage/review` | Aplica a transição editorial vinda do formulário da página (revisor do campo ou da sessão SSO); erros de validação voltam como banner na fila (redirect 303), nunca como página 4xx |
 
 ## Evidências
 

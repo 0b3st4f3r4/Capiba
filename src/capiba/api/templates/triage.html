@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capiba — Triagem editorial</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/portal.css">
+</head>
+<body>
+  <div class="pride-strip" aria-hidden="true">
+    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
+
+  <div class="container">
+    <header>
+      <div class="brand">
+        <a href="/"><img src="/static/logo.svg" alt="Capiba"></a>
+        <div>
+          <h1>Triagem editorial</h1>
+          <p>Fila de revisão humana dos sinais detectados (O10)</p>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="mode-toggle" aria-label="Tema">
+          <button data-mode="light" aria-pressed="true" title="Claro"></button>
+          <button data-mode="gray" aria-pressed="false" title="Cinza"></button>
+          <button data-mode="dark" aria-pressed="false" title="Escuro"></button>
+        </div>
+        <div class="user-box">
+          {% if user %}
+          Logado como <strong>{{ user.preferred_username }}</strong><br>
+          <a href="/auth/logout">Sair</a>
+          {% else %}
+          Visitante
+          {% endif %}
+        </div>
+      </div>
+    </header>
+
+    {% if error %}
+    <div class="banner" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <section>
+      <h2>Sinais — {{ status }}</h2>
+      <nav class="triage-nav" aria-label="Filtrar por estado">
+        {% for s in statuses %}
+        <a href="/triage?status={{ s }}" class="{{ 'active' if s == status else '' }}">{{ s }}</a>
+        {% endfor %}
+      </nav>
+
+      <div class="reviewer-bar">
+        <label for="reviewer-input">Revisor(a):</label>
+        <input id="reviewer-input" type="text" value="{{ reviewer }}" placeholder="obrigatório">
+      </div>
+
+      {% if entries is none %}
+      <p class="empty-state">Fila de triagem indisponível (banco de dados fora do ar).</p>
+      {% elif not entries %}
+      <p class="empty-state">Nenhum sinal com estado <strong>{{ status }}</strong>.</p>
+      {% else %}
+      <table class="triage-table">
+        <thead>
+          <tr>
+            <th>Sinal</th>
+            <th>Entidade</th>
+            <th>Score</th>
+            <th>Detalhes</th>
+            <th>Revisão</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          <tr>
+            <td>{{ e.signal_type }}</td>
+            <td class="key">{{ e.entity_type }}:{{ e.entity_id }}</td>
+            <td class="score">{{ "%.2f"|format(e.score or 0) }}</td>
+            <td class="details">{{ e.details or "" }}</td>
+            <td>
+              {% if e.reviewed_by %}
+              {{ e.reviewed_by }}{% if e.reason %} — {{ e.reason }}{% endif %}
+              {% else %}
+              —
+              {% endif %}
+            </td>
+            <td>
+              <div class="triage-actions">
+                {% if e.status == "pending_review" or e.status == "rejected" %}
+                <form method="post" action="/triage/review">
+                  <input type="hidden" name="key" value="{{ e._key }}">
+                  <input type="hidden" name="status" value="confirmed">
+                  <input type="hidden" name="filter" value="{{ status }}">
+                  <input type="hidden" name="reviewer" class="reviewer-field" value="{{ reviewer }}">
+                  <button type="submit" class="confirm">Confirmar</button>
+                </form>
+                {% endif %}
+                {% if e.status == "pending_review" or e.status == "confirmed" %}
+                <form method="post" action="/triage/review">
+                  <input type="hidden" name="key" value="{{ e._key }}">
+                  <input type="hidden" name="status" value="rejected">
+                  <input type="hidden" name="filter" value="{{ status }}">
+                  <input type="hidden" name="reviewer" class="reviewer-field" value="{{ reviewer }}">
+                  <input type="text" name="reason" placeholder="motivo (obrigatório)" required>
+                  <button type="submit" class="reject">Rejeitar</button>
+                </form>
+                {% endif %}
+                {% if e.status == "confirmed" %}
+                <form method="post" action="/triage/review">
+                  <input type="hidden" name="key" value="{{ e._key }}">
+                  <input type="hidden" name="status" value="published">
+                  <input type="hidden" name="filter" value="{{ status }}">
+                  <input type="hidden" name="reviewer" class="reviewer-field" value="{{ reviewer }}">
+                  <button type="submit" class="publish">Publicar</button>
+                </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Precisão por operador</h2>
+      {% if metrics %}
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Operador</th>
+            <th>Pendentes</th>
+            <th>Confirmados</th>
+            <th>Rejeitados</th>
+            <th>Publicados</th>
+            <th>Precisão</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in metrics %}
+          <tr>
+            <td>{{ m.signal_type }}</td>
+            <td>{{ m.pending_review }}</td>
+            <td>{{ m.confirmed }}</td>
+            <td>{{ m.rejected }}</td>
+            <td>{{ m.published }}</td>
+            <td>{{ "%.0f%%"|format(m.precision * 100) if m.precision is not none else "—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty-state">Sem rótulos humanos ainda.</p>
+      {% endif %}
+    </section>
+
+    <footer><a href="/">← Portal</a> · Motor de detecção de fraude via dados abertos.</footer>
+  </div>
+
+  <script>
+    (function () {
+      const body = document.body;
+      const buttons = document.querySelectorAll('.mode-toggle button');
+      const saved = localStorage.getItem('capiba-mode') || 'light';
+      setMode(saved);
+
+      buttons.forEach((btn) => {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+      });
+
+      function setMode(mode) {
+        body.classList.remove('mode-light', 'mode-gray', 'mode-dark');
+        body.classList.add('mode-' + mode);
+        localStorage.setItem('capiba-mode', mode);
+        buttons.forEach((btn) => {
+          btn.setAttribute('aria-pressed', String(btn.dataset.mode === mode));
+        });
+      }
+    })();
+
+    // Copia o revisor do topo para todos os formulários no submit.
+    (function () {
+      const input = document.getElementById('reviewer-input');
+      document.querySelectorAll('.triage-actions form').forEach((form) => {
+        form.addEventListener('submit', () => {
+          form.querySelector('.reviewer-field').value = input.value.trim();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

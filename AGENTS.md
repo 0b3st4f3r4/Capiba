@@ -132,7 +132,10 @@ A triagem editorial de sinais (O10) vive em `src/capiba/db/triage.py`
 descarte, `published` terminal): o `task_detect` registra sinais novos
 como `pending_review` (best-effort) e a API expõe `/v1/triage`
 (listagem, transição e relatório de precisão por operador — rótulos
-para o ML supervisionado).
+para o ML supervisionado). A interface humana é a página `/triage` do
+portal (fila por estado, formulários de transição com revisor da sessão
+SSO ou do campo, banner de erro no lugar de páginas 4xx; CSS
+compartilhado em `api/static/portal.css`).
 Projeto dbt em `dbt/` (profile `capiba`, dbt-trino sobre o catálogo gold;
 marts Iceberg no bucket capiba-gold).
 O lake usa tabelas Iceberg (via `src/capiba/pipeline/lake.py` + pyiceberg)
@@ -232,6 +235,14 @@ andamento sem autorização explícita.
   make test-cov          # cobertura mínima de 85%
   make lint && make typecheck
   ```
+- **Economia de validação**: durante o desenvolvimento, rode apenas os testes
+  do escopo alterado (`pytest tests/test_x.py tests/bdd/test_y.py -q`); use
+  `make test` (suíte rápida, sem as baterias lentas) ao fechar a rodada.
+  **Não** rode `make test-cov` separadamente antes de commitar — o hook
+  `pytest-cov` do pre-commit já executa a suíte rápida com o piso de
+  cobertura de 85% (as baterias lentas, marker `slow`, ficam para o
+  `make test-cov`/`make test-slow` sob demanda e para o CI no push).
+  Rodá-lo antes duplica 20–30 min de baterias lentas sem ganho.
 - Testes de integração (`@pytest.mark.integration`) só rodam com
   `CAPIBA_INTEGRATION=1`; mantenha-os separados dos testes offline.
 

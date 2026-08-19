@@ -200,3 +200,201 @@ class TestStatsHelpers:
         )
         portal.register_keycloak(portal.oauth)
         assert portal.oauth.keycloak is not None
+
+
+class _FakeCollection:
+    """Dict-backed stand-in for an ArangoDB collection."""
+
+    def __init__(self) -> None:
+        self.docs: dict[str, dict[str, Any]] = {}
+
+    def get(self, key: str) -> dict[str, Any] | None:
+        return self.docs.get(key)
+
+    def insert(self, doc: dict[str, Any], silent: bool = False) -> dict[str, Any]:
+        self.docs[doc["_key"]] = dict(doc)
+        return dict(doc)
+
+    def update(self, doc: dict[str, Any]) -> dict[str, Any]:
+        self.docs[doc["_key"]].update(doc)
+        return dict(self.docs[doc["_key"]])
+
+
+class _FakeDb:
+    """Minimal ArangoDB stand-in wired to a single fake collection."""
+
+    def __init__(self) -> None:
+        self.col = _FakeCollection()
+
+    def has_collection(self, name: str) -> bool:
+        return True
+
+    def create_collection(self, name: str) -> None:
+        pass
+
+    def collection(self, name: str) -> _FakeCollection:
+        return self.col
+
+
+_TRIAGE_SIGNAL = {
+    "entity_type": "supplier",
+    "entity_id": "12345678000199",
+    "signal_type": "single_bid",
+    "score": 0.8,
+    "details": '{"contracts": 4}',
+}
+_TRIAGE_KEY = "supplier:12345678000199:single_bid"
+
+
+@pytest.fixture
+def triage_db(monkeypatch: pytest.MonkeyPatch) -> _FakeDb:
+    """Fixture: fake ArangoDB wired to the portal triage read/write paths."""
+    from capiba.db import triage
+
+    db = _FakeDb()
+    monkeypatch.setattr(services, "get_db", lambda: db)
+    monkeypatch.setattr(
+        triage,
+        "execute_aql",
+        lambda db_, query, bind_vars=None: list(db_.col.docs.values()),
+    )
+    return db
+
+
+@pytest.mark.usefixtures("stats_ok")
+class TestPortalTriage:
+    """Tests for the /triage editorial page (SSO disabled)."""
+
+    def test_triage_lists_pending_signals(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """The queue must render the pending signals and the reviewer bar."""
+        from capiba.db import triage
+
+        triage.register_signals(triage_db, [_TRIAGE_SIGNAL])
+
+        response = client.get("/triage")
+
+        assert response.status_code == 200
+        assert "single_bid" in response.text
+        assert "12345678000199" in response.text
+        assert 'id="reviewer-input"' in response.text
+
+    def test_triage_db_down_degrades(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ArangoDB down must render the page with an unavailable notice."""
+
+        def _raise() -> Any:
+            raise ConnectionError("arango down")
+
+        monkeypatch.setattr(services, "get_db", _raise)
+
+        response = client.get("/triage")
+
+        assert response.status_code == 200
+        assert "indisponível" in response.text
+
+    def test_review_uses_form_reviewer(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """The reviewer from the form must be recorded on the transition."""
+        from capiba.db import triage
+
+        triage.register_signals(triage_db, [_TRIAGE_SIGNAL])
+
+        response = client.post(
+            "/triage/review",
+            data={
+                "key": _TRIAGE_KEY,
+                "status": "confirmed",
+                "reviewer": "ana",
+                "filter": "pending_review",
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/triage?status=pending_review"
+        doc = triage_db.col.docs[_TRIAGE_KEY]
+        assert doc["status"] == "confirmed"
+        assert doc["reviewed_by"] == "ana"
+
+    def test_review_without_reviewer_shows_error(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """A transition without reviewer must bounce back with an error."""
+        from capiba.db import triage
+
+        triage.register_signals(triage_db, [_TRIAGE_SIGNAL])
+
+        response = client.post(
+            "/triage/review",
+            data={"key": _TRIAGE_KEY, "status": "confirmed", "reviewer": " "},
+        )
+
+        assert response.status_code == 200
+        assert 'class="banner"' in response.text
+        assert triage_db.col.docs[_TRIAGE_KEY]["status"] == "pending_review"
+
+    def test_review_unknown_key_shows_error(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """An unknown signal key must bounce back with an error."""
+        response = client.post(
+            "/triage/review",
+            data={"key": "supplier:0:single_bid", "status": "confirmed",
+                  "reviewer": "ana"},
+        )
+
+        assert response.status_code == 200
+        assert 'class="banner"' in response.text
+
+    def test_triage_metrics_render(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """The precision report must render per operator."""
+        from capiba.db import triage
+
+        triage.register_signals(triage_db, [_TRIAGE_SIGNAL])
+        triage.apply_review(
+            triage_db, _TRIAGE_KEY, triage.TriageStatus.CONFIRMED, "ana"
+        )
+
+        response = client.get("/triage?status=confirmed")
+
+        assert response.status_code == 200
+        assert "Precisão por operador" in response.text
+        assert "100%" in response.text
+
+
+@pytest.mark.usefixtures("sso_enabled", "stats_ok")
+class TestPortalTriageSso:
+    """Tests for the /triage page with SSO enabled."""
+
+    def test_anonymous_redirected_to_login(self, client: TestClient) -> None:
+        """An anonymous user must be redirected to /auth/login."""
+        response = client.get("/triage", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/auth/login"
+
+    def test_review_falls_back_to_session_user(
+        self,
+        client: TestClient,
+        keycloak_token: None,
+        triage_db: _FakeDb,
+    ) -> None:
+        """Without a form reviewer, the SSO username is used."""
+        from capiba.db import triage
+
+        triage.register_signals(triage_db, [_TRIAGE_SIGNAL])
+        client.get("/auth/callback")
+
+        response = client.post(
+            "/triage/review",
+            data={"key": _TRIAGE_KEY, "status": "confirmed", "reviewer": ""},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert triage_db.col.docs[_TRIAGE_KEY]["reviewed_by"] == "capiba"
