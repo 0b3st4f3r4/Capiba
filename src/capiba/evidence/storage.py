@@ -125,13 +125,21 @@ class EvidenceStorage:
     def _validate_metadata(self, metadata: dict[str, Any]) -> None:
         """Validates presence of required metadata.
 
+        Signal evidence packages (O9) are keyed by ``signal_key`` instead
+        of ``contract_id`` — the signal spans several contracts.
+
         Args:
             metadata: Dict with the file's metadata.
 
         Raises:
             ValueError: If required metadata is missing.
         """
-        missing = [k for k in EVIDENCE_REQUIRED_METADATA if k not in metadata]
+        required = [
+            key
+            for key in EVIDENCE_REQUIRED_METADATA
+            if key != "contract_id" or "signal_key" not in metadata
+        ]
+        missing = [k for k in required if k not in metadata]
         if missing:
             raise ValueError(f"Missing required metadata: {missing}")
 
@@ -259,6 +267,22 @@ class EvidenceStorage:
         Returns:
             List of evidence metadata.
         """
+        return self._list_by_meta("x-amz-meta-contract-id", contract_id)
+
+    def list_by_signal(self, signal_key: str) -> list[dict[str, Any]]:
+        """Lists all evidence packages linked to a signal (O9/O10 key).
+
+        Args:
+            signal_key: Triage key ``{entity_type}:{entity_id}:{signal_type}``.
+
+        Returns:
+            List of evidence metadata (including ``signal_key`` and,
+            for manifests, ``batch_sha256``).
+        """
+        return self._list_by_meta("x-amz-meta-signal-key", signal_key)
+
+    def _list_by_meta(self, meta_key: str, value: str) -> list[dict[str, Any]]:
+        """Lists evidence whose object metadata matches ``meta_key == value``."""
         results = []
 
         objects = self.client.list_objects(
@@ -270,7 +294,7 @@ class EvidenceStorage:
                 continue
             stat = self.client.stat_object(self.bucket, object_name)
             meta = stat.metadata or {}
-            if meta.get("x-amz-meta-contract-id") == contract_id:
+            if meta.get(meta_key) == value:
                 results.append(
                     {
                         "sha256": meta.get("x-amz-meta-sha256"),
@@ -280,6 +304,8 @@ class EvidenceStorage:
                         "filename": meta.get("x-amz-meta-original-filename"),
                         "size": obj.size,
                         "timestamp": meta.get("x-amz-meta-upload-timestamp"),
+                        "signal_key": meta.get("x-amz-meta-signal-key"),
+                        "batch_sha256": meta.get("x-amz-meta-batch-sha256"),
                     }
                 )
 

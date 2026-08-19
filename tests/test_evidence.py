@@ -223,6 +223,8 @@ class TestListByContract:
                 "filename": "photo.jpg",
                 "size": 10,
                 "timestamp": "2026-01-15T00:00:00+00:00",
+                "signal_key": None,
+                "batch_sha256": None,
             }
         ]
 
@@ -231,3 +233,67 @@ class TestListByContract:
         storage.client.list_objects.return_value = []
 
         assert storage.list_by_contract("C404") == []
+
+
+class TestSignalPackages:
+    """Tests for the signal evidence packages (O9) in the storage."""
+
+    def test_signal_key_replaces_contract_id(self, storage: EvidenceStorage) -> None:
+        """Signal packages are keyed by signal_key, without contract_id."""
+        data = b'{"schema": "capiba.signal-package/1"}'
+        metadata = {
+            "signal_key": "supplier:12345678000199:single_bid",
+            "entity_cnpj": "12345678000199",
+            "evidence_type": "signal_package",
+            "captured_at": "2026-08-19",
+            "source": "detect",
+            "hash_sha256": hashlib.sha256(data).hexdigest(),
+            "captured_by": "capiba-pipeline",
+        }
+
+        result = storage.store(data, "manifest.json", metadata, "application/json")
+
+        assert result["type"] == "document"
+        storage.client.put_object.assert_called_once()
+
+    def test_signal_key_does_not_replace_other_required_metadata(
+        self, storage: EvidenceStorage
+    ) -> None:
+        """signal_key replaces only contract_id — the rest stays required."""
+        with pytest.raises(ValueError, match="Missing required metadata"):
+            storage.store(
+                b"data", "manifest.json", {"signal_key": "supplier:1:single_bid"}
+            )
+
+    def test_list_by_signal_filters_by_metadata(
+        self, storage: EvidenceStorage
+    ) -> None:
+        """Must return only the packages whose metadata matches the signal."""
+        key = "supplier:12345678000199:single_bid"
+        match = MagicMock(object_name="evidence/document/detect/2026/08/aaa.json", size=10)
+        other = MagicMock(object_name="evidence/document/detect/2026/08/bbb.json", size=20)
+        storage.client.list_objects.return_value = [match, other]
+
+        stats = {
+            match.object_name: MagicMock(
+                metadata={
+                    "x-amz-meta-signal-key": key,
+                    "x-amz-meta-batch-sha256": "batch123",
+                    "x-amz-meta-sha256": "aaa",
+                    "x-amz-meta-evidence-type": "document",
+                    "x-amz-meta-original-filename": "manifest.json",
+                    "x-amz-meta-upload-timestamp": "2026-08-19T00:00:00+00:00",
+                }
+            ),
+            other.object_name: MagicMock(
+                metadata={"x-amz-meta-signal-key": "buyer:26000:concentration"}
+            ),
+        }
+        storage.client.stat_object.side_effect = lambda bucket, name: stats[name]
+
+        results = storage.list_by_signal(key)
+
+        assert len(results) == 1
+        assert results[0]["signal_key"] == key
+        assert results[0]["batch_sha256"] == "batch123"
+        assert results[0]["sha256"] == "aaa"

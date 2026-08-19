@@ -133,9 +133,16 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    /v1/triage/signals`, `POST /v1/triage/signals/{key}/review` e `GET
    /v1/triage/metrics` (precisão por operador derivada dos rótulos). Pendente:
    a página de triagem no portal (UI).
-2. (aberto) **Pacote de evidências reproduzível por sinal (O9).** Query, janela
-   temporal, SHA do artefato e linhas fonte com hash; endpoint `GET
-   /signals/{id}/evidence`; integra o `EvidenceStorage` ao post step `detect`.
+2. (feito) **Pacote de evidências reproduzível por sinal (O9).** O `task_detect`
+   armazena no `EvidenceStorage` (best-effort) um pacote de lote por run (linhas
+   silver + `source_rows_sha256` + janela + versão do código, essencial porque
+   `anomalous_duration` usa IQR pooled) e um manifesto por sinal com a chave do
+   O10 e `batch_sha256` (`evidence/packages.py`; `collusion_network` marcado
+   `reproducible: false` — derivado do grafo, dívida do PR-D-03). Reprodução via
+   `reproduce_signal` (reexecuta `detect_fraud_signals` sobre as linhas do
+   pacote e compara o score — critério de aceitação coberto por BDD). Endpoint
+   `GET /v1/signals/{key}/evidence` lista os pacotes do sinal; o download segue
+   pelo `GET /v1/evidence/{sha256}`.
 3. (aberto) **CRI de Fazekas & Kocsis (O1).** Mart gold com red flags: proposta
    única, prazo curto de submissão, modalidade restritiva, razão valor
    final/adjudicado, aditivos. O `compute_cri` existe sem uso; requer

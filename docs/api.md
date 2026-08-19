@@ -277,6 +277,26 @@ Baixa o conteúdo de uma evidência pelo hash SHA-256
 | `404` | Nenhuma evidência com o hash informado |
 | `503` | Storage indisponível |
 
+### GET /v1/signals/{key}/evidence
+
+Lista os pacotes de evidência reproduzíveis (O9) de um sinal, onde `key` é
+a chave de triagem `{entity_type}:{entity_id}:{signal_type}` (O10). O
+`task_detect` grava, a cada run, um pacote de lote (linhas silver da run +
+`source_rows_sha256` + janela + versão do código) e um manifesto por sinal
+referenciando o lote via `batch_sha256` — o download do conteúdo segue pelo
+`GET /v1/evidence/{sha256}`. Nesses pacotes, o metadado `signal_key`
+substitui o `contract_id` obrigatório. Sinais derivados de grafo
+(`collusion_network`) são marcados `reproducible: false` no manifesto.
+
+**Response:** mesma estrutura da listagem por contrato, acrescida de
+`signal_key` e `batch_sha256`.
+
+**Erros:**
+
+| Código | Quando |
+|---|---|
+| `503` | Storage indisponível |
+
 ## Triagem editorial
 
 A triagem é a fila editorial dos sinais detectados (O10): o `task_detect`

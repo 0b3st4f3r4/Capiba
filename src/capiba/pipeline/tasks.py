@@ -37,6 +37,8 @@ from capiba.detection.statistical import (
     duration_outlier,
     hhi_index,
 )
+from capiba.evidence.packages import store_signal_packages
+from capiba.evidence.storage import EvidenceStorage
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.persistence import bulk_upsert_cnpj, bulk_upsert_contracts
 from capiba.ingestion.validator import checksum, detect_duplicates
@@ -337,6 +339,13 @@ def task_detect(**context: Any) -> dict[str, Any]:
             lake.write_fraud_signals(signals, run_date=run_date)
     except Exception as e:
         logger.warning("Failed to write fraud signals to the gold layer: %s", e)
+
+    # Best-effort: reproducible evidence packages (O9) never fail the task.
+    try:
+        if signals:
+            store_signal_packages(EvidenceStorage(), signals, contracts, run_date)
+    except Exception as e:
+        logger.warning("Failed to store signal evidence packages (MinIO): %s", e)
 
     # Best-effort: alerts never fail the task.
     notify_fraud_signals(signals, run_date)

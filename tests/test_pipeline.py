@@ -9,6 +9,8 @@ from datetime import date, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from capiba.pipeline.tasks import (
     _lake_run_date,
     persist_contracts,
@@ -116,6 +118,16 @@ class TestPersistContracts:
 class TestTaskDetect:
     """Tests for the fraud-signal detection task."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_evidence(self) -> Any:
+        """Evidence storage (MinIO) is mocked in every detect test."""
+        with (
+            patch("capiba.pipeline.tasks.EvidenceStorage"),
+            patch("capiba.pipeline.tasks.store_signal_packages") as mock_store,
+        ):
+            self.mock_store_packages = mock_store
+            yield
+
     @patch("capiba.pipeline.tasks.detect_collusion")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
@@ -221,6 +233,47 @@ class TestTaskDetect:
         ]
         mock_collusion.return_value = []
         mock_register.side_effect = RuntimeError("triage down")
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        mock_lake.write_fraud_signals.assert_called_once()
+
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_stores_evidence_packages(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Signals must be stored as reproducible evidence packages (O9)."""
+        contracts = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_lake.read_silver_contracts.return_value = contracts
+        mock_collusion.return_value = []
+
+        task_detect(ds="2026-01-01")
+
+        self.mock_store_packages.assert_called_once()
+        args = self.mock_store_packages.call_args.args
+        assert args[1] == mock_lake.write_fraud_signals.call_args.args[0]
+        assert args[2] == contracts
+        assert args[3] == date(2026, 1, 1)
+
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_evidence_failure_does_not_abort(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """A MinIO failure storing packages must not abort the task."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_collusion.return_value = []
+        self.mock_store_packages.side_effect = RuntimeError("minio down")
 
         summary = task_detect(ds="2026-01-01")
 

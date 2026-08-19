@@ -240,3 +240,53 @@ class TestDownloadEvidence:
         response = client.get(f"/v1/evidence/{SHA256}")
 
         assert response.status_code == 503
+
+
+class TestListSignalEvidence:
+    """Tests for GET /v1/signals/{key}/evidence (O9 packages)."""
+
+    KEY = "supplier:12345678000199:single_bid"
+
+    def test_list_by_signal(self, client: TestClient, storage: MagicMock) -> None:
+        """Must return the evidence packages linked to the signal key."""
+        storage.list_by_signal.return_value = [
+            {
+                "sha256": SHA256,
+                "bucket": "capiba-bronze",
+                "object_name": f"evidence/document/detect/2026/08/{SHA256}.json",
+                "type": "document",
+                "filename": f"signal-manifest-{self.KEY}.json",
+                "size": 512,
+                "timestamp": "2026-08-19T00:00:00+00:00",
+                "signal_key": self.KEY,
+                "batch_sha256": "b" * 64,
+            }
+        ]
+
+        response = client.get(f"/v1/signals/{self.KEY}/evidence")
+
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 1
+        assert items[0]["signal_key"] == self.KEY
+        assert items[0]["batch_sha256"] == "b" * 64
+        storage.list_by_signal.assert_called_once_with(self.KEY)
+
+    def test_list_without_packages(self, client: TestClient, storage: MagicMock) -> None:
+        """A signal without packages must return an empty list."""
+        storage.list_by_signal.return_value = []
+
+        response = client.get(f"/v1/signals/{self.KEY}/evidence")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_list_storage_failure_returns_503(
+        self, client: TestClient, storage: MagicMock
+    ) -> None:
+        """A storage failure must return 503."""
+        storage.list_by_signal.side_effect = ConnectionError("MinIO is down")
+
+        response = client.get(f"/v1/signals/{self.KEY}/evidence")
+
+        assert response.status_code == 503

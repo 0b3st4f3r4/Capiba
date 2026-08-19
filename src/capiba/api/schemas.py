@@ -86,6 +86,8 @@ class EvidenceItem(BaseModel):
     filename: str | None = None
     size: int | None = None
     timestamp: str | None = None
+    signal_key: str | None = None
+    batch_sha256: str | None = None
 
 
 class OwnershipResponse(BaseModel):
