@@ -117,7 +117,7 @@ TRANSPARENCY_AGENCY_CODES = [
 # Registration data (Federal Revenue — CNPJ)
 FEDERAL_REVENUE_BASE_URL = os.getenv(
     "FEDERAL_REVENUE_BASE_URL",
-    "https://arquivos.receitafederal.gov.br/index.php/s/YggdBLfdninEJX9/download",
+    "https://arquivos.receitafederal.gov.br/public.php/dav/files/YggdBLfdninEJX9",
 )
 # Files downloaded by the monthly DAG: the small reference tables by
 # default (the full Empresas/Estabelecimentos/Socios dumps are GBs and

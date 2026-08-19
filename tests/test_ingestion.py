@@ -457,16 +457,35 @@ class TestCrawlerFederalRevenueHelpers:
     """Tests for the Federal Revenue crawler helpers."""
 
     def test_build_download_url_with_path(self) -> None:
-        """Must build a Nextcloud share URL with the reference month path."""
+        """Must build a public WebDAV URL with the reference month path."""
         url = _build_download_url(
-            "https://share.example.com/s/abc", "/2025-01/", "Cnaes.zip"
+            "https://share.example.com/index.php/s/abc/download",
+            "/2025-01/",
+            "Cnaes.zip",
         )
-        assert url == "https://share.example.com/s/abc?path=%2F2025-01&files=Cnaes.zip"
+        assert (
+            url
+            == "https://share.example.com/public.php/dav/files/abc/2025-01/Cnaes.zip"
+        )
 
     def test_build_download_url_without_path(self) -> None:
-        """Must build a root share URL when the path is empty."""
-        url = _build_download_url("https://share.example.com/s/abc", "", "Cnaes.zip")
-        assert url == "https://share.example.com/s/abc?path=%2F&files=Cnaes.zip"
+        """Must build a root WebDAV URL when the path is empty."""
+        url = _build_download_url(
+            "https://share.example.com/index.php/s/abc/download", "", "Cnaes.zip"
+        )
+        assert url == "https://share.example.com/public.php/dav/files/abc/Cnaes.zip"
+
+    def test_build_download_url_accepts_dav_base(self) -> None:
+        """A base URL already in the public DAV form is used as-is."""
+        url = _build_download_url(
+            "https://share.example.com/public.php/dav/files/abc/",
+            "/2025-01/",
+            "Cnaes.zip",
+        )
+        assert (
+            url
+            == "https://share.example.com/public.php/dav/files/abc/2025-01/Cnaes.zip"
+        )
 
     @patch("capiba.ingestion.crawler_federal_revenue.requests.get")
     def test_download_skips_existing_file(

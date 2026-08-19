@@ -10,6 +10,7 @@ Dependencies: requests, pandas
 from __future__ import annotations
 
 import logging
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 # Known sources (check availability):
 # - SERPRO+ (official): https://arquivos.receitafederal.gov.br/index.php/s/YggdBLfdninEJX9
+#   (downloads via the public DAV endpoint /public.php/dav/files/<token>/<month>/<file>)
 # - Federal Revenue Open Data (when available): https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj
-# The default URL points to the SERPRO+ share; the path and file names
+# The default URL points to the SERPRO+ DAV endpoint; the path and file names
 # must be adjusted according to the reference month's structure.
 
 # Typical files of a CNPJ open data month.
@@ -69,23 +71,46 @@ FEDERAL_REVENUE_DEFAULT_FILES = [
 ]
 
 
-def _build_download_url(base_url: str, path: str, filename: str) -> str:
-    """Builds a file download URL for a Nextcloud share.
+def _dav_base_url(base_url: str) -> str:
+    """Derives the public WebDAV endpoint from a Nextcloud share URL.
+
+    The ``/index.php/s/<token>/download?path=...&files=...`` route redirects
+    to the DAV endpoint dropping the ``path`` parameter (the reply is an
+    empty 200 page), so downloads must address the DAV endpoint directly.
 
     Args:
-        base_url: Base URL of the share (without query string).
+        base_url: Share URL, either ``.../index.php/s/<token>[/download]``
+            or already the public DAV endpoint ``.../public.php/dav/files/<token>``.
+
+    Returns:
+        Public DAV base URL (without trailing slash).
+    """
+    if "/public.php/dav/files/" in base_url:
+        return base_url.rstrip("/")
+    match = re.search(r"/index\.php/s/([^/]+)", base_url)
+    if match:
+        host = base_url.split("/index.php")[0]
+        return f"{host}/public.php/dav/files/{match.group(1)}"
+    return base_url.rstrip("/")
+
+
+def _build_download_url(base_url: str, path: str, filename: str) -> str:
+    """Builds a file download URL for a Nextcloud public share.
+
+    Args:
+        base_url: Base URL of the share (either the ``index.php/s/<token>``
+            form or the public DAV endpoint).
         path: Relative path within the share (e.g. "/2025-01/").
         filename: File name.
 
     Returns:
         Full URL.
     """
+    dav = _dav_base_url(base_url)
     normalized_path = path.strip("/")
     if normalized_path:
-        return (
-            f"{base_url}?path=%2F{normalized_path.replace('/', '%2F')}&files={filename}"
-        )
-    return f"{base_url}?path=%2F&files={filename}"
+        return f"{dav}/{normalized_path}/{filename}"
+    return f"{dav}/{filename}"
 
 
 def _is_valid_zip(file_path: Path) -> bool:
