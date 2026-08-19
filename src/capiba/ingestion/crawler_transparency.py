@@ -97,6 +97,7 @@ def _fetch_page(
                 delay=delay,
                 fatal_statuses=(400, 401, 403, 422),
                 rate_limit_status=429,
+                retry_statuses=(502, 503, 504),
             ),
         )
         or []

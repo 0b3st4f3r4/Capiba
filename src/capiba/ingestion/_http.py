@@ -32,6 +32,7 @@ def fetch_page(
     fatal_statuses: tuple[int, ...] = (400, 422),
     empty_statuses: tuple[int, ...] = (),
     rate_limit_status: int | None = None,
+    retry_statuses: tuple[int, ...] = (),
 ) -> Any | None:
     """Fetches an API page with retry and exponential backoff.
 
@@ -44,6 +45,11 @@ def fetch_page(
         fatal_statuses: HTTP statuses that abort immediately (non-transient).
         empty_statuses: HTTP statuses treated as an empty response (returns None).
         rate_limit_status: Rate limit HTTP status; waits `delay` and tries again.
+        retry_statuses: Transient server errors (e.g. 502/503/504) that wait
+            `RATE_LIMIT_DELAY` before the next attempt — the default backoff
+            (seconds) is too short for the upstream instability windows
+            observed in the PNCP API during the 2026-08 backfill. Raises
+            HTTPError once the attempts are exhausted.
 
     Returns:
         JSON response (dict or list, depending on the API), or None if the
@@ -68,6 +74,22 @@ def fetch_page(
                 wait = RATE_LIMIT_DELAY if delay == BASE_DELAY else delay
                 logger.warning("Rate limit reached. Waiting %.1fs...", wait)
                 time.sleep(wait)
+                continue
+
+            if response.status_code in retry_statuses:
+                logger.warning(
+                    "Transient server error %s on page %s (attempt %d/%d). Waiting %.1fs...",
+                    response.status_code,
+                    params.get("pagina"),
+                    attempt,
+                    retries,
+                    RATE_LIMIT_DELAY,
+                )
+                last_exception = requests.HTTPError(
+                    f"Transient server error: {response.status_code}",
+                    response=response,
+                )
+                time.sleep(RATE_LIMIT_DELAY)
                 continue
 
             response.raise_for_status()

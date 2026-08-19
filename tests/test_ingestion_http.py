@@ -225,3 +225,43 @@ class TestFetchPage:
 
         assert result == {"data": []}
         assert mock_get.call_count == 2
+
+    @patch(f"{MODULE}.time.sleep")
+    @patch(f"{MODULE}.requests.get")
+    def test_retry_status_retries_then_succeeds(
+        self, mock_get: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Transient server errors must wait the long delay and retry."""
+        mock_get.side_effect = [
+            _response(504),
+            _response(200, {"data": [{"id": 3}]}),
+        ]
+
+        result = fetch_page(
+            "https://api.example.com",
+            params={"pagina": 1},
+            retry_statuses=(502, 503, 504),
+        )
+
+        assert result == {"data": [{"id": 3}]}
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once_with(RATE_LIMIT_DELAY)
+
+    @patch(f"{MODULE}.time.sleep")
+    @patch(f"{MODULE}.requests.get")
+    def test_retry_status_raises_after_exhaustion(
+        self, mock_get: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A persistent transient error must raise, not return None."""
+        mock_get.return_value = _response(504)
+
+        with pytest.raises(requests.HTTPError):
+            fetch_page(
+                "https://api.example.com",
+                params={"pagina": 1},
+                retries=2,
+                retry_statuses=(502, 503, 504),
+            )
+
+        assert mock_get.call_count == 2
+        assert mock_sleep.call_count == 2
