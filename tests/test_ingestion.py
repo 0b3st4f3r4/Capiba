@@ -21,7 +21,7 @@ from capiba.ingestion.crawler_federal_revenue import (
     extract_cnpj_zip,
     parse_cnpj_csv,
 )
-from capiba.ingestion.crawler_pncp import fetch_contracts
+from capiba.ingestion.crawler_pncp import fetch_contract_updates, fetch_contracts
 from capiba.ingestion.crawler_transparency import (
     fetch_contracts as fetch_contracts_transparency,
 )
@@ -225,6 +225,47 @@ class TestCrawlerPNCP:
         params = kwargs["params"]
         assert params["dataInicial"] == "20260101"
         assert params["dataFinal"] == "20260102"
+
+    @patch("capiba.ingestion._http.requests.get")
+    def test_fetch_contract_updates_uses_update_endpoint(
+        self, mock_get: MagicMock
+    ) -> None:
+        """Must hit /v1/contratos/atualizacao with the formatted window."""
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "data": [{"numeroControlePNCP": "U1"}],
+            "paginasRestantes": 0,
+            "numeroPagina": 1,
+        }
+
+        results = fetch_contract_updates("2026-01-01", "2026-01-02")
+
+        assert results[0]["numeroControlePNCP"] == "U1"
+        args, kwargs = mock_get.call_args
+        assert args[0].endswith("/v1/contratos/atualizacao")
+        assert kwargs["params"]["dataInicial"] == "20260101"
+        assert kwargs["params"]["dataFinal"] == "20260102"
+
+    @patch("capiba.ingestion._http.requests.get")
+    def test_fetch_contract_updates_pagination(self, mock_get: MagicMock) -> None:
+        """Must iterate over update pages."""
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.side_effect = [
+            {
+                "data": [{"numeroControlePNCP": "U1"}],
+                "paginasRestantes": 1,
+                "numeroPagina": 1,
+            },
+            {
+                "data": [{"numeroControlePNCP": "U2"}],
+                "paginasRestantes": 0,
+                "numeroPagina": 2,
+            },
+        ]
+
+        results = fetch_contract_updates("2026-01-01", "2026-01-01")
+
+        assert [r["numeroControlePNCP"] for r in results] == ["U1", "U2"]
 
 
 class TestCrawlerTransparency:

@@ -153,8 +153,15 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    reais P6–P8, pendentes da conclusão do backfill. O `compute_cri`
    supervisionado segue sem uso (gap de ML supervisionado); proposta
    única real aguarda a fonte `contratacoes/propostas` do PNCP.
-4. (aberto) **Red flags de aditivos (O2).** Fonte PNCP `contratos/atualizacao`;
-   percentual de contratos com aditivo por órgão/fornecedor no gold.
+4. (em andamento) **Red flags de aditivos (O2).** Pré-registrado e
+   validado no regime sintético (PR-D-05/R-D-05, 5/5): fonte PNCP
+   `contratos/atualizacao` registrada (`pncp_contract_updates`, pipeline
+   diário bronze-only `daily_pncp_updates`), semântica de referência em
+   `detection/amendments.py` (aditivo de valor via `valorAcumulado` >
+   `valorInicial`, aditivo de prazo via extensão de vigência — última
+   observação soberana) e mart gold `contract_amendments` (+ agregados
+   por fornecedor/órgão) com data tests dbt dos invariantes reais P6–P8,
+   pendentes da conclusão do backfill.
 5. (aberto) **Screening de sanções e PEPs (O3).** CEIS/CNEP/CEAF
    (Transparência) e OpenSanctions (`yente` self-hosted); match exato por CNPJ
    antes de fuzzy por nome.

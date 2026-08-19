@@ -1,0 +1,26 @@
+{
+  "battery": "D-05",
+  "predictions": {
+    "P1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P2": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P3": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P4": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P5": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "verdict": "success"
+}

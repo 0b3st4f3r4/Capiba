@@ -63,11 +63,18 @@ class TestLoadSpec:
 
         assert set(specs) == {
             "daily_pncp",
+            "daily_pncp_updates",
             "monthly_transparency",
             "monthly_federal_revenue",
             "hourly_pod_usage",
             "weekly_sanctions",
         }
+        updates = specs["daily_pncp_updates"]
+        assert updates.name == "daily_pncp_updates"
+        assert updates.window == "previous_day"
+        assert [s.name for s in updates.sources] == ["pncp_contract_updates"]
+        assert [d.name for d in updates.destinations] == ["lake_bronze"]
+        assert updates.post_steps == []  # amendment marts rebuilt by gold_detection
         daily = specs["daily_pncp"]
         assert daily.name == "daily_pncp"
         assert daily.schedule == "0 6 * * *"

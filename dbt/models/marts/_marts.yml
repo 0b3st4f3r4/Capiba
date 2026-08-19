@@ -1,6 +1,42 @@
 version: 2
 
 models:
+  - name: contract_amendments
+    description: >-
+      Per-contract amendment red flags (PR-D-05, O2): value amendment
+      (valorAcumulado > valorInicial) and term extension (vigencia fim
+      estendida), computed from the bronze observation sequence.
+      Real-data invariants P6-P8 are enforced by the singular tests in
+      dbt/tests/contract_amendments_*.sql.
+    columns:
+      - name: contract_id
+        description: Silver contract identifier (one row per contract)
+        tests:
+          - not_null
+          - unique
+      - name: bronze_matched
+        description: Whether any bronze observation matched the contract
+        tests:
+          - not_null
+
+  - name: amendments_by_supplier
+    description: Amendment red flags aggregated by supplier
+    columns:
+      - name: supplier_id
+        description: Supplier identifier (CNPJ or CPF)
+        tests:
+          - not_null
+          - unique
+
+  - name: amendments_by_agency
+    description: Amendment red flags aggregated by buying agency
+    columns:
+      - name: siafi_code
+        description: SIAFI code of the buying agency
+        tests:
+          - not_null
+          - unique
+
   - name: contract_red_flags
     description: >-
       Per-contract red flags and deterministic CRI (Fazekas & Kocsis,

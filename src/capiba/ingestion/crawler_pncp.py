@@ -76,6 +76,68 @@ def _fetch_page(
     )
 
 
+def _fetch_all(
+    url: str,
+    start_date: str | date,
+    end_date: str | date,
+    agency_cnpj: str | None = None,
+    page_size: int = 500,
+) -> list[dict[str, Any]]:
+    """Paginates a PNCP contract endpoint over a date window.
+
+    Args:
+        url: Endpoint URL (``/v1/contratos`` or ``/v1/contratos/atualizacao``).
+        start_date: Start date in YYYY-MM-DD, yyyyMMdd or date format.
+        end_date: End date in YYYY-MM-DD, yyyyMMdd or date format.
+        agency_cnpj: CNPJ of the agency that owns the contract (optional).
+        page_size: Number of items per page (max 500).
+
+    Returns:
+        List of dictionaries with raw contract data.
+    """
+    start_date_fmt = _format_date(start_date)
+    end_date_fmt = _format_date(end_date)
+
+    results: list[dict[str, Any]] = []
+    page = 1
+    remaining_pages = None
+
+    while remaining_pages is None or remaining_pages > 0:
+        params: dict[str, Any] = {
+            "dataInicial": start_date_fmt,
+            "dataFinal": end_date_fmt,
+            "pagina": page,
+            "tamanhoPagina": page_size,
+        }
+        if agency_cnpj:
+            params["cnpjOrgao"] = agency_cnpj
+
+        logger.info(
+            "Fetching PNCP contracts page=%s (%s to %s, %s)",
+            page,
+            start_date_fmt,
+            end_date_fmt,
+            url.rsplit("/", 1)[-1],
+        )
+
+        data = _fetch_page(url, params)
+
+        if data is None:
+            break
+
+        page_data = data.get("data", [])
+        results.extend(page_data)
+
+        remaining_pages = data.get("paginasRestantes", 0)
+        if not page_data or remaining_pages == 0:
+            break
+
+        page += 1
+
+    logger.info("Total PNCP contracts returned: %d (%s)", len(results), url)
+    return results
+
+
 def fetch_contracts(
     start_date: str | date,
     end_date: str | date,
@@ -96,44 +158,38 @@ def fetch_contracts(
     Returns:
         List of dictionaries with raw contract data.
     """
-    start_date_fmt = _format_date(start_date)
-    end_date_fmt = _format_date(end_date)
+    return _fetch_all(
+        f"{PNCP_API_URL}/v1/contratos", start_date, end_date, agency_cnpj, page_size
+    )
 
-    url = f"{PNCP_API_URL}/v1/contratos"
-    results: list[dict[str, Any]] = []
-    page = 1
-    remaining_pages = None
 
-    while remaining_pages is None or remaining_pages > 0:
-        params: dict[str, Any] = {
-            "dataInicial": start_date_fmt,
-            "dataFinal": end_date_fmt,
-            "pagina": page,
-            "tamanhoPagina": page_size,
-        }
-        if agency_cnpj:
-            params["cnpjOrgao"] = agency_cnpj
+def fetch_contract_updates(
+    start_date: str | date,
+    end_date: str | date,
+    agency_cnpj: str | None = None,
+    page_size: int = 500,
+) -> list[dict[str, Any]]:
+    """Fetches contracts from PNCP by *update* date (PR-D-05, O2).
 
-        logger.info(
-            "Fetching PNCP contracts page=%s (%s to %s)",
-            page,
-            start_date_fmt,
-            end_date_fmt,
-        )
+    Same payload as ``/v1/contratos`` (valorInicial, valorAcumulado,
+    numeroRetificacao, vigências), keyed by the date of the last update —
+    captures contracts amended after their original publication. The
+    bronze observations feed the amendment red flags
+    (``capiba.detection.amendments``).
 
-        data = _fetch_page(url, params)
+    Args:
+        start_date: Start date in YYYY-MM-DD, yyyyMMdd or date format.
+        end_date: End date in YYYY-MM-DD, yyyyMMdd or date format.
+        agency_cnpj: CNPJ of the agency that owns the contract (optional).
+        page_size: Number of items per page (max 500).
 
-        if data is None:
-            break
-
-        page_data = data.get("data", [])
-        results.extend(page_data)
-
-        remaining_pages = data.get("paginasRestantes", 0)
-        if not page_data or remaining_pages == 0:
-            break
-
-        page += 1
-
-    logger.info("Total PNCP contracts returned: %d", len(results))
-    return results
+    Returns:
+        List of dictionaries with raw contract data.
+    """
+    return _fetch_all(
+        f"{PNCP_API_URL}/v1/contratos/atualizacao",
+        start_date,
+        end_date,
+        agency_cnpj,
+        page_size,
+    )

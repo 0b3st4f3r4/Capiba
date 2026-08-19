@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from capiba.ingestion.cnpj import parse_cnpj_zip
 from capiba.ingestion.crawler_federal_revenue import download_cnpj_dump
+from capiba.ingestion.crawler_pncp import fetch_contract_updates as pncp_fetch_updates
 from capiba.ingestion.crawler_pncp import fetch_contracts as pncp_fetch_contracts
 from capiba.ingestion.crawler_transparency import (
     fetch_contracts as transparency_fetch_contracts,
@@ -73,6 +74,15 @@ def _fetch_pncp(
     if start is None or end is None:
         raise ValueError("The pncp source requires a bounded window")
     return pncp_fetch_contracts(start_date=start, end_date=end, **params)
+
+
+def _fetch_pncp_contract_updates(
+    start: date | None, end: date | None, **params: Any
+) -> list[dict[str, Any]]:
+    """Adapts the PNCP contract-updates crawler to the window signature."""
+    if start is None or end is None:
+        raise ValueError("The pncp_contract_updates source requires a bounded window")
+    return pncp_fetch_updates(start_date=start, end_date=end, **params)
 
 
 def _fetch_transparency(
@@ -123,6 +133,7 @@ def _fetch_cnep(
 
 SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pncp": SourceDef(fetch=_fetch_pncp),
+    "pncp_contract_updates": SourceDef(fetch=_fetch_pncp_contract_updates),
     "transparency": SourceDef(fetch=_fetch_transparency),
     "federal_revenue": SourceDef(download=download_cnpj_dump),
     "mock_pncp": SourceDef(fetch=_fetch_mock_pncp),
@@ -133,9 +144,13 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
 }
 
 # Normalizer per source: raw record -> unified Contract. Mock sources reuse
-# the normalizer of the source they impersonate.
+# the normalizer of the source they impersonate. ``pncp_contract_updates``
+# shares the ``/v1/contratos`` payload, so it reuses ``from_pncp`` — its
+# pipeline is bronze-only (PR-D-05): the normalized records are computed
+# but never persisted to the silver.
 NORMALIZER_REGISTRY: dict[str, Callable[[dict[str, Any]], Contract]] = {
     "pncp": Contract.from_pncp,
+    "pncp_contract_updates": Contract.from_pncp,
     "transparency": Contract.from_transparency,
     "mock_pncp": Contract.from_pncp,
     "mock_transparency": Contract.from_transparency,

@@ -99,6 +99,32 @@ sources:
             tests:
               - not_null
 
+      - name: raw_pncp_contract_updates
+        description: >-
+          Raw PNCP contract payloads crawled by UPDATE date
+          (/v1/contratos/atualizacao) by the daily_pncp_updates pipeline
+          (payload_json is a JSON array of raw contract dicts, one row per
+          crawl run). Feeds the amendment red flags (PR-D-05).
+        # Freshness: the daily_pncp_updates DAG appends once a day; alert
+        # when the latest ingested_at gets stale.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: dt
+            description: Ingestion date partition
+            tests:
+              - not_null
+          - name: ingested_at
+            description: Crawl timestamp
+            tests:
+              - not_null
+          - name: payload_json
+            description: JSON array of raw PNCP contract payloads
+            tests:
+              - not_null
+
       - name: raw_pod_usage
         description: >-
           Raw pod usage snapshots collected by the hourly_pod_usage

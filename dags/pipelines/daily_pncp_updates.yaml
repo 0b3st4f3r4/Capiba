@@ -1,0 +1,15 @@
+# Daily collection of PNCP contracts by UPDATE date (PR-D-05, O2):
+# captures contracts amended after their original publication. Bronze-only
+# by design — the amendment red flags (mart contract_amendments) are
+# computed from the bronze observations (raw_pncp +
+# raw_pncp_contract_updates); the silver contracts table is untouched.
+name: daily_pncp_updates
+description: Daily PNCP contract updates crawl (amendment red flags, bronze-only)
+schedule: "41 6 * * *" # 06:41 UTC, after the daily_ingestion crawl
+window: previous_day
+sources:
+  - name: pncp_contract_updates
+formula: contracts_default
+destinations:
+  - lake_bronze # raw audit copy + raw_pncp_contract_updates Iceberg table
+post_steps: [] # the gold_detection DAG rebuilds the amendment marts daily

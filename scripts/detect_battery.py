@@ -18,7 +18,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from capiba.detection import battery, battery_flags, battery_graphs  # noqa: E402
+from capiba.detection import (  # noqa: E402
+    battery,
+    battery_amendments,
+    battery_flags,
+    battery_graphs,
+)
 
 
 def main() -> int:
@@ -35,8 +40,11 @@ def main() -> int:
     config = json.loads(args.config.read_text())
     out_dir = args.out or Path("results") / "detect" / config["id"]
 
-    if config.get("runner") == "flags":
+    runner_name = config.get("runner")
+    if runner_name == "flags":
         runner = battery_flags
+    elif runner_name == "amendments":
+        runner = battery_amendments
     elif config.get("requires_infra") == "arangodb":
         runner = battery_graphs
     else:

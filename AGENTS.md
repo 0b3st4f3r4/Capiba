@@ -85,8 +85,11 @@ Airflow — ingestão de contratos separada por fonte
 `monthly_transparency` a partir de `monthly_transparency.yaml`, sem post
 steps — falha isolada, janelas naturais e rate limits independentes por
 fonte), mais `monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
-`hourly_pod_usage` a partir de `hourly_pod_usage.yaml` e
-`weekly_sanctions` a partir de `weekly_sanctions.yaml`.
+`hourly_pod_usage` a partir de `hourly_pod_usage.yaml`,
+`weekly_sanctions` a partir de `weekly_sanctions.yaml` e
+`daily_pncp_updates` a partir de `daily_pncp_updates.yaml` (fonte
+`pncp_contract_updates`, `/v1/contratos/atualizacao`, bronze-only — flags
+de aditivo do PR-D-05 leem as observações bronze; o silver não é tocado).
 A fórmula `file_dump`, quando a spec declara `lake_silver`/`arangodb_graph`
 e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
 `src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
@@ -116,6 +119,13 @@ Post steps (`dbt_run`, `detect`) são **pulados em runs de backfill**
 (`task_post_step` levanta `AirflowSkipException` quando `run_type ==
 "backfill"` — reprocessam as tabelas inteiras, O(n²) e pesado em memória);
 após um backfill, dispare uma run regular para reconstruir marts e sinais.
+O post step `dbt_run` aceita a forma de mapping com `select` (seleção de
+modelos dbt; vazio = projeto todo): pipelines frequentes devem declarar só
+os marts alimentados pelo dado recém-coletado — o `hourly_pod_usage` roda
+`--select pod_usage_hourly platform_cost_daily`, pois um run completo
+reconstrói os marts de contratos sobre todo o histórico e OOMKillava o
+Trino (unnest full do `contract_red_flags`, 2026-08-19); o run completo
+fica a cargo da `gold_detection` diária.
 Alertas best-effort por e-mail (`src/capiba/notification/alerts.py`, wrapper
 síncrono do `NotificationDispatcher` async) disparam do `task_detect`
 (sinais ≥ `NOTIFICATION_ALERT_SCORE`, default 0.7) e do
