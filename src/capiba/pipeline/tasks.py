@@ -26,6 +26,7 @@ from capiba.config import DBT_PROJECT_DIR, DETECTION_COLLUSION_MIN_WINS
 from capiba.db.arangodb import get_capiba_db
 from capiba.db.triage import register_signals
 from capiba.detection.graphs import detect_collusion
+from capiba.detection.screening import sanctioned_supplier_signals
 from capiba.detection.signals import (
     SignalType,
     anomalous_price,
@@ -323,6 +324,16 @@ def task_detect(**context: Any) -> dict[str, Any]:
         contracts = []
 
     signals = detect_fraud_signals(contracts)
+
+    # Best-effort: sanction screening (O3) never fails the task (the silver
+    # sanctions table may not exist yet).
+    try:
+        sanctions = [
+            row for batch in lake.read_silver_entities("sanctions") for row in batch
+        ]
+        signals.extend(sanctioned_supplier_signals(contracts, sanctions))
+    except Exception as e:
+        logger.warning("Sanction screening unavailable (silver sanctions): %s", e)
 
     # Best-effort: graph signals never fail the task (ArangoDB may be down).
     try:

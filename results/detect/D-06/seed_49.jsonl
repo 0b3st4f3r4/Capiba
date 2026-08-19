@@ -1,0 +1,5 @@
+{"entity_type": "supplier", "entity_id": "20314105065173", "signal_type": "sanctioned_supplier", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"cnep\"], \"sanctions\": [\"cnep-S5-A\"]}"}
+{"entity_type": "supplier", "entity_id": "56158800427088", "signal_type": "sanctioned_supplier", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"ceis\"], \"sanctions\": [\"ceis-S1-A\"]}"}
+{"entity_type": "supplier", "entity_id": "64724751167", "signal_type": "sanctioned_supplier", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"ceis\"], \"sanctions\": [\"ceis-S6-A\"]}"}
+{"entity_type": "supplier", "entity_id": "69906893194898", "signal_type": "sanctioned_supplier", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"ceis\"], \"sanctions\": [\"ceis-S3-A\"]}"}
+{"entity_type": "supplier", "entity_id": "97926904815995", "signal_type": "sanctioned_supplier", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"cnep\"], \"sanctions\": [\"cnep-S9-CURRENT\"]}"}

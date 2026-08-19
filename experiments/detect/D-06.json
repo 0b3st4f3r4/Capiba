@@ -1,0 +1,92 @@
+{
+  "id": "D-06",
+  "description": "Screening de sancoes por documento exato (O3): semantica exata sobre casos plantados S1-S10 (fronteiras de vigencia, disciplina de documento, details fieis) + 20 fornecedores controle. Ver docs/preregistrations/PR-D-06.md.",
+  "runner": "screening",
+  "seeds": [19, 29, 39, 49, 59],
+  "control_suppliers": 20,
+  "cases": [
+    {
+      "id": "S1",
+      "description": "CNPJ sancionado, assinatura dentro da vigencia -> sinal",
+      "doc_type": "cnpj",
+      "signature_offset_days": 165,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364}],
+      "expected": {"signal": true}
+    },
+    {
+      "id": "S2",
+      "description": "Assinatura 1 dia apos end_date -> sem sinal",
+      "doc_type": "cnpj",
+      "signature_offset_days": 365,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364}],
+      "expected": {"signal": false}
+    },
+    {
+      "id": "S3",
+      "description": "Assinatura igual a end_date -> sinal (fronteira inclusiva)",
+      "doc_type": "cnpj",
+      "signature_offset_days": 364,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364}],
+      "expected": {"signal": true}
+    },
+    {
+      "id": "S4",
+      "description": "Assinatura 1 dia antes de start_date -> sem sinal",
+      "doc_type": "cnpj",
+      "signature_offset_days": -1,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364}],
+      "expected": {"signal": false}
+    },
+    {
+      "id": "S5",
+      "description": "Sancao sem end_date (vigencia aberta), assinatura apos o inicio -> sinal",
+      "doc_type": "cnpj",
+      "signature_offset_days": 900,
+      "sanctions": [{"id_suffix": "A", "list_name": "cnep", "start_offset_days": 0, "end_offset_days": null}],
+      "expected": {"signal": true}
+    },
+    {
+      "id": "S6",
+      "description": "Match por CPF (pessoa fisica) -> sinal",
+      "doc_type": "cpf",
+      "signature_offset_days": 165,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364}],
+      "expected": {"signal": true}
+    },
+    {
+      "id": "S7",
+      "description": "Mesmo nome, documento diferente -> sem sinal (nome nao e documento)",
+      "doc_type": "cnpj",
+      "signature_offset_days": 165,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364, "other_document": true}],
+      "expected": {"signal": false}
+    },
+    {
+      "id": "S8",
+      "description": "Fornecedor sem documento no silver -> sem sinal",
+      "doc_type": "none",
+      "signature_offset_days": 165,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": 0, "end_offset_days": 364}],
+      "expected": {"signal": false}
+    },
+    {
+      "id": "S9",
+      "description": "Duas sancoes, apenas uma vigente na assinatura -> sinal listando somente a vigente",
+      "doc_type": "cnpj",
+      "signature_offset_days": 165,
+      "sanctions": [
+        {"id_suffix": "OLD", "list_name": "ceis", "start_offset_days": -800, "end_offset_days": -100},
+        {"id_suffix": "CURRENT", "list_name": "cnep", "start_offset_days": 0, "end_offset_days": 364}
+      ],
+      "expected": {"signal": true, "sanction_suffixes": ["CURRENT"]}
+    },
+    {
+      "id": "S10",
+      "description": "Sancao sem start_date -> sem sinal (nao computavel)",
+      "doc_type": "cnpj",
+      "signature_offset_days": 165,
+      "sanctions": [{"id_suffix": "A", "list_name": "ceis", "start_offset_days": null, "end_offset_days": 364}],
+      "expected": {"signal": false}
+    }
+  ]
+}

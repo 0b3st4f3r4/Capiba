@@ -174,6 +174,62 @@ class TestTaskDetect:
         assert signals[0]["signal_type"] == "collusion_network"
         assert signals[0]["entity_id"] == "91000000000001+91000000000002"
 
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_adds_sanctioned_supplier_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Sanction screening (O3): suppliers under a vigent sanction signal."""
+        contract = _silver_contract("C001", supplier_cnpj="11111111000111")
+        contract["signature_date"] = "2026-06-15"
+        mock_lake.read_silver_contracts.return_value = [contract]
+        mock_lake.read_silver_entities.return_value = iter(
+            [
+                [
+                    {
+                        "id": "ceis-1",
+                        "list_name": "ceis",
+                        "cnpj": "11111111000111",
+                        "cpf": None,
+                        "start_date": "2026-01-01",
+                        "end_date": None,
+                    }
+                ]
+            ]
+        )
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        mock_lake.read_silver_entities.assert_called_once_with("sanctions")
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        screened = [s for s in signals if s["signal_type"] == "sanctioned_supplier"]
+        assert len(screened) == 1
+        assert screened[0]["entity_id"] == "11111111000111"
+        assert screened[0]["score"] == 1.0
+        assert summary["signals"] == len(signals)
+
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_sanctions_failure_keeps_other_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """A missing silver sanctions table must not abort the detection."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_lake.read_silver_entities.side_effect = FileNotFoundError("no table")
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert "sanctioned_supplier" not in {s["signal_type"] for s in signals}
+
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_arango_failure_keeps_statistical_signals(

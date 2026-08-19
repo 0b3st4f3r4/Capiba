@@ -85,7 +85,7 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    `ceis` e `cnep` (sanções) estão feitos: pipeline semanal `weekly_sanctions`
    (fórmula `entities_collect`, bronze `raw_ceis`/`raw_cnep` e silver
    `sanctions`, modelo `Sanction`); o sinal "fornecedor sancionado" depende de
-   pré-registro (PR-D-03). Seguem abertos `licitacoes` e `despesas/documentos`
+   pré-registro (PR-D-06, registrado e aprovado, não executado). Seguem abertos `licitacoes` e `despesas/documentos`
    (Transparência) e `atas`, `contratacoes/publicacao` e
    `contratos/atualizacao` (PNCP), com pré-registro PR-D-* para os que virarem
    sinal.
@@ -162,9 +162,13 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    observação soberana) e mart gold `contract_amendments` (+ agregados
    por fornecedor/órgão) com data tests dbt dos invariantes reais P6–P8,
    pendentes da conclusão do backfill.
-5. (aberto) **Screening de sanções e PEPs (O3).** CEIS/CNEP/CEAF
-   (Transparência) e OpenSanctions (`yente` self-hosted); match exato por CNPJ
-   antes de fuzzy por nome.
+5. (em andamento) **Screening de sanções e PEPs (O3).** Match exato por
+   CNPJ/CPF contra CEIS/CNEP validado (PR-D-06/R-D-06, 5/5): sinal
+   `sanctioned_supplier` (`detection/screening.py`, score binário, vigência
+   inclusiva na `signature_date`) integrado ao `task_detect` (best-effort
+   sobre o silver `sanctions`). CEAF fora do escopo (CPF mascarado na fonte,
+   confirmado ao vivo); PEPs/OpenSanctions (`yente` self-hosted) e fuzzy por
+   nome ficam para PRs próprios.
 6. (aberto) **Esquema FollowTheMoney no grafo (O4).**
    Person/Company/Ownership/Directorship no ArangoDB; prepara o
    `trace_ownership` e a exportação FtM JSON.

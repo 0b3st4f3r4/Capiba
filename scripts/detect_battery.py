@@ -21,8 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from capiba.detection import (  # noqa: E402
     battery,
     battery_amendments,
+    battery_collusion,
     battery_flags,
     battery_graphs,
+    battery_screening,
 )
 
 
@@ -35,22 +37,37 @@ def main() -> int:
         default=None,
         help="Output dir (default: results/detect/<id>)",
     )
+    parser.add_argument(
+        "--skip-real",
+        action="store_true",
+        help="Skip the real-graph sweep (collusion runner only)",
+    )
     args = parser.parse_args()
 
     config = json.loads(args.config.read_text())
     out_dir = args.out or Path("results") / "detect" / config["id"]
 
     runner_name = config.get("runner")
-    if runner_name == "flags":
-        runner = battery_flags
-    elif runner_name == "amendments":
-        runner = battery_amendments
-    elif config.get("requires_infra") == "arangodb":
-        runner = battery_graphs
+    if runner_name == "collusion":
+        # Part A/C (synthetic, disposable db) + Part B (real sweep, read-only).
+        battery_collusion.run_battery(config, out_dir)
+        if not args.skip_real:
+            battery_collusion.run_real_sweep(config, out_dir)
+        summary_path = out_dir / "summary.json"
     else:
-        runner = battery
-    runner.run_battery(config, out_dir)
-    summary = json.loads((out_dir / "summary.json").read_text())
+        if runner_name == "flags":
+            runner = battery_flags
+        elif runner_name == "amendments":
+            runner = battery_amendments
+        elif runner_name == "screening":
+            runner = battery_screening
+        elif config.get("requires_infra") == "arangodb":
+            runner = battery_graphs
+        else:
+            runner = battery
+        runner.run_battery(config, out_dir)
+        summary_path = out_dir / "summary.json"
+    summary = json.loads(summary_path.read_text())
 
     print(f"Bateria {summary['battery']}: {summary['verdict']}")
     for name, prediction in summary["predictions"].items():

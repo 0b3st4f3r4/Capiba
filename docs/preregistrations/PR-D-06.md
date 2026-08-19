@@ -3,7 +3,7 @@
 - **Pré-registro**: bateria D-06
 - **Criado em**: 2026-08-19
 - **Última atualização**: 2026-08-19
-- **Status**: rascunho para revisão humana
+- **Status**: registrado, aprovado em 2026-08-19, não executado
 - **Alvo**: sinal `sanctioned_supplier` (novo `SignalType`) — match exato
   por CNPJ/CPF entre os fornecedores dos contratos silver e as sanções
   silver (`sanctions`, listas CEIS/CNEP) **vigentes na data de assinatura

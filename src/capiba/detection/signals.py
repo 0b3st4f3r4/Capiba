@@ -37,6 +37,7 @@ class SignalType(StrEnum):
     ANOMALOUS_PRICE = "anomalous_price"
     SEMANTIC_GAP = "semantic_gap"
     ANOMALOUS_DURATION = "anomalous_duration"
+    SANCTIONED_SUPPLIER = "sanctioned_supplier"
 
 
 def is_non_competitive(modality: Any) -> bool:
