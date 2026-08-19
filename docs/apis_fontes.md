@@ -70,7 +70,7 @@ https://api.portaldatransparencia.gov.br/api-de-dados
   coleta as duas listas semanalmente (`fetch_sanctions`, paginação até página
   vazia), grava os payloads brutos nas tabelas bronze `raw_ceis`/`raw_cnep` e
   os registros normalizados (modelo `Sanction`) na tabela silver `sanctions`.
-- **Próximo passo:** o usuário deve preencher `global.transparencyApiKey` em `charts/capiba/values.yaml` (ou a variável de ambiente `TRANSPARENCY_API_KEY`) e refazer o `helm upgrade`. Sem a chave, o pipeline falha com log claro.
+- A chave está configurada: `TRANSPARENCY_API_KEY` no `.env` (lida por `scripts/helm-upgrade.sh` e injetada no chart via `--set global.transparencyApiKey` a cada `make helm-upgrade`). Sem a chave, o pipeline falha com log claro.
 
 ---
 
@@ -138,6 +138,6 @@ Contratos, scores, pesos e códigos de erro estão documentados em
 
 | Prioridade | Tarefa | Motivação |
 |------------|--------|-----------|
-| Alta | Configurar `TRANSPARENCY_API_KEY` | Sem token a API do Portal da Transparência bloqueia todas as requisições |
+| ~~Alta~~ | ~~Configurar `TRANSPARENCY_API_KEY`~~ | **Feito** — a chave está no `.env` e o `scripts/helm-upgrade.sh` a injeta no chart a cada upgrade |
 | Média | Habilitar os dumps completos da Receita (`FEDERAL_REVENUE_FILES`) | Por padrão só as tabelas de referência pequenas são baixadas; Empresas/Estabelecimentos/Socios alimentam o silver e o grafo |
 | Média | Aproveitar o cache Redis existente nos crawls | Redis já está habilitado por padrão (monitor de qualidade e hot paths da API); falta aplicá-lo às chamadas das APIs externas para reduzir a dependência da instabilidade delas |
