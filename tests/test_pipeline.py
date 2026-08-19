@@ -179,6 +179,54 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert {s["signal_type"] for s in signals} == {"concentration"}
 
+    @patch("capiba.pipeline.tasks.register_signals")
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_registers_signals_for_triage(
+        self,
+        mock_lake: MagicMock,
+        mock_get_db: MagicMock,
+        mock_collusion: MagicMock,
+        mock_register: MagicMock,
+    ) -> None:
+        """Computed signals must enter the editorial triage queue (O10)."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        mock_register.assert_called_once()
+        assert mock_register.call_args.args[0] is mock_get_db.return_value
+        assert len(mock_register.call_args.args[1]) == summary["signals"]
+
+    @patch("capiba.pipeline.tasks.register_signals")
+    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_triage_failure_does_not_abort(
+        self,
+        mock_lake: MagicMock,
+        mock_get_db: MagicMock,
+        mock_collusion: MagicMock,
+        mock_register: MagicMock,
+    ) -> None:
+        """A triage failure must not abort the task nor drop the signals."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_collusion.return_value = []
+        mock_register.side_effect = RuntimeError("triage down")
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        mock_lake.write_fraud_signals.assert_called_once()
+
     @patch("capiba.pipeline.tasks.detect_collusion")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")

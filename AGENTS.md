@@ -119,6 +119,14 @@ somente quando `NOTIFICATION_RECIPIENTS` está configurado.
 A vertical `evidence` é exposta pela API no router `/v1/evidence`
 (upload multipart, listagem por contrato, download por SHA-256; storage
 MinIO instanciado sob demanda via `get_storage()`).
+A triagem editorial de sinais (O10) vive em `src/capiba/db/triage.py`
+(coleção ArangoDB `signal_reviews`, chave estável
+`{entity_type}:{entity_id}:{signal_type}`; `pending_review` →
+`confirmed`/`rejected`/`published`, revisor obrigatório, motivo no
+descarte, `published` terminal): o `task_detect` registra sinais novos
+como `pending_review` (best-effort) e a API expõe `/v1/triage`
+(listagem, transição e relatório de precisão por operador — rótulos
+para o ML supervisionado).
 Projeto dbt em `dbt/` (profile `capiba`, dbt-trino sobre o catálogo gold;
 marts Iceberg no bucket capiba-gold).
 O lake usa tabelas Iceberg (via `src/capiba/pipeline/lake.py` + pyiceberg)

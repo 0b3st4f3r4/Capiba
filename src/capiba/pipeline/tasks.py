@@ -24,6 +24,7 @@ import pandas as pd
 
 from capiba.config import DBT_PROJECT_DIR, DETECTION_COLLUSION_MIN_WINS
 from capiba.db.arangodb import get_capiba_db
+from capiba.db.triage import register_signals
 from capiba.detection.graphs import detect_collusion
 from capiba.detection.signals import (
     SignalType,
@@ -326,6 +327,8 @@ def task_detect(**context: Any) -> dict[str, Any]:
         db = get_capiba_db()
         pairs = detect_collusion(db, min_wins=DETECTION_COLLUSION_MIN_WINS)
         signals.extend(collusion_signals(pairs, DETECTION_COLLUSION_MIN_WINS))
+        # Editorial triage queue (O10): new signals enter as pending_review.
+        register_signals(db, signals)
     except Exception as e:
         logger.warning("Collusion detection unavailable (ArangoDB): %s", e)
 

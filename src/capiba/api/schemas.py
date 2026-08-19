@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from capiba.db.triage import TriageStatus
 from capiba.detection.signals import SignalType
 
 __all__ = [
@@ -20,8 +21,12 @@ __all__ = [
     "RankingItem",
     "RankingResponse",
     "Signal",
+    "SignalReview",
     "SignalType",
     "SignalsResponse",
+    "TriageMetrics",
+    "TriageRequest",
+    "TriageStatus",
 ]
 
 
@@ -89,3 +94,41 @@ class OwnershipResponse(BaseModel):
     entity: str = Field(..., pattern=r"^\d{14}$")
     max_depth: int
     paths: list[list[str]]
+
+
+class SignalReview(BaseModel):
+    """Triage entry of a detected signal (GET /v1/triage/signals)."""
+
+    key: str
+    entity_type: str
+    entity_id: str
+    signal_type: str
+    score: float | None = None
+    details: str | None = None
+    status: TriageStatus
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
+    reason: str | None = None
+    first_seen: str | None = None
+    last_seen: str | None = None
+
+
+class TriageRequest(BaseModel):
+    """Request of the POST /v1/triage/signals/{key}/review endpoint."""
+
+    status: TriageStatus = Field(..., description="Target editorial state")
+    reviewer: str = Field(..., min_length=1)
+    reason: str | None = Field(
+        default=None, description="Mandatory when status is rejected"
+    )
+
+
+class TriageMetrics(BaseModel):
+    """Per-operator precision report (GET /v1/triage/metrics)."""
+
+    signal_type: str
+    pending_review: int
+    confirmed: int
+    rejected: int
+    published: int
+    precision: float | None = None
