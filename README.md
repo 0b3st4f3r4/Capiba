@@ -1,4 +1,6 @@
-# Capiba
+#
+
+<img src="logo.svg" alt="Capiba">
 
 **C**ruzamento e **A**nálise de **P**adrões e **I**ndícios em **B**ases **A**bertas.
 
