@@ -30,9 +30,11 @@ jobs:
         run: make typecheck
 
       - name: Tests (pytest)
-        # Integration tests are skipped by default (require CAPIBA_INTEGRATION=1).
+        # Integration tests are skipped by default (require CAPIBA_INTEGRATION=1);
+        # slow regime tests (detection batteries) are enabled here explicitly so
+        # the pre-registered anchors are always verified in CI.
         # Coverage floor (fail_under = 85) is enforced via pyproject.toml.
-        run: pytest tests/ --cov=src/capiba --cov-report=term-missing
+        run: CAPIBA_SLOW=1 pytest tests/ --cov=src/capiba --cov-report=term-missing
 
       - name: Security (bandit)
         run: bandit -r src/

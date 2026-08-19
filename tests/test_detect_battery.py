@@ -16,6 +16,11 @@ import pytest
 
 from capiba.detection import battery
 
+# The battery trains one IsolationForest per eligible supplier/seed — regime
+# tests, not unit tests. Skipped by default; run with CAPIBA_SLOW=1 (the CI
+# and `make test-cov`/`make test-slow` enable it).
+pytestmark = pytest.mark.slow
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "experiments" / "detect" / "D-01b.json"
 CONFIG: dict[str, Any] = json.loads(CONFIG_PATH.read_text())

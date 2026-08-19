@@ -39,8 +39,9 @@ Comandos:
 
 ```bash
 make install            # venv + deps de dev + Airflow
-make test               # pytest (verde sem infra; integração com CAPIBA_INTEGRATION=1)
-make test-cov           # pytest com cobertura (piso de 85% via pyproject.toml)
+make test               # pytest rápido (unitários; baterias lentas puladas — CAPIBA_SLOW=1)
+make test-slow          # só as baterias lentas (testes de regime, marker slow)
+make test-cov           # suíte completa com cobertura (piso de 85%; inclui baterias)
 make lint               # ruff check
 make typecheck          # mypy + basedpyright
 make security           # bandit (análise de segurança em src/)
@@ -112,7 +113,10 @@ O lake usa tabelas Iceberg (via `src/capiba/pipeline/lake.py` + pyiceberg)
 catalogadas pelo Lakekeeper; offline, aponte `ICEBERG_CATALOG_URI` para
 `sqlite:///...` com `ICEBERG_LOCAL_WAREHOUSE`. Testes que exigem
 ArangoDB (ou outra infra externa) são marcados `@pytest.mark.integration` e pulados por
-padrão; ative com `CAPIBA_INTEGRATION=1`. Testes BDD (Gherkin, pytest-bdd)
+padrão; ative com `CAPIBA_INTEGRATION=1`. Testes de regime/calibração
+(baterias de detecção, ex.: `tests/test_detect_battery.py`) são marcados
+`@pytest.mark.slow` e também pulados por padrão; ative com `CAPIBA_SLOW=1`
+(o CI e `make test-cov`/`make test-slow` habilitam). Testes BDD (Gherkin, pytest-bdd)
 ficam em `tests/bdd/` — features em `tests/bdd/features/*.feature`.
 
 Experimentos de detecção (novos sinais, calibração de limiares) seguem

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov lint format format-check typecheck security clean build build-gpu build-airflow helm-upgrade publish-artifacts init-buckets ensure-port-forward dbt-run dbt-test dbt-docs pre-commit port-forward port-forward-stop port-forward-status ingest-mock rollout-airflow bump-version cluster-start cluster-stop cluster-remove cluster-status dashboard-token
+.PHONY: help install install-dev test test-slow test-cov lint format format-check typecheck security clean build build-gpu build-airflow helm-upgrade publish-artifacts init-buckets ensure-port-forward dbt-run dbt-test dbt-docs pre-commit port-forward port-forward-stop port-forward-status ingest-mock rollout-airflow bump-version cluster-start cluster-stop cluster-remove cluster-status dashboard-token
 
 PYTHON := python3
 VENV := .venv
@@ -26,11 +26,14 @@ install: $(VENV)/bin/activate ## Installs the project, dev and Airflow dependenc
 
 install-dev: install ## Alias for install (used by scripts/setup.sh)
 
-test: $(VENV)/bin/activate ## Runs the tests
+test: $(VENV)/bin/activate ## Runs the fast test suite (unit; slow batteries skipped — CAPIBA_SLOW=1 to include)
 	$(PYTEST) tests/ -v --tb=short
 
-test-cov: $(VENV)/bin/activate ## Runs the tests with coverage (floor: 85%)
-	$(PYTEST) tests/ -v --tb=short --cov=src/capiba --cov-report=term-missing --cov-report=html
+test-slow: $(VENV)/bin/activate ## Runs only the slow regime tests (detection batteries)
+	CAPIBA_SLOW=1 $(PYTEST) tests/ -v --tb=short -m slow
+
+test-cov: $(VENV)/bin/activate ## Runs the full test suite with coverage (floor: 85%; includes slow batteries)
+	CAPIBA_SLOW=1 $(PYTEST) tests/ -v --tb=short --cov=src/capiba --cov-report=term-missing --cov-report=html
 
 lint: $(VENV)/bin/activate sort-imports-check ## Checks lint with ruff and import order
 	$(RUFF) check src/ tests/ scripts/

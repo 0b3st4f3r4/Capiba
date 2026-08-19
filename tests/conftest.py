@@ -12,21 +12,30 @@ import pytest
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Registers the integration test marker."""
+    """Registers the integration and slow test markers."""
     config.addinivalue_line(
         "markers",
         "integration: requires live infra (ArangoDB etc.); run with CAPIBA_INTEGRATION=1",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: regime/calibration tests (detection batteries); run with CAPIBA_SLOW=1",
+    )
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skips tests marked as integration unless CAPIBA_INTEGRATION is set."""
-    if os.getenv("CAPIBA_INTEGRATION"):
-        return
-    skip = pytest.mark.skip(reason="requires live infra; set CAPIBA_INTEGRATION=1")
+    """Skips integration/slow tests unless the corresponding env var is set."""
+    skip_integration = pytest.mark.skip(
+        reason="requires live infra; set CAPIBA_INTEGRATION=1"
+    )
+    skip_slow = pytest.mark.skip(reason="regime test; set CAPIBA_SLOW=1")
+    run_integration = bool(os.getenv("CAPIBA_INTEGRATION"))
+    run_slow = bool(os.getenv("CAPIBA_SLOW"))
     for item in items:
-        if "integration" in item.keywords:
-            item.add_marker(skip)
+        if not run_integration and "integration" in item.keywords:
+            item.add_marker(skip_integration)
+        if not run_slow and "slow" in item.keywords:
+            item.add_marker(skip_slow)
 
 
 @pytest.fixture
