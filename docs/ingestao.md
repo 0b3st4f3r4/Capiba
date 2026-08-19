@@ -87,6 +87,34 @@ python scripts/ingestion.py \
 | `--persist` | flag | Habilita persistência no ArangoDB (dry-run desativa) |
 | `--mock` | flag | Usa dados de exemplo em vez de chamar APIs externas |
 
+> **Nota (CLI no host):** as escritas no lake exigem `ICEBERG_OAUTH2_CLIENT_ID`
+> (`capiba-services`), `ICEBERG_OAUTH2_CLIENT_SECRET` (o mesmo do
+> `keycloak.clientSecrets` do chart) e `ICEBERG_OAUTH2_SERVER_URI` apontando
+> para o port-forward do Keycloak (`http://localhost:8182/...`). Mesmo assim,
+> o pyiceberg no host falha no TLS self-signed do endpoint S3 vendido pelo
+> Lakekeeper (`https://s3.capiba.local:8443`) — para cargas que precisam do
+> lake, prefira o backfill Airflow abaixo, que roda in-cluster.
+
+## Carga retroativa (backfill)
+
+Para acumular histórico (ex.: calibração de limiares de detecção), use o
+backfill nativo do Airflow sobre a DAG `daily_ingestion` — cada dia lógico
+roda o pipeline completo (crawl PNCP do dia anterior + Transparência do
+mês corrente, normalize, destinos, dbt e detect) com retry por task:
+
+```bash
+# dentro do pod do Airflow
+kubectl exec deploy/capiba-airflow -n capiba -c airflow -- \
+  airflow backfill create --dag-id daily_ingestion \
+  --from-date 2026-01-01 --to-date 2026-08-18 \
+  --max-active-runs 3   # limita paralelismo (rate limits das APIs)
+```
+
+`--dry-run` lista os runs que seriam criados sem executar. O progresso pode
+ser acompanhado pela UI do Airflow ou consultando o estado das `dag_run`
+no metadata DB. O primeiro backfill de produção rodou em 2026-08-19
+(jan/2026 → ago/2026) para alimentar a calibração do PR-D-03.
+
 ## Pipelines declarativos (specs YAML)
 
 Os pipelines de ingestão são **declarativos**: cada um é uma spec YAML em
