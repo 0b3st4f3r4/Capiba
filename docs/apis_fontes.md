@@ -102,8 +102,13 @@ https://api.portaldatransparencia.gov.br/api-de-dados
   SERPRO+ (`download_cnpj_dump`, `extract_cnpj_zip`, `parse_cnpj_csv`).
 - A URL base é configurável via `FEDERAL_REVENUE_BASE_URL`; o mês de referência
   é passado como parâmetro `reference_month` para `download_cnpj_dump`.
-- **Ainda não integrado ao pipeline**: nenhuma DAG nem task chama este
-  crawler em runtime.
+- **Integrado ao pipeline**: a DAG `monthly_federal_revenue` (spec
+  `dags/pipelines/monthly_federal_revenue.yaml`, fórmula `file_dump`) baixa os
+  ZIPs para o bronze (arquivos + manifesto na tabela `raw_federal_revenue`),
+  normaliza Empresas/Estabelecimentos/Socios em streaming para as tabelas
+  silver `companies`/`establishments`/`partners` (parser em
+  `src/capiba/ingestion/cnpj.py`, opt-in via `FEDERAL_REVENUE_FILES`) e carrega
+  os vértices/arestas no grafo ArangoDB (destino `arangodb_graph`).
 - Não há credenciais a configurar, mas a URL pode precisar de ajuste se a
   Receita Federal alterar o compartilhamento.
 
@@ -129,5 +134,5 @@ Contratos, scores, pesos e códigos de erro estão documentados em
 | Prioridade | Tarefa | Motivação |
 |------------|--------|-----------|
 | Alta | Configurar `TRANSPARENCY_API_KEY` | Sem token a API do Portal da Transparência bloqueia todas as requisições |
-| Média | Integrar `crawler_federal_revenue.py` ao pipeline | Crawler existe mas não tem consumidor em runtime |
-| Média | Adicionar cache local e/ou fila para ingestão | Reduzir dependência da instabilidade das APIs externas |
+| Média | Habilitar os dumps completos da Receita (`FEDERAL_REVENUE_FILES`) | Por padrão só as tabelas de referência pequenas são baixadas; Empresas/Estabelecimentos/Socios alimentam o silver e o grafo |
+| Média | Aproveitar o cache Redis existente nos crawls | Redis já está habilitado por padrão (monitor de qualidade e hot paths da API); falta aplicá-lo às chamadas das APIs externas para reduzir a dependência da instabilidade delas |

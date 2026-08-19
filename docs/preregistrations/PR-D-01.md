@@ -2,8 +2,14 @@
 
 - **Pré-registro**: bateria D-01
 - **Criado em**: 2026-08-17
-- **Última atualização**: 2026-08-17
+- **Última atualização**: 2026-08-18
 - **Status**: registrado, não executado
+
+> **Nota (2026-08-18)**: os nomes de sinais citados neste histórico
+> (`benford_deviation`, `supplier_concentration`, `duration_outlier_share`)
+> foram renomeados para o vocabulário canônico da API — ver a emenda
+> datada em `docs/preregistrations/PR-D-01b.md`. O texto abaixo permanece
+> como registrado.
 - **Alvo**: `detect_fraud_signals` (`src/capiba/pipeline/tasks.py:305`) e os
   operadores de `src/capiba/detection/statistical.py`
 - **Configuração**: `experiments/detect/D-01.json` (declarativa, seeds
@@ -109,3 +115,5 @@ saída bruta em `results/detect/D-01/<seed>.jsonl`.
 ## Revisões
 
 - 2026-08-17: criação.
+- 2026-08-18: nota de renomeação dos sinais (ver cabeçalho), sem
+  reescrita do histórico.

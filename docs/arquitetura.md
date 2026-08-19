@@ -53,7 +53,10 @@ flowchart TB
 
 Fontes com pipeline hoje: PNCP e Portal da Transparência (pipeline diário) e
 Receita Federal (pipeline mensal `monthly_federal_revenue`, que baixa o dump
-CNPJ para o bronze — ainda sem normalização para o silver/grafo). TSE e
+CNPJ para o bronze e, quando os arquivos Empresas/Estabelecimentos/Socios
+estão habilitados via `FEDERAL_REVENUE_FILES`, normaliza em streaming para
+as tabelas silver `companies`/`establishments`/`partners` e carrega o grafo
+ArangoDB com vértices `companies`/`partners` e arestas `partner_of`). TSE e
 dados privados via LGPD/DP são visão de longo prazo, sem implementação.
 
 ## Protocolos de compartilhamento (roadmap)
@@ -210,7 +213,9 @@ warehouse por bucket: `bronze`, `silver`, `gold`):
   `capiba.pod_usage_hourly`, `capiba.platform_cost_daily`), a tabela
   `capiba.platform_metrics` (métricas por passo de cada run, escritas pelo
   runner) e a tabela `capiba.fraud_signals` (sinais estatísticos do post
-  step `detect`)
+  step `detect`). O `detect` e a validação dos pipelines disparam alertas
+  best-effort por e-mail (`src/capiba/notification/alerts.py`) quando
+  `NOTIFICATION_RECIPIENTS` está configurado
 
 Além do lake: `capiba-airflow-logs` recebe os logs remotos das tasks do Airflow,
 `capiba-artifacts` recebe o código (`src/`) e as DAGs publicados por

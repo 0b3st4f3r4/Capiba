@@ -1,0 +1,118 @@
+{
+  "id": "D-02",
+  "description": "Validação dos operadores de grafo (semântica adaptada: pares alternando vitórias won no mesmo comprador; cadeias owns simples) sobre população sintética com ground truth plantado. Ver docs/preregistrations/PR-D-02.md. ESBOÇO — revisado junto com o PR.",
+  "requires_infra": "arangodb",
+  "seeds": [
+    7,
+    17,
+    27,
+    37,
+    47
+  ],
+  "collusion": {
+    "min_wins": 3,
+    "planted_buyer": {
+      "id": "PLANT-B",
+      "suppliers": [
+        {
+          "id": "91000000000001",
+          "wins": 4
+        },
+        {
+          "id": "91000000000002",
+          "wins": 4
+        },
+        {
+          "id": "91000000000003",
+          "wins": 4
+        }
+      ],
+      "boundary_supplier": {
+        "id": "91000000000004",
+        "wins": 2
+      }
+    },
+    "control_same_buyer": {
+      "buyer_id": "CTRL-B1",
+      "suppliers": [
+        "92000000000001",
+        "92000000000002",
+        "92000000000003"
+      ],
+      "wins_each": 2
+    },
+    "control_solo_buyers": {
+      "buyer_ids": [
+        "SOLO-B1",
+        "SOLO-B2",
+        "SOLO-B3",
+        "SOLO-B4"
+      ],
+      "supplier_ids": [
+        "93000000000001",
+        "93000000000002",
+        "93000000000003",
+        "93000000000004"
+      ],
+      "wins_each": 4
+    }
+  },
+  "ownership": {
+    "chain": [
+      "C-A",
+      "C-B",
+      "C-C",
+      "C-D"
+    ],
+    "isolated": "C-E",
+    "cycle": [
+      "C-F",
+      "C-G"
+    ],
+    "max_depth": 3
+  },
+  "expectations": {
+    "collusion_pairs_min3_exact": [
+      [
+        "91000000000001",
+        "91000000000002"
+      ],
+      [
+        "91000000000001",
+        "91000000000003"
+      ],
+      [
+        "91000000000002",
+        "91000000000003"
+      ]
+    ],
+    "collusion_pairs_min2_exact_count": 9,
+    "collusion_control_fp_min3": 0,
+    "ownership_paths_depth3_exact": [
+      [
+        "C-A",
+        "C-B"
+      ],
+      [
+        "C-A",
+        "C-B",
+        "C-C"
+      ],
+      [
+        "C-A",
+        "C-B",
+        "C-C",
+        "C-D"
+      ]
+    ],
+    "ownership_paths_depth2_count": 2,
+    "ownership_depth2_never_reaches": "C-D",
+    "ownership_isolated_paths": 0,
+    "ownership_cycle_paths_exact": [
+      [
+        "C-F",
+        "C-G"
+      ]
+    ]
+  }
+}

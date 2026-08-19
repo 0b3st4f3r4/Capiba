@@ -3,7 +3,9 @@
 A API consulta o ArangoDB e executa os operadores de detecção
 (`detection/statistical.py`, `detection/ml_models.py`) em tempo real.
 Quando o ArangoDB está indisponível, todos os endpoints de dados retornam
-`503` com `{"detail": "Banco de dados ArangoDB indisponível"}`.
+`503` com `{"detail": "ArangoDB database unavailable"}`.
+Os endpoints de evidência dependem do MinIO e, indisponível, retornam `503`
+com `{"detail": "Evidence storage unavailable"}`.
 
 ## Modelo de dados
 
@@ -29,14 +31,16 @@ flowchart TB
     subgraph api["API FastAPI"]
         router_signals["/v1/signals/{cnpj}"]
         router_ranking["/v1/ranking/municipalities"]
+        router_evidence["/v1/evidence"]
         portal["Portal /<br/>SSO OIDC"]
         services["Services<br/>consulta ArangoDB + operadores"]
         operators["Operadores<br/>statistical.py · ml_models.py"]
     end
 
-    client["Cliente HTTP / Browser"] --> router_signals & router_ranking & portal
+    client["Cliente HTTP / Browser"] --> router_signals & router_ranking & router_evidence & portal
     router_signals --> services
     router_ranking --> services
+    router_evidence --> minio[("MinIO<br/>bucket bronze")]
     portal --> services
     services --> operators
     services --> arango[("ArangoDB")]
@@ -130,3 +134,109 @@ Retorna ranking de municípios por índice de risco, ordenado decrescente.
   ]
 }
 ```
+
+## Portal (SSO via Keycloak)
+
+O portal é servido pela própria API (`src/capiba/api/portal.py`) e usa SSO
+OIDC contra o Keycloak (realm `capiba`, issuer público
+`https://keycloak.capiba.local:8443/realms/capiba`). A sessão é um cookie
+assinado (`SessionMiddleware`); com `SSO_ENABLED=false` (default local) o
+portal abre sem login.
+
+### GET /
+
+Landing page do portal (dashboard com links para as UIs e estatísticas do
+lake). Com SSO habilitado e sem sessão, redireciona `302` para
+`/auth/login`.
+
+### GET /auth/login
+
+Inicia o fluxo OIDC (redirect para o Keycloak). Com SSO desabilitado,
+redireciona de volta para `/`.
+
+### GET /auth/callback
+
+Callback do fluxo OIDC: valida o token (issuer público) e grava o
+`userinfo` na sessão, redirecionando para `/`.
+
+### GET /auth/logout
+
+Limpa a sessão e redireciona para `/`.
+
+## Evidências
+
+Os endpoints de evidência (`EVIDENCE` no modelo de dados) gravam e servem
+arquivos multimídia no bucket bronze do MinIO, sob
+`evidence/<tipo>/<fonte>/<ano>/<mês>/<sha256>.<ext>`, com hash SHA-256 como
+identificador de integridade. O storage é instanciado sob demanda: com o
+MinIO indisponível, todos retornam `503`.
+
+### POST /v1/evidence
+
+Faz upload de um arquivo de evidência (multipart/form-data).
+
+**Campos:**
+
+- `file` (arquivo, required): conteúdo da evidência.
+- `contract_id` (string, required): identificador do contrato.
+- `entity_cnpj` (string, required): CNPJ da entidade relacionada.
+- `evidence_type` (string, required): tipo de domínio (ex.: `invoice`,
+  `contract_photo`).
+- `source` (string, required): origem da evidência (ex.:
+  `transparency_portal`, `on_site_inspection`).
+- `captured_by` (string, required): agente/processo que capturou o arquivo.
+
+`captured_at` e `hash_sha256` são preenchidos pelo servidor (o hash é
+calculado sobre os bytes enviados).
+
+**Erros:**
+
+- `400`: metadados inválidos ou arquivo acima do limite do seu tipo
+  (detalhe na mensagem).
+- `422`: campo obrigatório ausente no formulário.
+- `503`: storage indisponível.
+
+**Response (201):**
+
+```json
+{
+  "sha256": "9f2c…",
+  "bucket": "capiba-bronze",
+  "object_name": "evidence/document/transparency_portal/2026/02/9f2c….pdf",
+  "type": "document",
+  "size_bytes": 102400,
+  "timestamp": "2026-02-01T00:00:00+00:00"
+}
+```
+
+### GET /v1/evidence/contract/{contract_id}
+
+Lista as evidências vinculadas a um contrato.
+
+**Response:**
+
+```json
+[
+  {
+    "sha256": "9f2c…",
+    "bucket": "capiba-bronze",
+    "object_name": "evidence/document/transparency_portal/2026/02/9f2c….pdf",
+    "type": "document",
+    "filename": "invoice.pdf",
+    "size": 102400,
+    "timestamp": "2026-02-01T00:00:00+00:00"
+  }
+]
+```
+
+Contrato sem evidências retorna `200` com `[]`. Storage indisponível: `503`.
+
+### GET /v1/evidence/{sha256}
+
+Baixa o conteúdo de uma evidência pelo hash SHA-256
+(`Content-Type: application/octet-stream`).
+
+**Erros:**
+
+- `404`: nenhuma evidência com o hash informado.
+- `503`: storage indisponível.

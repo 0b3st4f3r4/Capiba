@@ -92,8 +92,12 @@ python scripts/ingestion.py \
 Os pipelines de ingestão são **declarativos**: cada um é uma spec YAML em
 `dags/pipelines/*.yaml`, sem código Python. No parse do Airflow,
 `dags/pipeline_factory.py` carrega e valida cada spec
-(`capiba.pipeline.spec.load_spec`) e gera uma DAG por spec — uma única task
-`run` que executa o runner (`src/capiba/pipeline/runner.py`). Uma spec
+(`capiba.pipeline.spec.load_spec`) e gera uma DAG por spec com **tasks
+granulares** — uma por fonte (`crawl_<fonte>`/`download_<fonte>`),
+`normalize`/`validate` conforme a fórmula, uma por destino e uma por post
+step — para que o scheduler do Airflow possa retentar falhas por etapa
+(o runner de `src/capiba/pipeline/runner.py` executa a lógica de cada
+passo). Uma spec
 inválida é logada e pulada, sem derrubar o restante do DagBag. Inlets e
 outlets OpenLineage são derivados da própria spec, alimentando o Marquez.
 
@@ -123,6 +127,12 @@ post_steps:
   - detect                      # sinais estatísticos de fraude no gold
 ```
 
+Os post steps também disparam alertas best-effort por e-mail
+(`src/capiba/notification/alerts.py`): o `detect` notifica os sinais com
+score ≥ `NOTIFICATION_ALERT_SCORE` (default 0.7) e a validação notifica
+relatórios inválidos ou com taxa de erros de normalização > 5%. Ambos são
+no-op quando `NOTIFICATION_RECIPIENTS` está vazio e nunca derrubam a task.
+
 ### Registries
 
 Os nomes do YAML resolvem para implementações via
@@ -149,7 +159,16 @@ o registry é a fronteira entre os dois mundos.
   Espelha o fluxo diário de contratos.
 - **`file_dump`**: download de arquivos de referência (ex.: dump CNPJ da
   Receita Federal) → ZIPs no bronze + manifesto; manifesto vazio falha o
-  run — uma ausência não pode ser registrada como sucesso.
+  run — uma ausência não pode ser registrada como sucesso. Quando a spec
+  declara os destinos `lake_silver`/`arangodb_graph` e a fonte tem parser
+  registrado (`DUMP_PARSER_REGISTRY`), uma etapa `normalize_<fonte>`
+  streaming faz o parse dos ZIPs de entidade (Empresas/Estabelecimentos/
+  Socios, em chunks — os dumps de GBs nunca são materializados em memória)
+  para as tabelas silver `companies`/`establishments`/`partners`; arquivos
+  de referência (Cnaes.zip etc.) são pulados. Nesse caso o destino
+  `lake_silver` apenas reporta as contagens (a escrita já ocorreu no
+  normalize) e `arangodb_graph` carrega o grafo a partir do silver
+  (vértices `companies`/`partners`, arestas `partner_of`).
 - **`metrics_collect`**: snapshot pontual de métricas (ex.: `pod_usage`)
   direto para os destinos, sem normalização nem validação; a janela é
   ignorada.
@@ -184,16 +203,25 @@ de entrada/saída, erros) na tabela gold `platform_metrics`.
 
 - **`daily_ingestion`** (`daily_contracts.yaml`, `0 6 * * *`): PNCP +
   Transparência → bronze, silver, grafo ArangoDB e relatório gold; post
-  steps `dbt_run` (marts) e `detect`. O `detect` calcula sinais
-  estatísticos de fraude sobre a tabela silver (desvio de Benford por
-  fornecedor, concentração HHI por órgão, vigências atípicas) e os
-  materializa na tabela Iceberg gold `capiba.fraud_signals`.
+  steps `dbt_run` (marts) e `detect`. O `detect` calcula sinais de fraude
+  sobre a tabela silver no vocabulário canônico da API — `anomalous_price`
+  por fornecedor (composto Benford + IsolationForest, componentes em
+  `details`), `single_bid` por fornecedor (taxa de modalidade não
+  competitiva, emitido só quando > 0 com ≥ 3 contratos), `concentration`
+  por órgão (HHI) e `anomalous_duration` por fornecedor (vigências outlier
+  IQR) — e os materializa na tabela Iceberg gold `capiba.fraud_signals`.
 - **`monthly_federal_revenue`** (`monthly_federal_revenue.yaml`,
   `23 5 2 * *`): baixa os arquivos de referência do dump CNPJ da Receita
   do mês anterior (fórmula `file_dump`, subset via `FEDERAL_REVENUE_FILES`
   ou `params.files`), grava os ZIPs em
   `federal_revenue/files/dt=YYYY-MM-DD/` no bronze e registra o manifesto
-  na tabela `capiba.raw_federal_revenue`.
+  na tabela `capiba.raw_federal_revenue`. Com os arquivos
+  Empresas*/Estabelecimentos*/Socios* habilitados (opt-in, GBs cada), a
+  task `normalize_federal_revenue` faz o parse streaming para as tabelas
+  silver `companies`/`establishments`/`partners` e o destino
+  `arangodb_graph` carrega os vértices `companies`/`partners` e as arestas
+  `partner_of` no grafo — insumo dos operadores de grafo em
+  `src/capiba/detection/graphs.py`.
 - **`hourly_pod_usage`** (`hourly_pod_usage.yaml`, `7 * * * *`): coleta o
   uso de CPU/memória dos pods do namespace (fórmula `metrics_collect`,
   fonte `pod_usage`), insumo dos marts `pod_usage_hourly` e
@@ -207,7 +235,9 @@ de entrada/saída, erros) na tabela gold `platform_metrics`.
 
 Contratos são salvos na collection `contracts`. Fornecedores são salvos em
 `suppliers` e conectados via aresta `won`. Compradores são salvos em
-`buyers`.
+`buyers`. Empresas e sócios do dump CNPJ são salvos em `companies` e
+`partners` (carga em lote por `bulk_upsert_cnpj`, a partir das tabelas
+silver) e conectados via aresta `partner_of`.
 
 ## Ciclo de vida de um contrato
 

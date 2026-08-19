@@ -82,10 +82,30 @@ por spec no parse do
 Airflow (`daily_ingestion` a partir de `daily_contracts.yaml`,
 `monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
 `hourly_pod_usage` a partir de `hourly_pod_usage.yaml`).
+A fórmula `file_dump`, quando a spec declara `lake_silver`/`arangodb_graph`
+e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
+`src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
+streaming: parse chunked dos ZIPs Empresas/Estabelecimentos/Socios para as
+tabelas silver Iceberg `companies`/`establishments`/`partners`
+(opt-in via `FEDERAL_REVENUE_FILES`), e o destino `arangodb_graph` carrega
+os vértices `companies`/`partners` e arestas `partner_of` no grafo
+(`bulk_upsert_cnpj`, em lote, a partir do silver).
 `lake_maintenance.py` (semanal: expire_snapshots + optimize via Trino)
 permanece uma DAG imperativa. Transformações nomeadas ficam em
 `src/capiba/transformations/` (um módulo por transformação, expondo
 `transform(records, **params)`).
+Alertas best-effort por e-mail (`src/capiba/notification/alerts.py`, wrapper
+síncrono do `NotificationDispatcher` async) disparam do `task_detect`
+(sinais ≥ `NOTIFICATION_ALERT_SCORE`, default 0.7) e do
+`task_validate_pipeline` (relatório inválido ou erro de normalização > 5%);
+no-op quando `NOTIFICATION_RECIPIENTS` está vazio, nunca derrubam a task.
+O `task_validate_pipeline` também alimenta o `QualityMonitor`
+(`record_batch`, best-effort) e o `NotificationScheduler` (relatórios
+periódicos com as métricas reais do monitor) é iniciado no lifespan da API
+somente quando `NOTIFICATION_RECIPIENTS` está configurado.
+A vertical `evidence` é exposta pela API no router `/v1/evidence`
+(upload multipart, listagem por contrato, download por SHA-256; storage
+MinIO instanciado sob demanda via `get_storage()`).
 Projeto dbt em `dbt/` (profile `capiba`, dbt-trino sobre o catálogo gold;
 marts Iceberg no bucket capiba-gold).
 O lake usa tabelas Iceberg (via `src/capiba/pipeline/lake.py` + pyiceberg)
