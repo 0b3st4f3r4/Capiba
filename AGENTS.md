@@ -80,10 +80,13 @@ destinos e post steps, sem código Python) resolvidos pelos registries de
 (`src/capiba/pipeline/runner.py`, fórmulas `contracts_default`,
 `file_dump`, `metrics_collect` e `entities_collect`); `dags/pipeline_factory.py` gera uma DAG
 por spec no parse do
-Airflow (`daily_ingestion` a partir de `daily_contracts.yaml`,
-`monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
-`hourly_pod_usage` a partir de `hourly_pod_usage.yaml`,
-`weekly_sanctions` a partir de `weekly_sanctions.yaml`).
+Airflow — ingestão de contratos separada por fonte
+(`daily_pncp` a partir de `daily_pncp.yaml`,
+`monthly_transparency` a partir de `monthly_transparency.yaml`, sem post
+steps — falha isolada, janelas naturais e rate limits independentes por
+fonte), mais `monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
+`hourly_pod_usage` a partir de `hourly_pod_usage.yaml` e
+`weekly_sanctions` a partir de `weekly_sanctions.yaml`.
 A fórmula `file_dump`, quando a spec declara `lake_silver`/`arangodb_graph`
 e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
 `src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
@@ -99,7 +102,14 @@ modelo `Sanction` em `src/capiba/ingestion/sanctions.py`): etapa
 registrada no `ENTITY_NORMALIZER_REGISTRY` (hoje `sanctions`); os wrappers
 Airflow dessa fórmula vivem em `src/capiba/pipeline/entity_tasks.py`.
 `lake_maintenance.py` (semanal: expire_snapshots + optimize via Trino)
-permanece uma DAG imperativa. Transformações nomeadas ficam em
+permanece uma DAG imperativa, assim como `gold_detection.py` (diária, 08:00
+UTC, após as ingestões: `dbt_run` → `detect`, reconstruindo marts e sinais
+sobre TODO o acumulado do silver — é também a "run final" a disparar após
+um backfill, já que os post steps são pulados em backfill). A escrita no
+silver `contracts` (`lake.write_silver`) é **upsert-por-id**: DELETE via
+Trino dos ids do lote + append (falha no DELETE aborta sem append; falha no
+append é restaurada pelo re-run); no catálogo sqlite offline degrada para
+append puro. Transformações nomeadas ficam em
 `src/capiba/transformations/` (um módulo por transformação, expondo
 `transform(records, **params)`).
 Post steps (`dbt_run`, `detect`) são **pulados em runs de backfill**

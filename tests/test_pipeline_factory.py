@@ -236,19 +236,49 @@ class TestBuildDags:
 
 
 class TestRealPipelines:
-    """The shipped dags/pipelines specs must produce the legacy DAGs."""
+    """The shipped dags/pipelines specs must produce the expected DAGs."""
 
     def test_module_registers_dags_in_globals(self, factory) -> None:
         """Module parse registers one global DAG per valid spec."""
-        daily = factory.daily_ingestion
+        daily = factory.daily_pncp
+        transparency = factory.monthly_transparency
         monthly = factory.monthly_federal_revenue
 
         assert daily.schedule == "0 6 * * *"
+        assert transparency.schedule == "0 7 2 * *"
         assert monthly.schedule == "23 5 2 * *"
         crawl_pncp = daily.get_task("crawl_pncp")
         assert crawl_pncp.python_callable.keywords["spec_path"].endswith(
-            "dags/pipelines/daily_contracts.yaml"
+            "dags/pipelines/daily_pncp.yaml"
         )
+
+    def test_daily_ingestion_is_gone(self, factory) -> None:
+        """The merged daily_contracts spec no longer generates a DAG."""
+        assert not hasattr(factory, "daily_ingestion")
+
+    def test_per_source_dags_have_no_post_steps(self, factory) -> None:
+        """Ingestion is split per source; dbt/detect live in gold_detection."""
+        daily = factory.daily_pncp
+        assert {t.task_id for t in daily.tasks} == {
+            "crawl_pncp",
+            "normalize",
+            "validate",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_arangodb_graph",
+            "destination_gold_report",
+        }
+
+        transparency = factory.monthly_transparency
+        assert {t.task_id for t in transparency.tasks} == {
+            "crawl_transparency",
+            "normalize",
+            "validate",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_arangodb_graph",
+            "destination_gold_report",
+        }
 
     def test_dagbag_parses_without_import_errors(self, factory) -> None:
         """The whole dags/ folder parses cleanly through the DagBag."""
@@ -258,10 +288,13 @@ class TestRealPipelines:
 
         assert bag.import_errors == {}
         assert {
-            "daily_ingestion",
+            "daily_pncp",
+            "monthly_transparency",
             "monthly_federal_revenue",
             "lake_maintenance",
+            "gold_detection",
         } <= set(bag.dag_ids)
+        assert "daily_ingestion" not in bag.dag_ids
 
     def test_hourly_pod_usage_refreshes_marts(self, factory) -> None:
         """The hourly pod usage pipeline refreshes the usage marts (dbt_run)."""

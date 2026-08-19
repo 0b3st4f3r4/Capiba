@@ -70,6 +70,7 @@ from capiba.config import (
 from capiba.ingestion.cnpj import Company, Establishment, Partner
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.sanctions import Sanction
+from capiba.pipeline import trino
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -80,6 +81,15 @@ logger = logging.getLogger(__name__)
 
 # Namespace shared by all Capiba tables inside each Iceberg warehouse.
 ICEBERG_NAMESPACE = "capiba"
+
+# Trino catalog bound to the silver warehouse (``silver.properties`` in
+# ``charts/capiba/templates/trino/configmap.yaml``) — used for the
+# delete-half of the silver contracts upsert.
+SILVER_TRINO_CATALOG = "silver"
+
+# Ids per DELETE statement of the silver contracts upsert (keeps the
+# generated SQL comfortably below Trino's query length limits).
+UPSERT_DELETE_CHUNK_SIZE = 500
 
 # Iceberg schema of the silver ``contracts`` table (flat structs for the
 # buyer/supplier entities, partitioned by the ingestion date ``dt``).
@@ -498,11 +508,49 @@ def write_bronze_table(source: str, payload: Any, run_date: date | None = None) 
     return f"{ICEBERG_NAMESPACE}.{table_name}"
 
 
+def _delete_silver_contracts(ids: list[str]) -> None:
+    """Deletes silver contract rows by id through Trino (upsert delete-half).
+
+    Runs one ``DELETE`` per ``UPSERT_DELETE_CHUNK_SIZE`` ids, with single
+    quotes in the ids escaped by doubling. Only valid against the cluster
+    (Trino over the Lakekeeper catalog); the offline SQLite catalog has no
+    Trino and callers must skip this step.
+
+    Args:
+        ids: Contract ids whose existing rows must be removed.
+    """
+    for offset in range(0, len(ids), UPSERT_DELETE_CHUNK_SIZE):
+        chunk = ids[offset : offset + UPSERT_DELETE_CHUNK_SIZE]
+        escaped = ", ".join(f"'{i.replace("'", "''")}'" for i in chunk)
+        # Ids come from validated Contract records and are quote-escaped
+        # above; SQL literals cannot be parameterized over the HTTP API.
+        trino.run_query(
+            f"DELETE FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contracts"  # nosec: B608
+            f" WHERE id IN ({escaped})"
+        )
+    logger.info("Silver contracts upsert: deleted ids %d", len(ids))
+
+
 def write_silver(records: list[dict[str, Any]], run_date: date | None = None) -> str:
-    """Appends normalized contract records to the silver Iceberg table.
+    """Upserts normalized contract records into the silver Iceberg table.
 
     Records are revalidated against the ``Contract`` schema so the table
-    stays typed (dates, decimals and entity structs).
+    stays typed (dates, decimals and entity structs). The write is an
+    **upsert by id**: before appending, the rows with the same ids are
+    deleted through Trino (``_delete_silver_contracts``), so re-runs of the
+    same window replace the previous rows instead of duplicating them.
+
+    Failure semantics (this is what makes retries safe):
+
+    - If the DELETE fails, the exception propagates and **no append is
+      attempted** — the old rows stay, never duplicated.
+    - If the append fails after the DELETE, the exception propagates too;
+      a re-run restores the rows (idempotent by construction, at the cost
+      of a temporary gap until the retry).
+
+    With the offline SQLite catalog (``ICEBERG_CATALOG_URI`` starting with
+    ``sqlite``) there is no Trino to DELETE through, so the write degrades
+    to a pure append.
 
     Args:
         records: Serializable normalized contracts.
@@ -530,6 +578,10 @@ def write_silver(records: list[dict[str, Any]], run_date: date | None = None) ->
         rows.append({**contract, "dt": partition, "ingested_at": ingested_at})
 
     if rows:
+        if not ICEBERG_CATALOG_URI.startswith("sqlite"):
+            # Delete-half of the upsert first: a failure here aborts before
+            # the append, so rows are never duplicated (see the docstring).
+            _delete_silver_contracts(list(dict.fromkeys(row["id"] for row in rows)))
         table.append(pa.Table.from_pylist(rows, schema=_arrow_schema(table)))
     logger.info("Silver Iceberg table appended: contracts (%d rows)", len(rows))
     return f"{ICEBERG_NAMESPACE}.contracts"

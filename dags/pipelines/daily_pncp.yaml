@@ -1,0 +1,20 @@
+# Daily ingestion of PNCP contracts (previous day): raw payloads -> bronze,
+# normalized contracts -> silver (upsert by id) -> ArangoDB graph, with a run
+# report in gold. Ingestion is split per source (see monthly_transparency)
+# so a failure/rate limit in one source does not block the other; dbt/detect
+# moved to the gold_detection DAG, which rebuilds marts and signals over the
+# whole accumulated silver after the ingestions.
+name: daily_pncp
+description: Daily ingestion of PNCP public contracts
+schedule: "0 6 * * *" # 06:00 UTC
+window: previous_day # default window for the pipeline's sources
+sources:
+  - name: pncp # crawls the previous day (pipeline default window)
+formula: contracts_default
+validate:
+  ruleset: contract_rules
+destinations:
+  - lake_bronze # raw audit copies + raw_pncp Iceberg table
+  - lake_silver # normalized contracts Iceberg table (upsert by id)
+  - arangodb_graph # entities/relationships upserted into ArangoDB
+  - gold_report # run report object in the gold bucket

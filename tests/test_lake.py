@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from capiba import config
-from capiba.pipeline import lake
+from capiba.pipeline import lake, trino
 
 RUN_DATE = date(2026, 1, 15)
 
@@ -509,3 +509,109 @@ def test_read_bronze_file_roundtrip(mock_client: MagicMock) -> None:
     )
     response.close.assert_called_once()
     response.release_conn.assert_called_once()
+
+
+class TestWriteSilverUpsert:
+    """Upsert-by-id semantics of write_silver against the cluster catalog.
+
+    The Iceberg table and Trino are mocked: the delete-half runs through
+    ``capiba.pipeline.trino.run_query`` and must always precede the append.
+    """
+
+    @pytest.fixture
+    def cluster_catalog(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[MagicMock, MagicMock]:
+        """Non-SQLite catalog URI with the table and Trino mocked out."""
+        table = MagicMock()
+        monkeypatch.setattr(lake, "_ensure_table", lambda *args: table)
+        monkeypatch.setattr(lake, "_arrow_schema", lambda _table: None)
+        monkeypatch.setattr(
+            lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog"
+        )
+        run_query = MagicMock()
+        monkeypatch.setattr(trino, "run_query", run_query)
+        return table, run_query
+
+    @staticmethod
+    def _delete_ids(sql: str) -> list[str]:
+        """Extracts the id literals of a DELETE ... WHERE id IN (...) call."""
+        assert sql.startswith("DELETE FROM silver.capiba.contracts WHERE id IN (")
+        return sql.removeprefix(
+            "DELETE FROM silver.capiba.contracts WHERE id IN ("
+        ).removesuffix(")").split(", ")
+
+    def test_delete_precedes_append_with_exact_ids(
+        self, cluster_catalog: tuple[MagicMock, MagicMock]
+    ) -> None:
+        """DELETE chunks (500 ids) run before the append, with quote escaping."""
+        table, run_query = cluster_catalog
+
+        def _append(_rows: Any) -> None:
+            # At append time, every DELETE chunk must already have run.
+            assert run_query.call_count == 3
+
+        table.append.side_effect = _append
+
+        records = [_contract(f"C{i:04d}") for i in range(1200)]
+        records.append(_contract("x'y"))  # single quote must be escaped
+
+        lake.write_silver(records, run_date=RUN_DATE)
+
+        assert run_query.call_count == 3
+        chunks = [self._delete_ids(c.args[0]) for c in run_query.call_args_list]
+        assert [len(chunk) for chunk in chunks] == [500, 500, 201]
+        assert chunks[0][0] == "'C0000'"
+        assert chunks[2][-1] == "'x''y'"
+        table.append.assert_called_once()
+
+    def test_delete_failure_propagates_without_append(
+        self, cluster_catalog: tuple[MagicMock, MagicMock]
+    ) -> None:
+        """A failed DELETE aborts the write: no append, no duplicates."""
+        table, run_query = cluster_catalog
+        run_query.side_effect = RuntimeError("trino down")
+
+        with pytest.raises(RuntimeError, match="trino down"):
+            lake.write_silver([_contract("C001")], run_date=RUN_DATE)
+
+        table.append.assert_not_called()
+
+    def test_append_failure_propagates_after_delete(
+        self, cluster_catalog: tuple[MagicMock, MagicMock]
+    ) -> None:
+        """A failed append after the DELETE propagates (a re-run restores)."""
+        table, run_query = cluster_catalog
+        table.append.side_effect = RuntimeError("s3 down")
+
+        with pytest.raises(RuntimeError, match="s3 down"):
+            lake.write_silver([_contract("C001")], run_date=RUN_DATE)
+
+        run_query.assert_called_once()
+
+    def test_sqlite_catalog_keeps_pure_append(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The offline SQLite catalog has no Trino: append without DELETE."""
+        table = MagicMock()
+        monkeypatch.setattr(lake, "_ensure_table", lambda *args: table)
+        monkeypatch.setattr(lake, "_arrow_schema", lambda _table: None)
+        monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "sqlite:///catalog.db")
+        run_query = MagicMock()
+        monkeypatch.setattr(trino, "run_query", run_query)
+
+        lake.write_silver([_contract("C001")], run_date=RUN_DATE)
+
+        run_query.assert_not_called()
+        table.append.assert_called_once()
+
+    def test_no_valid_rows_skips_delete_and_append(
+        self, cluster_catalog: tuple[MagicMock, MagicMock]
+    ) -> None:
+        """An all-invalid batch writes nothing and issues no DELETE."""
+        table, run_query = cluster_catalog
+
+        lake.write_silver([{"id": "broken"}], run_date=RUN_DATE)
+
+        run_query.assert_not_called()
+        table.append.assert_not_called()

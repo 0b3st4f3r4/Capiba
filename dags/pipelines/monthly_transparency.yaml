@@ -1,0 +1,18 @@
+# Monthly ingestion of Transparency Portal contracts: the previous closed
+# month, crawled on day 2 (the portal consolidates the month after it ends).
+# Split from the PNCP pipeline so each source keeps its natural window and
+# independent rate limit/retry; dbt/detect live in the gold_detection DAG.
+name: monthly_transparency
+description: Monthly ingestion of Transparency Portal contracts
+schedule: "0 7 2 * *" # day 2, 07:00 UTC — previous month fully closed
+window: previous_month # default window for the pipeline's sources
+sources:
+  - name: transparency
+formula: contracts_default
+validate:
+  ruleset: contract_rules
+destinations:
+  - lake_bronze # raw audit copies + raw_transparency Iceberg table
+  - lake_silver # normalized contracts Iceberg table (upsert by id)
+  - arangodb_graph # entities/relationships upserted into ArangoDB
+  - gold_report # run report object in the gold bucket

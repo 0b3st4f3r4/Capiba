@@ -62,17 +62,24 @@ class TestLoadSpec:
         specs = {p.stem: load_spec(p) for p in sorted(pipelines_dir.glob("*.yaml"))}
 
         assert set(specs) == {
-            "daily_contracts",
+            "daily_pncp",
+            "monthly_transparency",
             "monthly_federal_revenue",
             "hourly_pod_usage",
             "weekly_sanctions",
         }
-        daily = specs["daily_contracts"]
-        assert daily.name == "daily_ingestion"
+        daily = specs["daily_pncp"]
+        assert daily.name == "daily_pncp"
         assert daily.schedule == "0 6 * * *"
         assert daily.window == "previous_day"
-        transparency = next(s for s in daily.sources if s.name == "transparency")
-        assert transparency.window == "current_month"
+        assert [s.name for s in daily.sources] == ["pncp"]
+        assert daily.post_steps == []  # dbt/detect live in the gold_detection DAG
+        transparency = specs["monthly_transparency"]
+        assert transparency.name == "monthly_transparency"
+        assert transparency.schedule == "0 7 2 * *"
+        assert transparency.window == "previous_month"
+        assert [s.name for s in transparency.sources] == ["transparency"]
+        assert transparency.post_steps == []
         assert specs["monthly_federal_revenue"].window == "previous_month"
         hourly = specs["hourly_pod_usage"]
         assert hourly.schedule == "7 * * * *"

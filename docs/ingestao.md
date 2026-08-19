@@ -103,14 +103,14 @@ python scripts/ingestion.py \
 ## Carga retroativa (backfill)
 
 Para acumular histórico (ex.: calibração de limiares de detecção), use o
-backfill nativo do Airflow sobre a DAG `daily_ingestion`: cada dia lógico
-roda o pipeline completo (crawl PNCP do dia anterior + Transparência do
-mês corrente, normalize, destinos, dbt e detect) com retry por task:
+backfill nativo do Airflow sobre as DAGs de ingestão por fonte
+(`daily_pncp`, `monthly_transparency`): cada dia lógico roda o pipeline
+completo da fonte (crawl, normalize, destinos) com retry por task:
 
 ```bash
 # dentro do pod do Airflow
 kubectl exec deploy/capiba-airflow -n capiba -c airflow -- \
-  airflow backfill create --dag-id daily_ingestion \
+  airflow backfill create --dag-id daily_pncp \
   --from-date 2026-01-01 --to-date 2026-08-18 \
   --max-active-runs 3   # limita paralelismo (rate limits das APIs)
 ```
@@ -124,9 +124,10 @@ no metadata DB. O primeiro backfill de produção rodou em 2026-08-19
 > reprocessam as tabelas silver/gold inteiras, então rodá-los por dia
 > lógico é trabalho O(n²) e pesado em memória (OOMKills no backfill de
 > 2026-08-19). O `task_post_step` levanta `AirflowSkipException` quando o
-> `run_type` é `backfill`; ao final do backfill, dispare uma run regular
-> (`airflow dags trigger daily_ingestion`, ou aguarde a schedule diária)
-> para reconstruir os marts e os sinais sobre todo o acumulado.
+> `run_type` é `backfill`; ao final do backfill, dispare a DAG
+> `gold_detection` (`airflow dags trigger gold_detection`, ou aguarde a
+> schedule diária) para reconstruir os marts e os sinais sobre todo o
+> acumulado.
 
 ## Pipelines declarativos (specs YAML)
 
@@ -143,15 +144,13 @@ inválida é logada e pulada, sem derrubar o restante do DagBag. Inlets e
 outlets OpenLineage são derivados da própria spec, alimentando o Marquez.
 
 ```yaml
-# dags/pipelines/daily_contracts.yaml — pipeline diário de contratos públicos
-name: daily_ingestion           # vira o dag_id (snake_case)
-description: Daily ingestion of public contracts and bids
+# dags/pipelines/daily_pncp.yaml — pipeline diário de contratos do PNCP
+name: daily_pncp                # vira o dag_id (snake_case)
+description: Daily ingestion of PNCP public contracts
 schedule: "0 6 * * *"           # cron do Airflow; omita para pipeline manual
 window: previous_day            # janela temporal padrão das fontes
 sources:
-  - name: pncp                  # fonte do SOURCE_REGISTRY
-  - name: transparency
-    window: current_month       # override de janela só desta fonte
+  - name: pncp                  # fonte do SOURCE_REGISTRY (janela da pipeline)
 formula: contracts_default      # fórmula que orquestra os passos
 validate:
   ruleset: contract_rules       # regras de qualidade (opcional)
@@ -160,15 +159,16 @@ transformations:                # transformações nomeadas (opcional)
     params: { min_value: 1000 }
 destinations:
   - lake_bronze                 # cópia de auditoria + tabela raw_<fonte>
-  - lake_silver                 # tabela Iceberg capiba.contracts
+  - lake_silver                 # tabela Iceberg capiba.contracts (upsert por id)
   - arangodb_graph              # upsert das entidades no grafo
   - gold_report                 # relatório do run no bucket gold
-post_steps:
-  - dbt_run                     # marts gold via dbt
-  - detect                      # sinais estatísticos de fraude no gold
+# post_steps:                  # opcional; as specs por fonte não declaram —
+#   - dbt_run                  # dbt/detect vivem na DAG gold_detection
+#   - detect
 ```
 
-Os post steps também disparam alertas best-effort por e-mail
+O `task_detect` (hoje na DAG `gold_detection`) e a validação também disparam
+alertas best-effort por e-mail
 (`src/capiba/notification/alerts.py`): o `detect` notifica os sinais com
 score ≥ `NOTIFICATION_ALERT_SCORE` (default 0.7) e a validação notifica
 relatórios inválidos ou com taxa de erros de normalização > 5%. Ambos são
@@ -231,8 +231,9 @@ fetcher e entrada no `ENTITY_NORMALIZER_REGISTRY` para cada fonte.
 `src/capiba/pipeline/window.py` resolve os nomes declarados em um
 `DateRange` a partir da execution date: `previous_day`, `current_month`,
 `previous_month` e `all` (ilimitada). O `window` do pipeline é o padrão;
-cada fonte pode sobrescrevê-lo (como o Portal da Transparência, coletado
-pelo mês corrente inteiro no pipeline diário).
+cada fonte pode sobrescrevê-lo. Com a separação por fonte (abaixo), cada
+pipeline usa a janela natural da sua fonte: `previous_day` para o PNCP,
+`previous_month` para o Portal da Transparência.
 
 ### Transformações customizadas
 
@@ -252,12 +253,44 @@ declarado produz resultados por regra no relatório do run (destino
 `gold_report`), e o runner registra métricas por passo (duração, linhas
 de entrada/saída, erros) na tabela gold `platform_metrics`.
 
+### Separação por fonte e upsert do silver
+
+A ingestão de contratos é separada **por fonte** (`daily_pncp`,
+`monthly_transparency`) em vez de um único pipeline multi-fonte. A motivação:
+
+- **falha isolada**: um erro (ou indisponibilidade) em uma fonte não bloqueia
+  a ingestão da outra, e o retry por task do Airflow fica restrito à fonte
+  afetada;
+- **janelas naturais**: cada fonte é coletada na sua janela (dia anterior no
+  PNCP; mês fechado no Portal da Transparência), sem overrides artificiais;
+- **rate limits independentes**: os limites de cada API são consumidos em
+  pipelines separados, sem competir entre si.
+
+Como a mesma janela pode ser reprocessada (retry, backfill), a escrita na
+tabela silver `contracts` (`lake.write_silver`) é **upsert-por-id**: antes do
+append, os ids do lote são removidos via Trino (`DELETE FROM
+silver.capiba.contracts WHERE id IN (...)`, em lotes de 500). A semântica de
+falha é o que torna o retry seguro: se o DELETE falha, o append não acontece
+(nunca duplica); se o append falha após o DELETE, o re-run restaura as linhas
+(idempotente por construção). No catálogo SQLite offline (sem Trino) a escrita
+degrada para append puro. As tabelas silver de entidades
+(`companies`/`partners`/`sanctions`, via `write_silver_entities`) seguem em
+append puro.
+
 ### DAGs atuais
 
-**`daily_ingestion`** (`daily_contracts.yaml`, `0 6 * * *`): PNCP +
-Transparência para bronze, silver, grafo ArangoDB e relatório gold, com os
-post steps `dbt_run` (marts) e `detect`. O `detect` calcula sinais de fraude
-sobre a tabela silver no vocabulário canônico da API: `anomalous_price`
+**`daily_pncp`** (`daily_pncp.yaml`, `0 6 * * *`): PNCP do dia anterior para
+bronze, silver, grafo ArangoDB e relatório gold. Sem post steps.
+
+**`monthly_transparency`** (`monthly_transparency.yaml`, `0 7 2 * *`):
+Portal da Transparência do mês anterior (fechado) para bronze, silver, grafo
+ArangoDB e relatório gold. Sem post steps.
+
+**`gold_detection`** (`dags/gold_detection.py`, `0 8 * * *`, DAG imperativa):
+após as ingestões, `dbt_run` reconstrói os marts gold e `detect` recalcula os
+sinais de fraude sobre TODO o acumulado da tabela silver — é também a "run
+final" a disparar após um backfill (os post steps são pulados em backfill).
+O `detect` calcula sinais no vocabulário canônico da API: `anomalous_price`
 por fornecedor (composto Benford + IsolationForest, componentes em
 `details`), `single_bid` por fornecedor (taxa de modalidade não
 competitiva, emitido só quando > 0 com ≥ 3 contratos), `concentration`
@@ -292,8 +325,8 @@ bronze `raw_ceis`/`raw_cnep` e registros normalizados na tabela silver
 `sanctions`. Requer `TRANSPARENCY_API_KEY`; é o insumo de ingestão de um
 futuro sinal "fornecedor sancionado" (pendente de pré-registro PR-D-03).
 
-**`lake_maintenance`** (`dags/lake_maintenance.py`, semanal): única DAG
-imperativa restante, executa `expire_snapshots` (retenção de 7 dias) e
+**`lake_maintenance`** (`dags/lake_maintenance.py`, semanal): DAG
+imperativa, executa `expire_snapshots` (retenção de 7 dias) e
 `optimize` (compactação) em todas as tabelas Iceberg dos catálogos
 bronze/silver/gold, via Trino.
 
@@ -362,8 +395,10 @@ No **bronze** (`capiba-bronze`) ficam a cópia de auditoria bruta
 `payload_json`, particionada por `dt`. Na **silver** (`capiba-silver`) vive
 a tabela Iceberg `capiba.contracts`, com os contratos normalizados e
 tipados (datas, `decimal(18,2)`, structs `buyer`/`supplier`), particionada
-por `dt`. O **gold** (`capiba-gold`) guarda os relatórios de execução em
-`reports/daily_ingestion/dt=YYYY-MM-DD/*.json.gz`, os marts Iceberg
+por `dt` — escrita em regime upsert-por-id (ver "Separação por fonte e
+upsert do silver"). O **gold** (`capiba-gold`) guarda os relatórios de
+execução em
+`reports/<pipeline>/dt=YYYY-MM-DD/*.json.gz`, os marts Iceberg
 construídos pelo dbt (`capiba.contracts_daily`, `capiba.contracts_by_agency`,
 `capiba.supplier_stats`, `capiba.data_quality_daily`,
 `capiba.pod_usage_hourly`, `capiba.platform_cost_daily`) e a tabela
