@@ -427,7 +427,7 @@ airflow:
       memory: 2Gi
     limits:
       cpu: 1000m
-      memory: 4Gi
+      memory: 8Gi
 
 # Trino — SQL engine over the Iceberg REST catalog (Lakekeeper). Data source
 # used by Grafana to build dashboards over the gold marts; one Trino

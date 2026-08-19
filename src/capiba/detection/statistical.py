@@ -41,8 +41,12 @@ def benford_score(values: pd.Series) -> float:
     if len(valid) == 0:
         return float("nan")
 
-    # Extract leading digit
-    first_digits = valid.astype(str).str[0].astype(int)
+    # Extract the first SIGNIFICANT digit via log10: robust for values
+    # below 1 (str("0.5")[0] would yield "0", which is not a Benford digit
+    # and breaks the observed-vs-expected sum invariant of chisquare).
+    arr = np.asarray(valid, dtype=float)
+    magnitudes = np.power(10.0, np.floor(np.log10(arr)))
+    first_digits = pd.Series((arr / magnitudes).astype(int), index=valid.index)
 
     # Observed counts
     obs_counts = first_digits.value_counts().sort_index()

@@ -70,6 +70,22 @@ class TestStatistical:
         score = benford_score(pd.Series([-10, 0, -5]))
         assert np.isnan(score)
 
+    def test_benford_score_sub_unit_values(self) -> None:
+        """Values in (0, 1) must not crash the chi-squared test.
+
+        Regression: ``str(0.5)[0]`` yields "0" — not a Benford digit — so
+        the observed counts summed below the expected counts and scipy
+        raised ValueError (backfill run 2026-01-04, real PNCP amounts).
+        The leading digit must be the first SIGNIFICANT digit (0.5 -> 5).
+        """
+        values = [0.5, 0.75, 0.123, 123.45, 0.99, 45.6, 0.01, 9.87, 1.5, 0.002]
+        score = benford_score(pd.Series(values))
+        assert 0.0 <= score <= 1.0
+
+    def test_benford_score_integer_floats(self) -> None:
+        """Integer-valued floats keep the same digit as before the fix."""
+        assert benford_score(pd.Series([100.0] * 10 + [900.0] * 2)) is not None
+
     def test_single_bid_rate(self) -> None:
         """Rate must be 2/4 = 0.5 for the sample fixture."""
         bids = [
@@ -385,8 +401,7 @@ class TestSharedSignals:
     def test_single_bid_score(self) -> None:
         """The non-competitive rate is computed over the modality labels."""
         assert (
-            single_bid_score(["dispensa", "pregao", "inexigibilidade", "pregao"])
-            == 0.5
+            single_bid_score(["dispensa", "pregao", "inexigibilidade", "pregao"]) == 0.5
         )
         assert single_bid_score([]) == 0.0
 
@@ -423,9 +438,7 @@ class TestSharedSignals:
         score, components = result
         assert components["benford_deviation"] is not None
         assert components["isolation_forest_rate"] is not None
-        assert score == max(
-            value for value in components.values() if value is not None
-        )
+        assert score == max(value for value in components.values() if value is not None)
 
     def test_duration_outlier_share(self) -> None:
         """Below the minimum returns None; otherwise the IQR outlier share."""
