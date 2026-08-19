@@ -1,10 +1,11 @@
-# Ingestão de Dados — Capiba
+# Ingestão de Dados
 
 ## Visão geral
 
-A camada de ingestão é responsável por extrair dados públicos de contratações
-governamentais, normalizá-los em um schema unificado e persisti-los no grafo
-do Capiba.
+A camada de ingestão sai ao mundo e busca os dados públicos: extrai
+contratações governamentais das APIs abertas, normaliza o que encontra em um
+schema unificado e assenta o resultado no lago medallion e no grafo do
+Capiba, prontos para a detecção.
 
 ```mermaid
 flowchart LR
@@ -22,15 +23,19 @@ flowchart LR
 
 ### PNCP
 
-- **Endpoint:** `GET /v1/contratos` (contratos já firmados, com fornecedor e valores)
-- **Paginação e retry:** implementados no crawler; detalhes da API (URL base, formato de data, limites, rate limit) em `docs/apis_fontes.md`
-- Retry com backoff exponencial compartilhado em `src/capiba/ingestion/_http.py`
+O crawler do PNCP consulta `GET /v1/contratos`, o endpoint dos contratos já
+firmados, com fornecedor e valores. A paginação e o retry estão implementados
+no próprio crawler, com backoff exponencial compartilhado em
+`src/capiba/ingestion/_http.py`; os detalhes da API (URL base, formato de
+data, limites e rate limit) vivem em `docs/apis_fontes.md`.
 
 ### Portal da Transparência
 
-- **Endpoint:** `GET /contratos` (por período e código SIAFI do órgão); `fetch_purchases` itera mês a mês sobre o mesmo endpoint
-- **Autenticação:** header `chave-api-dados` (ver `docs/apis_fontes.md`)
-- **Mapeamento:** defensivo, suporta variações de nomenclatura
+O Portal da Transparência é consultado por `GET /contratos`, filtrado por
+período e código SIAFI do órgão; `fetch_purchases` itera mês a mês sobre o
+mesmo endpoint. A autenticação vai no header `chave-api-dados` (ver
+`docs/apis_fontes.md`), e o mapeamento dos registros é defensivo, tolerando
+variações de nomenclatura entre respostas.
 
 ## Schema unificado
 
@@ -92,13 +97,13 @@ python scripts/ingestion.py \
 > `keycloak.clientSecrets` do chart) e `ICEBERG_OAUTH2_SERVER_URI` apontando
 > para o port-forward do Keycloak (`http://localhost:8182/...`). Mesmo assim,
 > o pyiceberg no host falha no TLS self-signed do endpoint S3 vendido pelo
-> Lakekeeper (`https://s3.capiba.local:8443`) — para cargas que precisam do
+> Lakekeeper (`https://s3.capiba.local:8443`); para cargas que precisam do
 > lake, prefira o backfill Airflow abaixo, que roda in-cluster.
 
 ## Carga retroativa (backfill)
 
 Para acumular histórico (ex.: calibração de limiares de detecção), use o
-backfill nativo do Airflow sobre a DAG `daily_ingestion` — cada dia lógico
+backfill nativo do Airflow sobre a DAG `daily_ingestion`: cada dia lógico
 roda o pipeline completo (crawl PNCP do dia anterior + Transparência do
 mês corrente, normalize, destinos, dbt e detect) com retry por task:
 
@@ -121,9 +126,9 @@ Os pipelines de ingestão são **declarativos**: cada um é uma spec YAML em
 `dags/pipelines/*.yaml`, sem código Python. No parse do Airflow,
 `dags/pipeline_factory.py` carrega e valida cada spec
 (`capiba.pipeline.spec.load_spec`) e gera uma DAG por spec com **tasks
-granulares** — uma por fonte (`crawl_<fonte>`/`download_<fonte>`),
+granulares**: uma por fonte (`crawl_<fonte>`/`download_<fonte>`),
 `normalize`/`validate` conforme a fórmula, uma por destino e uma por post
-step — para que o scheduler do Airflow possa retentar falhas por etapa
+step, de modo que o scheduler do Airflow possa retentar falhas por etapa
 (o runner de `src/capiba/pipeline/runner.py` executa a lógica de cada
 passo). Uma spec
 inválida é logada e pulada, sem derrubar o restante do DagBag. Inlets e
@@ -164,51 +169,54 @@ no-op quando `NOTIFICATION_RECIPIENTS` está vazio e nunca derrubam a task.
 ### Registries
 
 Os nomes do YAML resolvem para implementações via
-`src/capiba/pipeline/registry.py`:
-
-- **Fontes** (`SOURCE_REGISTRY`): `pncp`, `transparency`, `federal_revenue`
-  (dump de arquivos), `pod_usage` (metrics-server), `mock_pncp`,
-  `mock_transparency`.
-- **Normalizadores** (`NORMALIZER_REGISTRY`): mapeamento raw → `Contract`
-  por fonte (as fontes mock reutilizam o normalizador da fonte que imitam).
-- **Rulesets** (`RULESET_REGISTRY`): `contract_rules`
-  (`src/capiba/quality/validators.py`).
-- **Fórmulas e destinos** (`FORMULA_REGISTRY`/`DESTINATION_REGISTRY`):
-  registrados pelo próprio runner ao ser importado.
+`src/capiba/pipeline/registry.py`. As fontes (`SOURCE_REGISTRY`) são `pncp`,
+`transparency`, `federal_revenue` (dump de arquivos), `pod_usage`
+(metrics-server), `ceis` e `cnep` (listas de sanções), além de `mock_pncp` e
+`mock_transparency` para rodar offline. Os normalizadores
+(`NORMALIZER_REGISTRY`) fazem o mapeamento raw → `Contract` por fonte, e as
+fontes mock reutilizam o normalizador da fonte que imitam. O único ruleset
+(`RULESET_REGISTRY`) é `contract_rules`
+(`src/capiba/quality/validators.py`). Fórmulas e destinos
+(`FORMULA_REGISTRY`/`DESTINATION_REGISTRY`) são registrados pelo próprio
+runner ao ser importado.
 
 Para declarar uma fonte nova basta o YAML; para registrar uma capacidade
-nova (fonte, normalizador, ruleset, fórmula ou destino) é preciso Python —
-o registry é a fronteira entre os dois mundos.
+nova (fonte, normalizador, ruleset, fórmula ou destino) é preciso Python.
+O registry é a fronteira entre os dois mundos.
 
 ### Fórmulas
 
-- **`contracts_default`**: crawl por fonte (cada uma com sua janela) →
-  normalize → transformations (opcional) → validate (opcional) → destinos.
-  Espelha o fluxo diário de contratos.
-- **`file_dump`**: download de arquivos de referência (ex.: dump CNPJ da
-  Receita Federal) → ZIPs no bronze + manifesto; manifesto vazio falha o
-  run — uma ausência não pode ser registrada como sucesso. Quando a spec
-  declara os destinos `lake_silver`/`arangodb_graph` e a fonte tem parser
-  registrado (`DUMP_PARSER_REGISTRY`), uma etapa `normalize_<fonte>`
-  streaming faz o parse dos ZIPs de entidade (Empresas/Estabelecimentos/
-  Socios, em chunks — os dumps de GBs nunca são materializados em memória)
-  para as tabelas silver `companies`/`establishments`/`partners`; arquivos
-  de referência (Cnaes.zip etc.) são pulados. Nesse caso o destino
-  `lake_silver` apenas reporta as contagens (a escrita já ocorreu no
-  normalize) e `arangodb_graph` carrega o grafo a partir do silver
-  (vértices `companies`/`partners`, arestas `partner_of`).
-- **`metrics_collect`**: snapshot pontual de métricas (ex.: `pod_usage`)
-  direto para os destinos, sem normalização nem validação; a janela é
-  ignorada.
-- **`entities_collect`**: snapshot de uma lista de entidades (ex.: as
-  listas de sanções CEIS/CNEP do Portal da Transparência, fontes `ceis` e
-  `cnep`) — crawl por fonte (a janela é ignorada: a lista é um retrato
-  corrente) → etapa `normalize_<fonte>` por fonte, que valida os registros
-  contra o modelo da entidade registrado no `ENTITY_NORMALIZER_REGISTRY`
-  e escreve na tabela silver da entidade (best-effort, como no file_dump).
-  O destino `lake_silver` apenas reporta as contagens; `lake_bronze` guarda
-  o payload bruto (`raw_ceis`/`raw_cnep`). A validação cruzada da spec exige
-  fetcher e entrada no `ENTITY_NORMALIZER_REGISTRY` para cada fonte.
+**`contracts_default`** espelha o fluxo diário de contratos: crawl por fonte
+(cada uma com sua janela), normalize, transformations (opcional), validate
+(opcional) e destinos.
+
+**`file_dump`** baixa arquivos de referência (ex.: dump CNPJ da Receita
+Federal) e guarda os ZIPs no bronze junto de um manifesto; manifesto vazio
+falha o run, porque uma ausência não pode ser registrada como sucesso.
+Quando a spec declara os destinos `lake_silver`/`arangodb_graph` e a fonte
+tem parser registrado (`DUMP_PARSER_REGISTRY`), uma etapa
+`normalize_<fonte>` streaming faz o parse dos ZIPs de entidade
+(Empresas/Estabelecimentos/Socios, em chunks, já que os dumps de GBs nunca
+são materializados em memória) para as tabelas silver
+`companies`/`establishments`/`partners`; arquivos de referência (Cnaes.zip
+etc.) são pulados. Nesse caso o destino `lake_silver` apenas reporta as
+contagens (a escrita já ocorreu no normalize) e `arangodb_graph` carrega o
+grafo a partir do silver (vértices `companies`/`partners`, arestas
+`partner_of`).
+
+**`metrics_collect`** tira um snapshot pontual de métricas (ex.:
+`pod_usage`) direto para os destinos, sem normalização nem validação; a
+janela é ignorada.
+
+**`entities_collect`** cuida do snapshot de uma lista de entidades, como as
+listas de sanções CEIS/CNEP do Portal da Transparência (fontes `ceis` e
+`cnep`): crawl por fonte (a janela é ignorada, pois a lista é um retrato
+corrente), uma etapa `normalize_<fonte>` por fonte, que valida os registros
+contra o modelo da entidade registrado no `ENTITY_NORMALIZER_REGISTRY` e
+escreve na tabela silver da entidade (best-effort, como no file_dump). O
+destino `lake_silver` apenas reporta as contagens e `lake_bronze` guarda o
+payload bruto (`raw_ceis`/`raw_cnep`). A validação cruzada da spec exige
+fetcher e entrada no `ENTITY_NORMALIZER_REGISTRY` para cada fonte.
 
 ### Janelas temporais
 
@@ -220,8 +228,8 @@ pelo mês corrente inteiro no pipeline diário).
 
 ### Transformações customizadas
 
-Transformações nomeadas vivem em `src/capiba/transformations/` — um módulo
-por transformação, expondo `transform(records, **params)` — e são
+Transformações nomeadas vivem em `src/capiba/transformations/`, um módulo
+por transformação, expondo `transform(records, **params)`, e são
 referenciadas por nome no YAML, com `params` livres. Nomes fora do
 `TRANSFORMATION_REGISTRY` são resolvidos importando
 `capiba.transformations.<name>`.
@@ -229,52 +237,57 @@ referenciadas por nome no YAML, com `params` livres. Nomes fora do
 ### Validação da spec
 
 Antes de qualquer execução, a spec passa por duas validações: estrutural
-(pydantic, `extra="forbid"` — chave desconhecida falha) e cruzada com os
-registries (fonte/fórmula/destino/ruleset/transformação desconhecidos geram
-erro claro, com a lista de nomes conhecidos). Em runtime, o ruleset
+(pydantic, `extra="forbid"`, de modo que chave desconhecida falha) e cruzada
+com os registries (fonte/fórmula/destino/ruleset/transformação desconhecidos
+geram erro claro, com a lista de nomes conhecidos). Em runtime, o ruleset
 declarado produz resultados por regra no relatório do run (destino
 `gold_report`), e o runner registra métricas por passo (duração, linhas
 de entrada/saída, erros) na tabela gold `platform_metrics`.
 
 ### DAGs atuais
 
-- **`daily_ingestion`** (`daily_contracts.yaml`, `0 6 * * *`): PNCP +
-  Transparência → bronze, silver, grafo ArangoDB e relatório gold; post
-  steps `dbt_run` (marts) e `detect`. O `detect` calcula sinais de fraude
-  sobre a tabela silver no vocabulário canônico da API — `anomalous_price`
-  por fornecedor (composto Benford + IsolationForest, componentes em
-  `details`), `single_bid` por fornecedor (taxa de modalidade não
-  competitiva, emitido só quando > 0 com ≥ 3 contratos), `concentration`
-  por órgão (HHI) e `anomalous_duration` por fornecedor (vigências outlier
-  IQR) — e os materializa na tabela Iceberg gold `capiba.fraud_signals`.
-- **`monthly_federal_revenue`** (`monthly_federal_revenue.yaml`,
-  `23 5 2 * *`): baixa os arquivos de referência do dump CNPJ da Receita
-  do mês anterior (fórmula `file_dump`, subset via `FEDERAL_REVENUE_FILES`
-  ou `params.files`), grava os ZIPs em
-  `federal_revenue/files/dt=YYYY-MM-DD/` no bronze e registra o manifesto
-  na tabela `capiba.raw_federal_revenue`. Com os arquivos
-  Empresas*/Estabelecimentos*/Socios* habilitados (opt-in, GBs cada), a
-  task `normalize_federal_revenue` faz o parse streaming para as tabelas
-  silver `companies`/`establishments`/`partners` e o destino
-  `arangodb_graph` carrega os vértices `companies`/`partners` e as arestas
-  `partner_of` no grafo — insumo dos operadores de grafo em
-  `src/capiba/detection/graphs.py`.
-- **`hourly_pod_usage`** (`hourly_pod_usage.yaml`, `7 * * * *`): coleta o
-  uso de CPU/memória dos pods do namespace (fórmula `metrics_collect`,
-  fonte `pod_usage`), insumo dos marts `pod_usage_hourly` e
-  `platform_cost_daily`.
-- **`weekly_sanctions`** (`weekly_sanctions.yaml`, `22 3 * * 2`): coleta as
-  listas de sanções CEIS (inidôneas/suspensas) e CNEP (empresas punidas) do
-  Portal da Transparência (fórmula `entities_collect`, fontes `ceis`/`cnep`,
-  crawler `fetch_sanctions` em `crawler_transparency.py`, modelo `Sanction`
-  em `src/capiba/ingestion/sanctions.py`) — payloads brutos nas tabelas
-  bronze `raw_ceis`/`raw_cnep` e registros normalizados na tabela silver
-  `sanctions`. Requer `TRANSPARENCY_API_KEY`; é o insumo de ingestão de um
-  futuro sinal "fornecedor sancionado" (pendente de pré-registro PR-D-03).
-- **`lake_maintenance`** (`dags/lake_maintenance.py`, semanal): única DAG
-  imperativa restante — executa `expire_snapshots` (retenção de 7 dias) e
-  `optimize` (compactação) em todas as tabelas Iceberg dos catálogos
-  bronze/silver/gold, via Trino.
+**`daily_ingestion`** (`daily_contracts.yaml`, `0 6 * * *`): PNCP +
+Transparência para bronze, silver, grafo ArangoDB e relatório gold, com os
+post steps `dbt_run` (marts) e `detect`. O `detect` calcula sinais de fraude
+sobre a tabela silver no vocabulário canônico da API: `anomalous_price`
+por fornecedor (composto Benford + IsolationForest, componentes em
+`details`), `single_bid` por fornecedor (taxa de modalidade não
+competitiva, emitido só quando > 0 com ≥ 3 contratos), `concentration`
+por órgão (HHI) e `anomalous_duration` por fornecedor (vigências outlier
+IQR). A eles se soma o sinal de grafo `collusion_network`, computado
+best-effort pelo `detect_collusion` sobre o ArangoDB com limiar
+`DETECTION_COLLUSION_MIN_WINS` (default 3) e score binário 1.0. Todos são
+materializados na tabela Iceberg gold `capiba.fraud_signals`.
+
+**`monthly_federal_revenue`** (`monthly_federal_revenue.yaml`,
+`23 5 2 * *`): baixa os arquivos de referência do dump CNPJ da Receita
+do mês anterior (fórmula `file_dump`, subset via `FEDERAL_REVENUE_FILES`
+ou `params.files`), grava os ZIPs em
+`federal_revenue/files/dt=YYYY-MM-DD/` no bronze e registra o manifesto
+na tabela `capiba.raw_federal_revenue`. Com os arquivos
+Empresas*/Estabelecimentos*/Socios* habilitados (opt-in, GBs cada), a
+task `normalize_federal_revenue` faz o parse streaming descrito na fórmula
+`file_dump` e o destino `arangodb_graph` carrega o grafo, insumo dos
+operadores de grafo em `src/capiba/detection/graphs.py`.
+
+**`hourly_pod_usage`** (`hourly_pod_usage.yaml`, `7 * * * *`): coleta o
+uso de CPU/memória dos pods do namespace (fórmula `metrics_collect`,
+fonte `pod_usage`), insumo dos marts `pod_usage_hourly` e
+`platform_cost_daily`.
+
+**`weekly_sanctions`** (`weekly_sanctions.yaml`, `22 3 * * 2`): coleta as
+listas de sanções CEIS (inidôneas/suspensas) e CNEP (empresas punidas) do
+Portal da Transparência (fórmula `entities_collect`, fontes `ceis`/`cnep`,
+crawler `fetch_sanctions` em `crawler_transparency.py`, modelo `Sanction`
+em `src/capiba/ingestion/sanctions.py`), com payloads brutos nas tabelas
+bronze `raw_ceis`/`raw_cnep` e registros normalizados na tabela silver
+`sanctions`. Requer `TRANSPARENCY_API_KEY`; é o insumo de ingestão de um
+futuro sinal "fornecedor sancionado" (pendente de pré-registro PR-D-03).
+
+**`lake_maintenance`** (`dags/lake_maintenance.py`, semanal): única DAG
+imperativa restante, executa `expire_snapshots` (retenção de 7 dias) e
+`optimize` (compactação) em todas as tabelas Iceberg dos catálogos
+bronze/silver/gold, via Trino.
 
 ## Persistência no grafo
 
@@ -286,8 +299,8 @@ silver) e conectados via aresta `partner_of`.
 
 ## Ciclo de vida de um contrato
 
-Um contrato percorre as etapas do pipeline desde a coleta até a enriquecimento
-com sinais de fraude.
+Um contrato percorre as etapas do pipeline desde a coleta até o
+enriquecimento com sinais de fraude.
 
 ```mermaid
 stateDiagram-v2
@@ -335,25 +348,22 @@ flowchart LR
     contracts --> signals
 ```
 
-- **Bronze** (`capiba-bronze`):
-  - cópia de auditoria bruta: `<fonte>/dt=YYYY-MM-DD/*.json.gz`
-  - tabela Iceberg `capiba.raw_<fonte>` (uma linha por execução, payload
-    completo em `payload_json`), particionada por `dt`
-- **Silver** (`capiba-silver`): tabela Iceberg `capiba.contracts` — contratos
-  normalizados e tipados (datas, `decimal(18,2)`, structs `buyer`/`supplier`),
-  particionada por `dt`
-- **Gold** (`capiba-gold`):
-  - relatórios de execução em `reports/daily_ingestion/dt=YYYY-MM-DD/*.json.gz`
-  - marts Iceberg construídos pelo dbt (`capiba.contracts_daily`,
-    `capiba.contracts_by_agency`, `capiba.supplier_stats`,
-    `capiba.data_quality_daily`, `capiba.pod_usage_hourly`,
-    `capiba.platform_cost_daily`)
-  - tabela `capiba.platform_metrics` (métricas por passo de cada run,
-    escritas pelo runner, best-effort)
-- **Serving** (PostgreSQL DWH): os modelos de `dbt/models/serving/`
-  (`serving_supplier_stats`, `serving_municipality_daily`) são
-  materializados no database `dwh` através do catálogo Trino `dwh` —
-  camada de baixa latência para consumo direto, fora do lake
+No **bronze** (`capiba-bronze`) ficam a cópia de auditoria bruta
+(`<fonte>/dt=YYYY-MM-DD/*.json.gz`) e a tabela Iceberg
+`capiba.raw_<fonte>`, uma linha por execução com o payload completo em
+`payload_json`, particionada por `dt`. Na **silver** (`capiba-silver`) vive
+a tabela Iceberg `capiba.contracts`, com os contratos normalizados e
+tipados (datas, `decimal(18,2)`, structs `buyer`/`supplier`), particionada
+por `dt`. O **gold** (`capiba-gold`) guarda os relatórios de execução em
+`reports/daily_ingestion/dt=YYYY-MM-DD/*.json.gz`, os marts Iceberg
+construídos pelo dbt (`capiba.contracts_daily`, `capiba.contracts_by_agency`,
+`capiba.supplier_stats`, `capiba.data_quality_daily`,
+`capiba.pod_usage_hourly`, `capiba.platform_cost_daily`) e a tabela
+`capiba.platform_metrics`, com as métricas por passo de cada run escritas
+pelo runner em regime best-effort. Fora do lago, o **serving** (PostgreSQL
+DWH) recebe os modelos de `dbt/models/serving/` (`serving_supplier_stats`,
+`serving_municipality_daily`), materializados no database `dwh` através do
+catálogo Trino `dwh`: camada de baixa latência para consumo direto.
 
 As tabelas Iceberg (arquivos Parquet + metadados) são catalogadas pelo
 **Lakekeeper** (REST catalog, serviço `capiba-iceberg-catalog` no cluster),
@@ -364,11 +374,11 @@ contra o catálogo gold.
 
 Para rodar sem cluster, basta apontar `ICEBERG_CATALOG_URI` para um catálogo
 SQLite local (`sqlite:////caminho/catalog.db`) com `ICEBERG_LOCAL_WAREHOUSE`
-definido — o lake grava em disco local.
+definido, e o lake grava em disco local.
 
 A escrita no lake é *best-effort*: falhas não interrompem o pipeline. Os
 buckets e warehouses são configuráveis via variáveis de ambiente
-(`LAKE_BUCKET_*`, `ICEBERG_*` — ver `.env.example`).
+(`LAKE_BUCKET_*`, `ICEBERG_*`; ver `.env.example`).
 
 ### dbt
 
@@ -392,13 +402,10 @@ Cada execução registra nós de fonte, transformação e dataset via
 make test
 ```
 
-Os testes de ingestão cobrem:
-
-- Mapeamento PNCP e Portal da Transparência
-- Paginação e 204 No Content no crawler
-- Detecção de duplicatas e checksum
-- Persistência e criação de arestas no ArangoDB
-- Framework declarativo: validação de specs (`test_pipeline_spec.py`),
-  janelas (`test_pipeline_window.py`), runner (`test_pipeline_runner.py`),
-  factory de DAGs (`test_pipeline_factory.py`) e a feature BDD
-  `tests/bdd/features/pipeline_framework.feature`
+Os testes de ingestão cobrem o mapeamento PNCP e Portal da Transparência,
+a paginação e o 204 No Content no crawler, a detecção de duplicatas e o
+checksum, a persistência e a criação de arestas no ArangoDB, e o framework
+declarativo ponta a ponta: validação de specs (`test_pipeline_spec.py`),
+janelas (`test_pipeline_window.py`), runner (`test_pipeline_runner.py`),
+factory de DAGs (`test_pipeline_factory.py`) e a feature BDD
+`tests/bdd/features/pipeline_framework.feature`.
