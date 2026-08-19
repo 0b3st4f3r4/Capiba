@@ -104,6 +104,13 @@ modelo `Sanction` em `src/capiba/ingestion/sanctions.py`): etapa
 `normalize_<fonte>` por fonte escreve na tabela silver da entidade
 registrada no `ENTITY_NORMALIZER_REGISTRY` (hoje `sanctions`); os wrappers
 Airflow dessa fórmula vivem em `src/capiba/pipeline/entity_tasks.py`.
+O crawl (`task_crawl_entities`) persiste **checkpoint por página** no
+bronze (`<fonte>/pages/dt=<data>/page-NNNNN.json.gz`,
+`lake.write_bronze_page`/`list_bronze_pages`/`read_bronze_page`): um retry
+relê as páginas já gravadas e retoma da próxima, em vez de reiniciar a
+varredura de centenas de páginas (interrupção por restart de liveness
+observada em 2026-08); 400s esporádicos desses endpoints são transitórios
+(retry longo), não fatais.
 `lake_maintenance.py` (semanal: expire_snapshots + optimize via Trino)
 permanece uma DAG imperativa, assim como `gold_detection.py` (diária, 08:00
 UTC, após as ingestões: `dbt_run` → `detect`, reconstruindo marts e sinais
@@ -134,7 +141,8 @@ no-op quando `NOTIFICATION_RECIPIENTS` está vazio, nunca derrubam a task.
 O `task_detect` também emite o sinal de grafo `collusion_network`
 (`detect_collusion` sobre o ArangoDB, best-effort) com limiar
 `DETECTION_COLLUSION_MIN_WINS` (default 3, placeholder de calibração validado
-pela bateria D-02; PR-D-03 calibrará em volume real) e score binário 1.0;
+pela bateria D-02; PR-D-03, registrado em 2026-08-19 e pendente de aprovação,
+calibrará em volume real) e score binário 1.0;
 a cadeia de titularidade é exposta na API em `GET /v1/graph/ownership/{cnpj}`.
 O `task_validate_pipeline` também alimenta o `QualityMonitor`
 (`record_batch`, best-effort) e o `NotificationScheduler` (relatórios

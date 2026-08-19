@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import date
 from typing import Any, cast
 
@@ -64,6 +65,8 @@ def _fetch_page(
     params: dict[str, Any],
     retries: int = MAX_RETRIES,
     delay: float = BASE_DELAY,
+    fatal_statuses: tuple[int, ...] = (400, 401, 403, 422),
+    retry_statuses: tuple[int, ...] = (502, 503, 504),
 ) -> list[dict[str, Any]]:
     """Fetches a page from the API with retry and backoff.
 
@@ -72,6 +75,8 @@ def _fetch_page(
         params: Query string parameters.
         retries: Maximum number of attempts.
         delay: Base delay between attempts.
+        fatal_statuses: HTTP statuses that abort immediately (non-transient).
+        retry_statuses: Transient statuses retried with the long delay.
 
     Returns:
         List of records from the page.
@@ -95,9 +100,9 @@ def _fetch_page(
                 headers=_headers(),
                 retries=retries,
                 delay=delay,
-                fatal_statuses=(400, 401, 403, 422),
+                fatal_statuses=fatal_statuses,
                 rate_limit_status=429,
-                retry_statuses=(502, 503, 504),
+                retry_statuses=retry_statuses,
             ),
         )
         or []
@@ -153,18 +158,31 @@ def fetch_sanctions(
     list_name: str,
     cnpj: str | None = None,
     max_pages: int | None = None,
+    start_page: int = 1,
+    on_page: Callable[[int, list[dict[str, Any]]], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetches a sanction list (CEIS/CNEP), paginating until an empty page.
 
-    The lists are full snapshots (no temporal filter); ``pagina`` starts at
-    1 and the walk stops on the first empty page. A missing
-    ``TRANSPARENCY_API_KEY`` raises ``RuntimeError`` like the other
+    The lists are full snapshots (no temporal filter); the walk stops on the
+    first empty page. ``start_page``/``on_page`` support incremental crawls:
+    the caller can persist each page as it lands and, after a failure, resume
+    from the next unpersisted page instead of restarting the whole walk.
+
+    The sanction endpoints answer sporadic ``400`` responses deep into the
+    walk (observed at page 352 of a 770+ page crawl that had fetched the
+    same page fine minutes earlier), so 400 is retried with the long delay
+    here instead of aborting immediately as in the contracts endpoint.
+
+    A missing ``TRANSPARENCY_API_KEY`` raises ``RuntimeError`` like the other
     endpoints of this crawler.
 
     Args:
         list_name: Which list to fetch (``ceis`` or ``cnep``).
         cnpj: Optional ``cnpjSancionado`` filter.
         max_pages: Optional cap on the number of pages (tests/backfills).
+        start_page: First page to fetch (1-based).
+        on_page: Optional callback invoked with ``(page, records)`` after
+            each non-empty page lands.
 
     Returns:
         List of raw sanction records.
@@ -181,18 +199,27 @@ def fetch_sanctions(
 
     url = f"{TRANSPARENCY_API_URL}/{list_name}"
     results: list[dict[str, Any]] = []
-    page = 1
+    page = start_page
+    fetched = 0
     while True:
         params: dict[str, Any] = {"pagina": page}
         if cnpj:
             params["cnpjSancionado"] = cnpj
 
         logger.info("Fetching Transparency %s sanctions: page %d", list_name, page)
-        records = _fetch_page(url, params)
+        records = _fetch_page(
+            url,
+            params,
+            fatal_statuses=(401, 403, 422),
+            retry_statuses=(400, 502, 503, 504),
+        )
         if not records:
             break
         results.extend(records)
-        if max_pages is not None and page >= max_pages:
+        if on_page is not None:
+            on_page(page, records)
+        fetched += 1
+        if max_pages is not None and fetched >= max_pages:
             break
         page += 1
 

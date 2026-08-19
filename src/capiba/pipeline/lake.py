@@ -24,6 +24,7 @@ import io
 import json
 import logging
 import os
+import re
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
@@ -478,6 +479,72 @@ def read_bronze_file(key: str) -> bytes:
         response.release_conn()
     logger.info("Lake file read: %s/%s (%d bytes)", LAKE_BUCKET_BRONZE, key, len(data))
     return data
+
+
+def write_bronze_page(
+    source: str,
+    page: int,
+    records: list[dict[str, Any]],
+    run_date: date | None = None,
+) -> str:
+    """Writes one crawled page to the bronze layer (incremental checkpoint).
+
+    Paginated snapshot sources (e.g. the CEIS/CNEP sanction lists) persist
+    each page as it lands under ``<source>/pages/dt=YYYY-MM-DD/`` so a
+    retried task can resume from the next unpersisted page instead of
+    restarting the whole walk (see ``task_crawl_entities``). The key is
+    deterministic per (source, run date, page): rewrites overwrite.
+
+    Args:
+        source: Source name (e.g. ``ceis``).
+        page: Page number (1-based).
+        records: Raw records of the page.
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        The object key written.
+    """
+    key = f"{source}/pages/dt={_partition_day(run_date).isoformat()}/page-{page:05d}.json.gz"
+    data = gzip.compress(json.dumps(records, default=str).encode())
+    _put_object(LAKE_BUCKET_BRONZE, key, data)
+    return key
+
+
+def list_bronze_pages(source: str, run_date: date | None = None) -> dict[int, str]:
+    """Lists the persisted page checkpoints of a source for a run date.
+
+    Counterpart of ``write_bronze_page``: maps page number to object key
+    under ``<source>/pages/dt=YYYY-MM-DD/``.
+
+    Args:
+        source: Source name (e.g. ``ceis``).
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        Mapping of page number to object key (possibly empty).
+    """
+    prefix = f"{source}/pages/dt={_partition_day(run_date).isoformat()}/"
+    pages: dict[int, str] = {}
+    for obj in get_client().list_objects(LAKE_BUCKET_BRONZE, prefix=prefix, recursive=True):
+        if obj.object_name is None:
+            continue
+        match = re.search(r"page-(\d+)\.json\.gz$", obj.object_name)
+        if match:
+            pages[int(match.group(1))] = obj.object_name
+    logger.info("Bronze pages listed: %s (%d pages)", prefix, len(pages))
+    return pages
+
+
+def read_bronze_page(key: str) -> list[dict[str, Any]]:
+    """Reads back a page checkpoint written with ``write_bronze_page``.
+
+    Args:
+        key: Object key in the bronze bucket.
+
+    Returns:
+        The raw records of the page.
+    """
+    return cast(list[dict[str, Any]], json.loads(gzip.decompress(read_bronze_file(key))))
 
 
 def write_bronze_table(source: str, payload: Any, run_date: date | None = None) -> str:

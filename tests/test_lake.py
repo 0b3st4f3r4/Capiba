@@ -511,6 +511,50 @@ def test_read_bronze_file_roundtrip(mock_client: MagicMock) -> None:
     response.release_conn.assert_called_once()
 
 
+class TestBronzePages:
+    """Per-page crawl checkpoints under <source>/pages/dt=<date>/."""
+
+    def test_write_bronze_page_key_layout_and_payload(self, mock_client: MagicMock) -> None:
+        """Pages land under a deterministic page-NNNNN.json.gz key."""
+        key = lake.write_bronze_page(
+            "ceis", 3, [{"id": 1}, {"id": 2}], run_date=RUN_DATE
+        )
+
+        assert key == "ceis/pages/dt=2026-01-15/page-00003.json.gz"
+        bucket, written_key, body = _put_call(mock_client)
+        assert bucket == config.LAKE_BUCKET_BRONZE
+        assert written_key == key
+        assert json.loads(gzip.decompress(body)) == [{"id": 1}, {"id": 2}]
+
+    def test_list_bronze_pages_maps_page_numbers(self, mock_client: MagicMock) -> None:
+        """The listing maps page numbers to keys and skips foreign objects."""
+        mock_client.list_objects.return_value = iter(
+            [
+                MagicMock(object_name="ceis/pages/dt=2026-01-15/page-00002.json.gz"),
+                MagicMock(object_name="ceis/pages/dt=2026-01-15/page-00001.json.gz"),
+                MagicMock(object_name="ceis/pages/dt=2026-01-15/notes.txt"),
+            ]
+        )
+
+        pages = lake.list_bronze_pages("ceis", run_date=RUN_DATE)
+
+        assert pages == {
+            1: "ceis/pages/dt=2026-01-15/page-00001.json.gz",
+            2: "ceis/pages/dt=2026-01-15/page-00002.json.gz",
+        }
+        _, kwargs = mock_client.list_objects.call_args
+        assert kwargs["prefix"] == "ceis/pages/dt=2026-01-15/"
+
+    def test_read_bronze_page_roundtrip(self, mock_client: MagicMock) -> None:
+        """A written page checkpoint reads back as the same record list."""
+        records = [{"id": 7, "nome": "EMPRESA LTDA"}]
+        response = MagicMock()
+        response.read.return_value = gzip.compress(json.dumps(records).encode())
+        mock_client.get_object.return_value = response
+
+        assert lake.read_bronze_page("ceis/pages/dt=2026-01-15/page-00001.json.gz") == records
+
+
 class TestWriteSilverUpsert:
     """Upsert-by-id semantics of write_silver against the cluster catalog.
 

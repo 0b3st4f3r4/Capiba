@@ -129,6 +129,72 @@ class TestFetchSanctions:
         with pytest.raises(ValueError, match="Unknown sanction list"):
             fetch_sanctions("ceaf")
 
+    @patch("capiba.ingestion._http.requests.get")
+    def test_start_page_and_on_page_callback(self, mock_get: MagicMock) -> None:
+        """The walk starts at start_page and reports each page to on_page."""
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.side_effect = [[{"id": 1}], [{"id": 2}], []]
+        pages_seen: list[tuple[int, list[dict[str, Any]]]] = []
+
+        with patch(
+            "capiba.ingestion.crawler_transparency.TRANSPARENCY_API_KEY",
+            "test-token",
+        ):
+            results = fetch_sanctions(
+                "ceis", start_page=5, on_page=lambda p, r: pages_seen.append((p, r))
+            )
+
+        assert [r["id"] for r in results] == [1, 2]
+        assert [c.kwargs["params"]["pagina"] for c in mock_get.call_args_list] == [5, 6, 7]
+        assert [(p, [r["id"] for r in recs]) for p, recs in pages_seen] == [
+            (5, [1]),
+            (6, [2]),
+        ]
+
+    @patch("capiba.ingestion._http.time.sleep")
+    @patch("capiba.ingestion._http.requests.get")
+    def test_400_is_retried_not_fatal(
+        self, mock_get: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Sporadic 400s deep into the walk are retried with the long delay."""
+        bad = MagicMock(status_code=400)
+        good = MagicMock(status_code=200)
+        good.json.return_value = [{"id": 9}]
+        empty = MagicMock(status_code=200)
+        empty.json.return_value = []
+        mock_get.side_effect = [bad, good, empty]
+
+        with patch(
+            "capiba.ingestion.crawler_transparency.TRANSPARENCY_API_KEY",
+            "test-token",
+        ):
+            results = fetch_sanctions("ceis")
+
+        assert [r["id"] for r in results] == [9]
+        mock_sleep.assert_called_once_with(30.0)
+
+    @patch("capiba.ingestion._http.time.sleep")
+    @patch("capiba.ingestion._http.requests.get")
+    def test_persistent_400_raises_after_retries(
+        self, mock_get: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A persistent 400 raises HTTPError once the attempts are exhausted."""
+        import requests
+
+        mock_get.return_value = MagicMock(status_code=400)
+
+        with (
+            patch(
+                "capiba.ingestion.crawler_transparency.TRANSPARENCY_API_KEY",
+                "test-token",
+            ),
+            pytest.raises(requests.HTTPError),
+        ):
+            fetch_sanctions("ceis")
+
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 3
+
 
 class TestSanctionNormalizer:
     """Tests for the defensive CEIS/CNEP normalization."""
@@ -228,22 +294,149 @@ class TestSanctionNormalizer:
         assert revalidated == sanction
 
 
-class TestEntityTasks:
-    """Tests for the Airflow wrappers of the entities_collect formula."""
-
-    def _spec_file(self, tmp_path: Path) -> Path:
-        spec_path = tmp_path / "spec.yaml"
-        spec_path.write_text(
-            """\
+def _spec_file(tmp_path: Path) -> Path:
+    """Writes a minimal entities_collect spec for the task tests."""
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(
+        """\
 name: sanctions_task
 window: all
 sources: [ceis, cnep]
 formula: entities_collect
 destinations: [lake_bronze, lake_silver]
 """,
-            encoding="utf-8",
+        encoding="utf-8",
+    )
+    return spec_path
+
+
+class TestCrawlEntitiesTask:
+    """Tests for the checkpointed entity crawl task (per-page resume)."""
+
+    def _fake_fetch(self, pages: dict[int, list[dict[str, Any]]]) -> Any:
+        """A registry-shaped fetch honoring start_page/on_page."""
+
+        def fetch(
+            _start: Any,
+            _end: Any,
+            start_page: int = 1,
+            on_page: Any = None,
+            **_params: Any,
+        ) -> list[dict[str, Any]]:
+            records: list[dict[str, Any]] = []
+            for page in sorted(p for p in pages if p >= start_page):
+                if on_page is not None:
+                    on_page(page, pages[page])
+                records.extend(pages[page])
+            return records
+
+        return fetch
+
+    @pytest.fixture
+    def mocked_lake(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
+        """Replaces the lake page-checkpoint and audit-write functions."""
+        mocks = {
+            "list_bronze_pages": MagicMock(return_value={}),
+            "read_bronze_page": MagicMock(),
+            "write_bronze_page": MagicMock(),
+            "write_bronze": MagicMock(),
+            "write_bronze_table": MagicMock(),
+        }
+        for name, mock in mocks.items():
+            monkeypatch.setattr(lake, name, mock)
+        return mocks
+
+    def test_fresh_crawl_checkpoints_every_page(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mocked_lake: dict[str, MagicMock],
+    ) -> None:
+        """Without checkpoints, the walk starts at page 1 and persists pages."""
+        from capiba.pipeline.entity_tasks import task_crawl_entities
+        from capiba.pipeline.registry import SOURCE_REGISTRY, SourceDef
+
+        pages = {1: [{"id": 1}], 2: [{"id": 2}]}
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "ceis", SourceDef(fetch=self._fake_fetch(pages))
         )
-        return spec_path
+        ti = MagicMock()
+
+        records = task_crawl_entities(
+            "ceis", str(_spec_file(tmp_path)), ti=ti, ds="2026-08-18"
+        )
+
+        assert [r["id"] for r in records] == [1, 2]
+        written = [
+            (c.args[1], c.args[2]) for c in mocked_lake["write_bronze_page"].call_args_list
+        ]
+        assert written == [(1, [{"id": 1}]), (2, [{"id": 2}])]
+        ti.xcom_push.assert_called_once_with(key="raw_ceis", value=records)
+        mocked_lake["write_bronze"].assert_called_once()
+        mocked_lake["write_bronze_table"].assert_called_once()
+
+    def test_retry_resumes_from_next_unpersisted_page(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mocked_lake: dict[str, MagicMock],
+    ) -> None:
+        """A retry reads back checkpointed pages and resumes from page 3."""
+        from capiba.pipeline.entity_tasks import task_crawl_entities
+        from capiba.pipeline.registry import SOURCE_REGISTRY, SourceDef
+
+        mocked_lake["list_bronze_pages"].return_value = {
+            1: "ceis/pages/dt=2026-08-18/page-00001.json.gz",
+            2: "ceis/pages/dt=2026-08-18/page-00002.json.gz",
+        }
+        mocked_lake["read_bronze_page"].side_effect = [
+            [{"id": 1}],
+            [{"id": 2}],
+        ]
+        pages = {3: [{"id": 3}]}
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "ceis", SourceDef(fetch=self._fake_fetch(pages))
+        )
+        ti = MagicMock()
+
+        records = task_crawl_entities(
+            "ceis", str(_spec_file(tmp_path)), ti=ti, ds="2026-08-18"
+        )
+
+        assert [r["id"] for r in records] == [1, 2, 3]
+        # Only page 3 is persisted now — pages 1-2 came from the checkpoints.
+        written = [
+            (c.args[1], c.args[2]) for c in mocked_lake["write_bronze_page"].call_args_list
+        ]
+        assert written == [(3, [{"id": 3}])]
+        ti.xcom_push.assert_called_once_with(key="raw_ceis", value=records)
+
+    def test_checkpoint_read_failure_restarts_walk(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mocked_lake: dict[str, MagicMock],
+    ) -> None:
+        """A failing checkpoint listing falls back to a full walk."""
+        from capiba.pipeline.entity_tasks import task_crawl_entities
+        from capiba.pipeline.registry import SOURCE_REGISTRY, SourceDef
+
+        mocked_lake["list_bronze_pages"].side_effect = RuntimeError("minio down")
+        pages = {1: [{"id": 1}]}
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "ceis", SourceDef(fetch=self._fake_fetch(pages))
+        )
+        ti = MagicMock()
+
+        records = task_crawl_entities(
+            "ceis", str(_spec_file(tmp_path)), ti=ti, ds="2026-08-18"
+        )
+
+        assert [r["id"] for r in records] == [1]
+
+
+class TestEntityTasks:
+    """Tests for the Airflow wrappers of the entities_collect formula."""
 
     def test_normalize_entities_writes_silver(
         self, tmp_path: Path, local_catalog: Path
@@ -255,7 +448,7 @@ destinations: [lake_bronze, lake_silver]
         ti.xcom_pull.return_value = [_ceis_payload()]
 
         summary = task_normalize_entities(
-            "ceis", str(self._spec_file(tmp_path)), ti=ti, ds="2026-08-18"
+            "ceis", str(_spec_file(tmp_path)), ti=ti, ds="2026-08-18"
         )
 
         assert summary == {
@@ -285,7 +478,7 @@ destinations: [lake_bronze, lake_silver]
         ti.xcom_pull.return_value = [_ceis_payload()]
 
         summary = task_normalize_entities(
-            "ceis", str(self._spec_file(tmp_path)), ti=ti, ds="2026-08-18"
+            "ceis", str(_spec_file(tmp_path)), ti=ti, ds="2026-08-18"
         )
 
         assert summary["entities"] == {"sanctions": 1}
@@ -303,7 +496,7 @@ destinations: [lake_bronze, lake_silver]
         }
 
         summary = task_silver_entities_summary(
-            str(self._spec_file(tmp_path)), ti=ti, ds="2026-08-18"
+            str(_spec_file(tmp_path)), ti=ti, ds="2026-08-18"
         )
 
         assert summary == {
