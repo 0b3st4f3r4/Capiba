@@ -12,14 +12,14 @@ Detalhes (caminhos, linhas, evidências) em cada item.
   - [x] Etapa de normalize streaming na fórmula `file_dump` (`src/capiba/pipeline/runner.py`) + task granular `normalize_<fonte>` no factory
 - [x] **Expandir o post step `detect`** (`src/capiba/pipeline/tasks.py`) — `single_bid` e IsolationForest (composto `anomalous_price`) adicionados; computação bruta extraída para `src/capiba/detection/signals.py`
 - [x] **Reconciliar vocabulário de sinais pipeline↔API** — gold grava os nomes canônicos `single_bid`/`concentration`/`anomalous_price`/`anomalous_duration` (emenda datada em `docs/preregistrations/PR-D-01b.md`)
-- [ ] **Conectar operadores de grafo ao pipeline** — `detect_collusion`, `trace_ownership`, `anomalous_geography` (`src/capiba/detection/graphs.py`) sem chamador; `SignalType.COLLUSION_NETWORK` sem produtor (depende da Receita Federal)
+- [ ] **Conectar operadores de grafo ao pipeline** — `detect_collusion` e `trace_ownership` reescritos na semântica adaptada e **validados empiricamente** (bateria D-02, `docs/results/R-D-02.md`, 6/6); falta apenas a conexão ao pipeline, que exige decisão separada sobre limiares de produção (PR-D-02 § 7). `anomalous_geography` segue sem validação (sem fonte de lat/long); `SignalType.COLLUSION_NETWORK` sem produtor (depende da Receita Federal)
 - [ ] **Conectar operadores NLP** — `semantic_gap`, `detect_clone` (`src/capiba/detection/nlp_operators.py`) + `db/vectors.py`/`db/search.py` sem consumidor; `SignalType.SEMANTIC_GAP` sem produtor
 - [x] **Ativar `notification/`** — `NotificationDispatcher` ligado ao pipeline via `src/capiba/notification/alerts.py`: `task_detect` alerta sinais ≥ `NOTIFICATION_ALERT_SCORE` e `task_validate_pipeline` alerta relatórios inválidos/erro de normalização > 5%; recipients vazio = no-op. O `NotificationScheduler` passou a enviar métricas reais (ver item próprio abaixo)
 - [x] **Integrar `evidence/`** — router `/v1/evidence` (`src/capiba/api/routers/evidence.py`): upload multipart com metadados obrigatórios, listagem por contrato e download por SHA-256, sobre o `EvidenceStorage` (instanciação lazy via `get_storage()`)
 
 ## Alto — operação em produção
 
-- [ ] **Configurar `TRANSPARENCY_API_KEY`** (`docs/apis_fontes.md`) — pipeline diário depende dela
+- [x] **Configurar `TRANSPARENCY_API_KEY`** — a chave está no `.env` desde o início; `scripts/helm-upgrade.sh` a injeta no chart via `--set global.transparencyApiKey` (era só doc desatualizada)
 - [ ] **ML supervisionado com ciclo de vida** — `train_rf`/`compute_cri` sem job de treino nem persistência de modelo; API compõe risco sem usar CRI
 - [x] **`NotificationScheduler` oco** — relatórios diário/semanal/mensal agregam as métricas reais do `QualityMonitor` (`record_batch`/`get_metrics`/`list_datasets` em `quality/monitor.py`, alimentado pelo `task_validate_pipeline`); sem dados, o relatório diz explicitamente que não há dados no período; scheduler iniciado no lifespan da API (`api/main.py`) somente com `NOTIFICATION_RECIPIENTS` configurado
 - [x] **Marts de pod usage sem refresh** — `post_steps: [dbt_run]` adicionado a `dags/pipelines/hourly_pod_usage.yaml` (task granular `dbt_run` após o destino bronze)
@@ -69,4 +69,4 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
 - [ ] Dados privados via LGPD/DP — exige análise de base legal prévia
 - [ ] Protocolos federados — differential privacy, federated learning, ZKP
 - [ ] Governança: glossário de negócio, classificação de sensibilidade por coluna, laço automático de requests/limits
-- [ ] Baterias pré-registradas de validação empírica para grafos/NLP/ML — grafos com PR em rascunho (`docs/preregistrations/PR-D-02.md`, aguardando aprovação; bateria D-02 não executada); NLP e ML sem PR
+- [ ] Baterias pré-registradas de validação empírica para grafos/NLP/ML — grafos **feitos** (PR-D-02 aprovado; bateria D-02 executada com sucesso, `docs/results/R-D-02.md`); NLP e ML sem PR

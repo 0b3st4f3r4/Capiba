@@ -2,8 +2,9 @@
 
 - **Pré-registro**: bateria D-02
 - **Criado em**: 2026-08-18
-- **Última atualização**: 2026-08-18
-- **Status**: rascunho registrado, não executado (aguardando aprovação humana)
+- **Última atualização**: 2026-08-19
+- **Status**: aprovado e **executado** — veredito `success` (P1–P6 exatas
+  nas 5 seeds); resultado em `docs/results/R-D-02.md`
 - **Alvo**: `detect_collusion` e `trace_ownership`
   (`src/capiba/detection/graphs.py`), na semântica **adaptada** definida na
   seção 3 — a versão a implementar após a aprovação deste registro
@@ -148,3 +149,7 @@ de bateria existe na data deste registro.
 ## Revisões
 
 - 2026-08-18: criação (rascunho para revisão humana).
+- 2026-08-19: aprovação humana registrada; operadores reescritos na
+  semântica da seção 3, runner `src/capiba/detection/battery_graphs.py`
+  implementado e bateria executada contra ArangoDB de bateria descartável
+  no cluster local — veredito `success` (`docs/results/R-D-02.md`).

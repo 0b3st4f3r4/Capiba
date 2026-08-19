@@ -10,6 +10,7 @@ Dependencies: python-arango
 from __future__ import annotations
 
 import logging
+from itertools import combinations
 from typing import Any, cast
 
 from arango.database import StandardDatabase
@@ -23,45 +24,46 @@ def detect_collusion(
     db: StandardDatabase | None = None,
     min_wins: int = 3,
 ) -> list[set[str]]:
-    """Detects groups of companies in potential collusion (bid-rigging).
+    """Detects pairs of suppliers alternating wins for the same buyer.
 
-    Identifies dense subgraphs where a group of companies
-    alternates wins in bids from the same buyer.
+    Adapted semantics (PR-D-02, section 3): there is no contract→buyer
+    edge, so the buyer is the ``buyer.siafi_code`` attribute of the
+    ``contracts`` document. For each buyer b, let S_b be the set of
+    suppliers with >= ``min_wins`` ``won`` edges (suppliers → contracts)
+    to contracts of b. The output is every pair {s1, s2} ⊆ S_b, s1 ≠ s2.
 
     Args:
         db: ArangoDB connection. If None, creates a new one.
-        min_wins: Minimum number of wins to consider a pattern.
+        min_wins: Minimum number of wins per (buyer, supplier) to be eligible.
 
     Returns:
-        List of sets of CNPJs in potential collusion.
+        List of pairs (sets of two CNPJs), sorted deterministically.
     """
     if db is None:
         db = get_capiba_db()
 
     query = """
-        FOR bid IN bids
-            LET winners = (
-                FOR f IN INBOUND bid GRAPH @graphName
-                    RETURN f._key
-            )
-            FILTER LENGTH(winners) >= 2
-            FOR a IN winners
-                FOR b IN winners
-                    FILTER a < b
-                    COLLECT pair = { a, b } INTO occurrences
-                    FILTER LENGTH(occurrences) >= @minWins
-                    RETURN [pair.a, pair.b]
+        FOR c IN contracts
+            FILTER c.buyer.siafi_code != null
+            FOR s IN INBOUND c won
+                COLLECT buyer = c.buyer.siafi_code, supplier = s._key INTO wins
+                FILTER LENGTH(wins) >= @minWins
+                RETURN {buyer, supplier}
     """
 
-    bind_vars = {
-        "graphName": db.graph("capiba_graph").name,
-        "minWins": min_wins,
-    }
+    rows = execute_aql(db, query, {"minWins": min_wins})
 
-    results = execute_aql(db, query, bind_vars)
-    suspects = [set(pair) for pair in results]
-    logger.info("Suspected collusion groups: %d", len(suspects))
-    return suspects
+    suppliers_by_buyer: dict[str, list[str]] = {}
+    for row in rows:
+        suppliers_by_buyer.setdefault(row["buyer"], []).append(row["supplier"])
+
+    pairs: list[set[str]] = []
+    for buyer in sorted(suppliers_by_buyer):
+        for s1, s2 in combinations(sorted(suppliers_by_buyer[buyer]), 2):
+            pairs.append({s1, s2})
+    pairs.sort(key=lambda pair: tuple(sorted(pair)))
+    logger.info("Suspected collusion pairs: %d", len(pairs))
+    return pairs
 
 
 def trace_ownership(
@@ -71,34 +73,39 @@ def trace_ownership(
 ) -> list[list[str]]:
     """Traces the ownership chain (beneficial ownership).
 
+    Adapted semantics (PR-D-02, section 3): simple paths (no repeated
+    vertex, cycles blocked via ``uniqueVertices: "path"``) OUTBOUND from
+    ``companies/<cnpj>`` over the ``owns`` edge collection, depth
+    1..``max_depth``.
+
     Args:
         cnpj: Input CNPJ (unformatted).
         max_depth: Maximum search depth.
         db: ArangoDB connection. If None, creates a new one.
 
     Returns:
-        List of ownership paths.
+        List of ownership paths (sequences of ``_key``, start vertex
+        included), sorted deterministically.
     """
     if db is None:
         db = get_capiba_db()
 
     query = """
-        WITH companies
-        FOR v, e, p IN 1..@maxDepth OUTBOUND CONCAT("companies/", @cnpj)
-            GRAPH @graphName
+        FOR v, e, p IN 1..@maxDepth OUTBOUND CONCAT("companies/", @cnpj) owns
+            OPTIONS {uniqueVertices: "path"}
             RETURN p.vertices[*]._key
     """
 
     bind_vars = {
         "cnpj": cnpj,
         "maxDepth": max_depth,
-        "graphName": db.graph("capiba_graph").name,
     }
 
-    paths = execute_aql(db, query, bind_vars)
-    logger.info("Ownership paths found: %d", len(paths))
+    rows = execute_aql(db, query, bind_vars)
     # The AQL query returns lists of vertex keys, not documents
-    return cast(list[list[str]], paths)
+    paths = sorted(cast(list[list[str]], [list(row) for row in rows]))
+    logger.info("Ownership paths found: %d", len(paths))
+    return paths
 
 
 def anomalous_geography(

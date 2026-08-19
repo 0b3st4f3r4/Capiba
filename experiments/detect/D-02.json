@@ -1,6 +1,6 @@
 {
   "id": "D-02",
-  "description": "Validação dos operadores de grafo (semântica adaptada: pares alternando vitórias won no mesmo comprador; cadeias owns simples) sobre população sintética com ground truth plantado. Ver docs/preregistrations/PR-D-02.md. ESBOÇO — revisado junto com o PR.",
+  "description": "Validação dos operadores de grafo (semântica adaptada: pares alternando vitórias won no mesmo comprador; cadeias owns simples) sobre população sintética com ground truth plantado. Ver docs/preregistrations/PR-D-02.md (aprovado; resultado em docs/results/R-D-02.md).",
   "requires_infra": "arangodb",
   "seeds": [
     7,
