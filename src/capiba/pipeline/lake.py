@@ -69,6 +69,7 @@ from capiba.config import (
 )
 from capiba.ingestion.cnpj import Company, Establishment, Partner
 from capiba.ingestion.normalizer import Contract
+from capiba.ingestion.sanctions import Sanction
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -185,11 +186,39 @@ PARTNERS_PARTITION_SPEC = PartitionSpec(
     PartitionField(source_id=8, field_id=1000, transform=IdentityTransform(), name="dt")
 )
 
+# Iceberg schema of the silver ``sanctions`` table (CEIS/CNEP lists of the
+# Portal da Transparência), partitioned by the ingestion date ``dt``.
+SANCTIONS_SCHEMA = Schema(
+    NestedField(1, "id", StringType(), required=True),
+    NestedField(2, "list_name", StringType(), required=True),
+    NestedField(3, "cnpj", StringType(), required=False),
+    NestedField(4, "cpf", StringType(), required=False),
+    NestedField(5, "sanctioned_name", StringType(), required=False),
+    NestedField(6, "uf", StringType(), required=False),
+    NestedField(7, "sanctioning_body", StringType(), required=False),
+    NestedField(8, "sanction_type", StringType(), required=False),
+    NestedField(9, "legal_basis", StringType(), required=False),
+    NestedField(10, "process_number", StringType(), required=False),
+    NestedField(11, "start_date", DateType(), required=False),
+    NestedField(12, "end_date", DateType(), required=False),
+    NestedField(13, "publication_date", DateType(), required=False),
+    NestedField(14, "fine_amount", DecimalType(38, 2), required=False),
+    NestedField(15, "dt", DateType(), required=False),
+    NestedField(16, "ingested_at", TimestamptzType(), required=False),
+)
+
+SANCTIONS_PARTITION_SPEC = PartitionSpec(
+    PartitionField(
+        source_id=15, field_id=1000, transform=IdentityTransform(), name="dt"
+    )
+)
+
 # Silver entity tables: name -> (schema, partition spec, pydantic model).
 ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
     "companies": (COMPANIES_SCHEMA, COMPANIES_PARTITION_SPEC, Company),
     "establishments": (ESTABLISHMENTS_SCHEMA, ESTABLISHMENTS_PARTITION_SPEC, Establishment),
     "partners": (PARTNERS_SCHEMA, PARTNERS_PARTITION_SPEC, Partner),
+    "sanctions": (SANCTIONS_SCHEMA, SANCTIONS_PARTITION_SPEC, Sanction),
 }
 
 # Iceberg schema of the bronze ``raw_<source>`` tables: the full payload kept
@@ -525,14 +554,15 @@ def read_silver_contracts() -> list[dict[str, Any]]:
 def write_silver_entities(
     entity: str, rows: list[dict[str, Any]], run_date: date | None = None
 ) -> str:
-    """Appends CNPJ entity records to the entity's silver Iceberg table.
+    """Appends entity records to the entity's silver Iceberg table.
 
     Safe to call many times per run (one append per parsed chunk, so the
     dump never materializes in memory). Records are revalidated against
     the entity model, like ``write_silver`` does with ``Contract``.
 
     Args:
-        entity: Entity name (``companies``/``establishments``/``partners``).
+        entity: Entity name (``companies``/``establishments``/``partners``/
+            ``sanctions``).
         rows: Serializable entity records (one parsed chunk).
         run_date: Partition date; defaults to today (UTC).
 
@@ -569,7 +599,8 @@ def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
     silver/gold readers.
 
     Args:
-        entity: Entity name (``companies``/``establishments``/``partners``).
+        entity: Entity name (``companies``/``establishments``/``partners``/
+            ``sanctions``).
 
     Yields:
         Lists of entity rows as dicts (one list per Arrow record batch).

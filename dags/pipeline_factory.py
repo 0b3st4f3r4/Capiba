@@ -7,6 +7,7 @@ scheduler can retry failures independently:
 
 - one ``crawl_<source>`` task per source
 - ``normalize`` and ``validate`` for ``contracts_default`` formulas
+- ``normalize_<source>`` for ``file_dump``/``entities_collect`` formulas
 - one ``destination_<name>`` task per destination
 - ``dbt_run`` / ``detect`` for declared post steps
 
@@ -25,6 +26,10 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk.definitions.asset import Asset
 
+from capiba.pipeline.entity_tasks import (
+    task_normalize_entities,
+    task_silver_entities_summary,
+)
 from capiba.pipeline.openlineage import register_capiba_openlineage
 from capiba.pipeline.registry import DUMP_PARSER_REGISTRY
 from capiba.pipeline.spec import PipelineSpec, load_spec
@@ -64,9 +69,14 @@ SOURCE_INLETS = {
     "federal_revenue": Asset(uri="capiba://source/federal_revenue"),
     # In-cluster metrics-server API (`kubectl top` outside the cluster).
     "pod_usage": Asset(uri="capiba://source/pod_usage"),
+    # CEIS/CNEP sanction lists of the Portal da Transparência.
+    "ceis": Asset(uri="capiba://source/ceis"),
+    "cnep": Asset(uri="capiba://source/cnep"),
 }
 
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
+# Silver sanctions table (entities_collect normalize).
+SILVER_SANCTIONS = Asset(uri="capiba://silver/sanctions")
 # Silver CNPJ entity tables (file_dump normalize) and their graph load.
 SILVER_CNPJ_ENTITIES = [
     Asset(uri=f"capiba://silver/{entity}")
@@ -117,6 +127,8 @@ def _outlets(spec: PipelineSpec) -> list[Asset]:
     if "lake_silver" in destination_names:
         if spec.formula == "file_dump":
             outlets.extend(SILVER_CNPJ_ENTITIES)
+        elif spec.formula == "entities_collect":
+            outlets.append(SILVER_SANCTIONS)
         else:
             outlets.append(SILVER_CONTRACTS)
     if "arangodb_graph" in destination_names:
@@ -225,6 +237,25 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                 new_tail.append(normalize)
             intermediate_tail = new_tail
 
+        if spec.formula == "entities_collect":
+            # Normalize each crawled entity source into its silver table —
+            # one granular task per source (the registry cross-validation
+            # guarantees every source has an entity normalizer).
+            new_tail = []
+            for src_task, source in zip(source_tasks, spec.sources, strict=True):
+                normalize = PythonOperator(
+                    task_id=_normalize_dump_task_id(source.name),
+                    python_callable=partial(
+                        task_normalize_entities,
+                        source_name=source.name,
+                        spec_path=str(spec_path),
+                    ),
+                    outlets=shared_outlets,
+                )
+                src_task >> normalize
+                new_tail.append(normalize)
+            intermediate_tail = new_tail
+
         if spec.formula == "contracts_default":
             normalize = PythonOperator(
                 task_id="normalize",
@@ -253,14 +284,22 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
         for dest in spec.destinations:
             if dest.name == "gold_report":
                 continue
+            if spec.formula == "entities_collect" and dest.name == "lake_silver":
+                # The silver writes happened in the normalize_<source> tasks;
+                # the destination only reports the collected entity counts.
+                python_callable = partial(
+                    task_silver_entities_summary, spec_path=str(spec_path)
+                )
+            else:
+                python_callable = partial(
+                    task_destination,
+                    destination_name=dest.name,
+                    spec_path=str(spec_path),
+                )
             destination_tasks.append(
                 PythonOperator(
                     task_id=_destination_task_id(dest.name),
-                    python_callable=partial(
-                        task_destination,
-                        destination_name=dest.name,
-                        spec_path=str(spec_path),
-                    ),
+                    python_callable=python_callable,
                     outlets=shared_outlets,
                 )
             )

@@ -65,6 +65,7 @@ class TestLoadSpec:
             "daily_contracts",
             "monthly_federal_revenue",
             "hourly_pod_usage",
+            "weekly_sanctions",
         }
         daily = specs["daily_contracts"]
         assert daily.name == "daily_ingestion"
@@ -77,6 +78,10 @@ class TestLoadSpec:
         assert hourly.schedule == "7 * * * *"
         assert hourly.formula == "metrics_collect"
         assert [s.name for s in hourly.sources] == ["pod_usage"]
+        weekly = specs["weekly_sanctions"]
+        assert weekly.schedule == "22 3 * * 2"
+        assert weekly.formula == "entities_collect"
+        assert [s.name for s in weekly.sources] == ["ceis", "cnep"]
 
     def test_string_shorthand(self, tmp_path: Path) -> None:
         """Plain strings are accepted as shorthand for name-only entries."""
@@ -294,6 +299,56 @@ destinations: [lake_bronze]
         )
 
         with pytest.raises(SpecError, match="has no record fetcher"):
+            load_spec(path)
+
+    def test_entities_collect_valid(self, tmp_path: Path) -> None:
+        """The real CEIS/CNEP sources validate against entities_collect."""
+        path = _write(
+            tmp_path,
+            """\
+name: entities_ok
+window: all
+sources: [ceis, cnep]
+formula: entities_collect
+destinations: [lake_bronze, lake_silver]
+""",
+        )
+
+        spec = load_spec(path)
+
+        assert spec.formula == "entities_collect"
+        assert [s.name for s in spec.sources] == ["ceis", "cnep"]
+
+    def test_entities_formula_requires_record_source(self, tmp_path: Path) -> None:
+        """entities_collect with a dump-only source fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_entities
+window: all
+sources: [federal_revenue]
+formula: entities_collect
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="has no record fetcher"):
+            load_spec(path)
+
+    def test_entities_formula_requires_entity_normalizer(self, tmp_path: Path) -> None:
+        """entities_collect with a source without entity normalizer fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_entities_normalizer
+window: all
+sources: [mock_pncp]
+formula: entities_collect
+destinations: [lake_silver]
+""",
+        )
+
+        with pytest.raises(SpecError, match="has no registered entity normalizer"):
             load_spec(path)
 
     def test_name_pattern(self, tmp_path: Path) -> None:

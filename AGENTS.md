@@ -78,11 +78,12 @@ evidence, db, api, notification, pipeline, config, transformations). DAGs em
 destinos e post steps, sem código Python) resolvidos pelos registries de
 `src/capiba/pipeline/registry.py` e executados pelo runner
 (`src/capiba/pipeline/runner.py`, fórmulas `contracts_default`,
-`file_dump` e `metrics_collect`); `dags/pipeline_factory.py` gera uma DAG
+`file_dump`, `metrics_collect` e `entities_collect`); `dags/pipeline_factory.py` gera uma DAG
 por spec no parse do
 Airflow (`daily_ingestion` a partir de `daily_contracts.yaml`,
 `monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
-`hourly_pod_usage` a partir de `hourly_pod_usage.yaml`).
+`hourly_pod_usage` a partir de `hourly_pod_usage.yaml`,
+`weekly_sanctions` a partir de `weekly_sanctions.yaml`).
 A fórmula `file_dump`, quando a spec declara `lake_silver`/`arangodb_graph`
 e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
 `src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
@@ -91,6 +92,12 @@ tabelas silver Iceberg `companies`/`establishments`/`partners`
 (opt-in via `FEDERAL_REVENUE_FILES`), e o destino `arangodb_graph` carrega
 os vértices `companies`/`partners` e arestas `partner_of` no grafo
 (`bulk_upsert_cnpj`, em lote, a partir do silver).
+A fórmula `entities_collect` cobre listas de entidades snapshot (fontes
+`ceis`/`cnep` do Portal da Transparência — crawler `fetch_sanctions`,
+modelo `Sanction` em `src/capiba/ingestion/sanctions.py`): etapa
+`normalize_<fonte>` por fonte escreve na tabela silver da entidade
+registrada no `ENTITY_NORMALIZER_REGISTRY` (hoje `sanctions`); os wrappers
+Airflow dessa fórmula vivem em `src/capiba/pipeline/entity_tasks.py`.
 `lake_maintenance.py` (semanal: expire_snapshots + optimize via Trino)
 permanece uma DAG imperativa. Transformações nomeadas ficam em
 `src/capiba/transformations/` (um módulo por transformação, expondo

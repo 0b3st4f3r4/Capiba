@@ -30,9 +30,13 @@ from capiba.ingestion.crawler_pncp import fetch_contracts as pncp_fetch_contract
 from capiba.ingestion.crawler_transparency import (
     fetch_contracts as transparency_fetch_contracts,
 )
+from capiba.ingestion.crawler_transparency import (
+    fetch_sanctions,
+)
 from capiba.ingestion.mock import mock_pncp, mock_transparency
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.pod_usage import fetch_pod_usage
+from capiba.ingestion.sanctions import Sanction
 from capiba.quality.validators import CONTRACT_RULES, ValidationRule
 
 if TYPE_CHECKING:
@@ -103,6 +107,20 @@ def _fetch_pod_usage(
     return fetch_pod_usage(**params)
 
 
+def _fetch_ceis(
+    start: date | None, end: date | None, **params: Any
+) -> list[dict[str, Any]]:
+    """CEIS sanction list: full snapshot; ignores the window."""
+    return fetch_sanctions("ceis", **params)
+
+
+def _fetch_cnep(
+    start: date | None, end: date | None, **params: Any
+) -> list[dict[str, Any]]:
+    """CNEP sanction list: full snapshot; ignores the window."""
+    return fetch_sanctions("cnep", **params)
+
+
 SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pncp": SourceDef(fetch=_fetch_pncp),
     "transparency": SourceDef(fetch=_fetch_transparency),
@@ -110,6 +128,8 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
     "mock_pncp": SourceDef(fetch=_fetch_mock_pncp),
     "mock_transparency": SourceDef(fetch=_fetch_mock_transparency),
     "pod_usage": SourceDef(fetch=_fetch_pod_usage),
+    "ceis": SourceDef(fetch=_fetch_ceis),
+    "cnep": SourceDef(fetch=_fetch_cnep),
 }
 
 # Normalizer per source: raw record -> unified Contract. Mock sources reuse
@@ -123,6 +143,27 @@ NORMALIZER_REGISTRY: dict[str, Callable[[dict[str, Any]], Contract]] = {
 
 RULESET_REGISTRY: dict[str, list[ValidationRule]] = {
     "contract_rules": CONTRACT_RULES,
+}
+
+
+@dataclass(frozen=True)
+class EntityNormalizerDef:
+    """Maps an entity source to its silver table and record normalizer.
+
+    Used by the ``entities_collect`` formula: ``entity`` is the silver
+    entity table (see ``capiba.pipeline.lake.ENTITY_TABLES``) and
+    ``normalize`` validates one raw record into the entity model.
+    """
+
+    entity: str
+    normalize: Callable[[dict[str, Any]], Any]
+
+
+# Entity normalizer per source (entities_collect formula): the CEIS/CNEP
+# sanction lists both land in the silver ``sanctions`` table.
+ENTITY_NORMALIZER_REGISTRY: dict[str, EntityNormalizerDef] = {
+    "ceis": EntityNormalizerDef(entity="sanctions", normalize=Sanction.from_ceis),
+    "cnep": EntityNormalizerDef(entity="sanctions", normalize=Sanction.from_cnep),
 }
 
 # Streaming parser per dump source: parse(zip_path, chunk_size) yields

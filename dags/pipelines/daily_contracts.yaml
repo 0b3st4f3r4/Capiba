@@ -10,8 +10,7 @@ sources:
   - name: pncp # crawls the previous day (pipeline default window)
   - name: transparency
     # The Transparency Portal is crawled for the whole current month
-    # (daily incremental re-fetch), overriding the pipeline default —
-    # mirrors the legacy task_crawl_transparency behavior.
+    # (daily incremental re-fetch), overriding the pipeline default.
     window: current_month
 formula: contracts_default
 validate:

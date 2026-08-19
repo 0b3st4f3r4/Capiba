@@ -40,10 +40,12 @@ from capiba.pipeline import lake
 from capiba.pipeline.registry import (
     DESTINATION_REGISTRY,
     DUMP_PARSER_REGISTRY,
+    ENTITY_NORMALIZER_REGISTRY,
     FORMULA_REGISTRY,
     NORMALIZER_REGISTRY,
     RULESET_REGISTRY,
     SOURCE_REGISTRY,
+    EntityNormalizerDef,
     get_transformation,
 )
 from capiba.pipeline.tasks import (
@@ -270,11 +272,10 @@ def _formula_file_dump(
 ) -> FormulaResult:
     """Formula: download dump files -> bronze files + manifest (+ normalize).
 
-    Mirrors the legacy ``task_crawl_federal_revenue``: the reference month
-    comes from the (month-aligned) window, files are downloaded to a temp
-    dir, uploaded to the bronze bucket and recorded in a manifest. An empty
-    manifest fails the run loudly — a missing share must not be recorded as
-    a successful run.
+    The reference month comes from the (month-aligned) window, files are
+    downloaded to a temp dir, uploaded to the bronze bucket and recorded in
+    a manifest. An empty manifest fails the run loudly — a missing share
+    must not be recorded as a successful run.
 
     When the spec declares the ``lake_silver``/``arangodb_graph``
     destinations and the source has a registered dump parser, a streaming
@@ -423,6 +424,81 @@ def _formula_metrics_collect(
     return result
 
 
+def _formula_entities_collect(
+    spec: PipelineSpec,
+    execution_date: date,
+    steps: list[StepMetrics],
+    window_override: DateRange | None = None,
+) -> FormulaResult:
+    """Formula: crawl -> normalize_<source> into a silver entity table.
+
+    Entity sources (e.g. the CEIS/CNEP sanction lists) are full snapshots
+    without a temporal window: raw payloads flow to the bronze destination
+    and each source gets a granular ``normalize_<source>`` step that
+    validates the records against the entity model registered in
+    ``ENTITY_NORMALIZER_REGISTRY`` and appends them to the silver entity
+    table. Silver writes are best-effort (logged warnings counted as step
+    errors), like the file_dump streaming normalize.
+    """
+    result = FormulaResult()
+
+    for source in spec.sources:
+        fetch = SOURCE_REGISTRY[source.name].fetch
+        if fetch is None:  # guarded by spec validation
+            raise ValueError(f"Source '{source.name}' has no record fetcher")
+
+        def _crawl(
+            fetch: Callable[..., list[dict[str, Any]]] = fetch,
+            source_params: dict[str, Any] = source.params,
+        ) -> tuple[list[dict[str, Any]], int, int]:
+            records = fetch(None, None, **source_params)
+            return records, len(records), 0
+
+        result.raw[source.name] = _run_step(steps, f"crawl_{source.name}", _crawl)
+
+        normalizer_def = ENTITY_NORMALIZER_REGISTRY[source.name]
+
+        def _normalize_entities(
+            normalizer_def: EntityNormalizerDef = normalizer_def,
+            source_name: str = source.name,
+        ) -> tuple[dict[str, int], int, int]:
+            rows: list[dict[str, Any]] = []
+            errors = 0
+            for raw in result.raw[source_name]:
+                try:
+                    rows.append(
+                        normalizer_def.normalize(raw).model_dump(mode="json")
+                    )
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "Failed to normalize %s record: %s", source_name, exc
+                    )
+            try:
+                lake.write_silver_entities(
+                    normalizer_def.entity, rows, run_date=execution_date
+                )
+            except Exception as exc:
+                errors += 1
+                logger.warning(
+                    "Failed to write %s rows to the silver layer: %s",
+                    normalizer_def.entity,
+                    exc,
+                )
+            return {normalizer_def.entity: len(rows)}, len(rows), errors
+
+        counts = _run_step(
+            steps,
+            f"normalize_{source.name}",
+            _normalize_entities,
+            rows_in=len(result.raw[source.name]),
+        )
+        result.entities[source.name] = counts
+        result.outputs[f"{source.name}_entities"] = counts
+
+    return result
+
+
 def _dest_lake_bronze(
     spec: PipelineSpec, execution_date: date, result: FormulaResult
 ) -> tuple[dict[str, Any], int | None, int]:
@@ -450,11 +526,11 @@ def _dest_lake_silver(
 ) -> tuple[dict[str, Any], int | None, int]:
     """Best-effort: normalized contracts to the silver Iceberg table.
 
-    For the file_dump formula the streaming entity writes already happened
-    in the ``normalize_<source>`` step, so this destination only reports
-    the collected entity counts.
+    For the file_dump/entities_collect formulas the entity writes already
+    happened in the ``normalize_<source>`` steps, so this destination only
+    reports the collected entity counts.
     """
-    if spec.formula == "file_dump":
+    if spec.formula in ("file_dump", "entities_collect"):
         return {"entities": result.entities}, None, 0
     try:
         table = lake.write_silver(result.contracts, run_date=execution_date)
@@ -602,6 +678,7 @@ FORMULA_REGISTRY.update(
         "contracts_default": _formula_contracts_default,
         "file_dump": _formula_file_dump,
         "metrics_collect": _formula_metrics_collect,
+        "entities_collect": _formula_entities_collect,
     }
 )
 DESTINATION_REGISTRY.update(

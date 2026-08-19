@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from capiba.pipeline.registry import (
     DESTINATION_REGISTRY,
+    ENTITY_NORMALIZER_REGISTRY,
     FORMULA_REGISTRY,
     NORMALIZER_REGISTRY,
     RULESET_REGISTRY,
@@ -145,6 +146,16 @@ def _cross_validate(spec: PipelineSpec, origin: str) -> None:
                 f"source '{source.name}' has no record fetcher;"
                 " formula 'metrics_collect' requires one"
             )
+        elif spec.formula == "entities_collect":
+            if source_def.fetch is None:
+                errors.append(
+                    f"source '{source.name}' has no record fetcher;"
+                    " formula 'entities_collect' requires one"
+                )
+            if source.name not in ENTITY_NORMALIZER_REGISTRY:
+                errors.append(
+                    f"source '{source.name}' has no registered entity normalizer"
+                )
 
     if spec.formula not in FORMULA_REGISTRY:
         errors.append(

@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 15_000  # documented maximum
 
+# Sanction lists exposed by the API (GET /ceis and GET /cnep).
+SANCTION_LISTS: tuple[str, ...] = ("ceis", "cnep")
+
 
 def _headers() -> dict[str, str]:
     """Returns the required headers for the Portal da Transparência API."""
@@ -141,6 +144,56 @@ def fetch_contracts(
         )
 
         results.extend(_fetch_page(url, params))
+
+    return results
+
+
+def fetch_sanctions(
+    list_name: str,
+    cnpj: str | None = None,
+    max_pages: int | None = None,
+) -> list[dict[str, Any]]:
+    """Fetches a sanction list (CEIS/CNEP), paginating until an empty page.
+
+    The lists are full snapshots (no temporal filter); ``pagina`` starts at
+    1 and the walk stops on the first empty page. A missing
+    ``TRANSPARENCY_API_KEY`` raises ``RuntimeError`` like the other
+    endpoints of this crawler.
+
+    Args:
+        list_name: Which list to fetch (``ceis`` or ``cnep``).
+        cnpj: Optional ``cnpjSancionado`` filter.
+        max_pages: Optional cap on the number of pages (tests/backfills).
+
+    Returns:
+        List of raw sanction records.
+
+    Raises:
+        ValueError: If the list name is unknown.
+        RuntimeError: If the API key is not configured.
+        requests.HTTPError: On non-transient API errors.
+    """
+    if list_name not in SANCTION_LISTS:
+        raise ValueError(
+            f"Unknown sanction list '{list_name}' (known: {SANCTION_LISTS})"
+        )
+
+    url = f"{TRANSPARENCY_API_URL}/{list_name}"
+    results: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        params: dict[str, Any] = {"pagina": page}
+        if cnpj:
+            params["cnpjSancionado"] = cnpj
+
+        logger.info("Fetching Transparency %s sanctions: page %d", list_name, page)
+        records = _fetch_page(url, params)
+        if not records:
+            break
+        results.extend(records)
+        if max_pages is not None and page >= max_pages:
+            break
+        page += 1
 
     return results
 

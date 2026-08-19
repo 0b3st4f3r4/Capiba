@@ -172,6 +172,15 @@ o registry é a fronteira entre os dois mundos.
 - **`metrics_collect`**: snapshot pontual de métricas (ex.: `pod_usage`)
   direto para os destinos, sem normalização nem validação; a janela é
   ignorada.
+- **`entities_collect`**: snapshot de uma lista de entidades (ex.: as
+  listas de sanções CEIS/CNEP do Portal da Transparência, fontes `ceis` e
+  `cnep`) — crawl por fonte (a janela é ignorada: a lista é um retrato
+  corrente) → etapa `normalize_<fonte>` por fonte, que valida os registros
+  contra o modelo da entidade registrado no `ENTITY_NORMALIZER_REGISTRY`
+  e escreve na tabela silver da entidade (best-effort, como no file_dump).
+  O destino `lake_silver` apenas reporta as contagens; `lake_bronze` guarda
+  o payload bruto (`raw_ceis`/`raw_cnep`). A validação cruzada da spec exige
+  fetcher e entrada no `ENTITY_NORMALIZER_REGISTRY` para cada fonte.
 
 ### Janelas temporais
 
@@ -226,6 +235,14 @@ de entrada/saída, erros) na tabela gold `platform_metrics`.
   uso de CPU/memória dos pods do namespace (fórmula `metrics_collect`,
   fonte `pod_usage`), insumo dos marts `pod_usage_hourly` e
   `platform_cost_daily`.
+- **`weekly_sanctions`** (`weekly_sanctions.yaml`, `22 3 * * 2`): coleta as
+  listas de sanções CEIS (inidôneas/suspensas) e CNEP (empresas punidas) do
+  Portal da Transparência (fórmula `entities_collect`, fontes `ceis`/`cnep`,
+  crawler `fetch_sanctions` em `crawler_transparency.py`, modelo `Sanction`
+  em `src/capiba/ingestion/sanctions.py`) — payloads brutos nas tabelas
+  bronze `raw_ceis`/`raw_cnep` e registros normalizados na tabela silver
+  `sanctions`. Requer `TRANSPARENCY_API_KEY`; é o insumo de ingestão de um
+  futuro sinal "fornecedor sancionado" (pendente de pré-registro PR-D-03).
 - **`lake_maintenance`** (`dags/lake_maintenance.py`, semanal): única DAG
   imperativa restante — executa `expire_snapshots` (retenção de 7 dias) e
   `optimize` (compactação) em todas as tabelas Iceberg dos catálogos

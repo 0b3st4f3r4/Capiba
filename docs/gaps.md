@@ -28,7 +28,7 @@ Detalhes (caminhos, linhas, evidências) em cada item.
 
 - [x] **Conectar profiling/monitoramento ao pipeline** — `task_validate_pipeline` (`pipeline/tasks.py`) alimenta o `QualityMonitor` best-effort: profile do lote (`profile_dataset` → baseline + check de thresholds) e métricas do lote (total, duplicates, normalization_errors, falhas de quality_rules por severidade) via `record_batch`; degrada graciosamente sem Redis
 - [x] **Completar lineage OpenLineage** — `GOLD_MARTS` (`dags/pipeline_factory.py`) com `pod_usage_hourly`/`platform_cost_daily`; serving materializado no PostgreSQL DWH com outlets `capiba://dwh/serving_supplier_stats`/`capiba://dwh/serving_municipality_daily`; `SOURCE_INLETS` com `pod_usage` (`capiba://source/pod_usage`, metrics-server)
-- [ ] **Novos endpoints de fontes já analisados** — Transparência: `ceis`, `cnep` (sanções), `licitacoes`, `despesas/documentos`; PNCP: `atas`, `contratacoes/publicacao`, `contratos/atualizacao` (pré-registro PR-D-* para os que virarem sinal)
+- [~] **Novos endpoints de fontes já analisados** — Transparência: `ceis`/`cnep` (sanções) **feitos** — pipeline semanal `weekly_sanctions` (fórmula `entities_collect`, bronze `raw_ceis`/`raw_cnep` + silver `sanctions`, modelo `Sanction`); o sinal "fornecedor sancionado" depende de pré-registro (PR-D-03). Seguem abertos: `licitacoes`, `despesas/documentos` (Transparência) e `atas`, `contratacoes/publicacao`, `contratos/atualizacao` (PNCP) — pré-registro PR-D-* para os que virarem sinal
 - [x] **Testes dbt irregulares** — `unique`+`not_null` em `contracts.id` (silver) e `unique` em `contracts_by_agency.siafi_code`; testes de coluna (`not_null` em dt/ingested_at/payload_json) em `raw_pod_usage` e `raw_federal_revenue`; unicidade composta de `pod_usage_hourly` (hour, pod) e `platform_cost_daily` (dt, pod) via data tests singulares em `dbt/tests/` (dbt_utils não é dependência do projeto — sem `dbt/packages.yml` — então o teste nativo foi usado em vez de `unique_combination_of_columns`)
 
 ## Baixo — código e docs
@@ -40,7 +40,7 @@ Detalhes (caminhos, linhas, evidências) em cada item.
   - [x] `docs/api.md` — rotas do portal SSO documentadas (`/`, `/auth/login`, `/auth/callback`, `/auth/logout`); string do 503 alinhada (`ArangoDB database unavailable`)
 - [ ] **Limpezas de código:**
   - [x] Hack `_Result` local em `pipeline/tasks.py` — reutilizar `FormulaResult`
-  - [ ] Duplicação download/manifest/sha256 entre `task_crawl_federal_revenue` e `task_download_source`
+  - [x] Duplicação download/manifest/sha256 entre `task_crawl_federal_revenue` e `task_download_source` — removido o legado imperativo (`task_crawl_federal_revenue` e demais `task_*` sem chamador, de `pipeline/tasks.py`); o fluxo declarativo (`task_download_source`) é o único caminho
   - [x] SMS declarado mas não suportado (`notification/dispatcher.py`) — removido do enum `NotificationChannel`
   - [x] Mover testes de `db/vectors.py`/`db/search.py` de `test_detection.py` para `test_db.py`
   - [x] Teste dedicado para `config.py` e `transformations/filter_by_min_value.py`

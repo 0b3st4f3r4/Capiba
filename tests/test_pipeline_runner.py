@@ -816,3 +816,160 @@ destinations: [{destinations}]
                 }
             }
         }
+
+
+def _ceis_raw(sanction_id: int = 1) -> dict[str, Any]:
+    """A minimal raw CEIS payload (documented CeisDTO shape)."""
+    return {
+        "id": sanction_id,
+        "dataInicioSancao": "01/01/2025",
+        "dataFimSancao": "01/01/2027",
+        "tipoSancao": {"descricaoPortal": "Inidoneidade"},
+        "orgaoSancionador": {"nome": "MINISTERIO DA FAZENDA", "siglaUf": "DF"},
+        "sancionado": {
+            "nome": "EMPRESA SANCIONADA LTDA",
+            "codigoFormatado": "12.345.678/0001-90",
+        },
+    }
+
+
+class TestEntitiesCollectFormula:
+    """Tests of the entities_collect formula (CEIS/CNEP sanction lists)."""
+
+    def _spec(self, destinations: list[str]) -> PipelineSpec:
+        return PipelineSpec.model_validate(
+            {
+                "name": "test_entities",
+                "window": "all",
+                "sources": ["ceis", "cnep"],
+                "formula": "entities_collect",
+                "destinations": destinations,
+            }
+        )
+
+    def _fake_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Replaces the CEIS/CNEP fetches with offline fakes."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "ceis",
+            SourceDef(fetch=lambda *_a, **_k: [_ceis_raw(1), _ceis_raw(2)]),
+        )
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "cnep",
+            SourceDef(fetch=lambda *_a, **_k: [_ceis_raw(3)]),
+        )
+
+    def test_collect_to_silver(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CEIS/CNEP records flow to the bronze payloads and silver table."""
+        self._fake_sources(monkeypatch)
+
+        report = run_pipeline(
+            self._spec(["lake_bronze", "lake_silver"]), RUN_DATE
+        )
+
+        assert report.success is True
+        assert [s.name for s in report.steps] == [
+            "crawl_ceis",
+            "normalize_ceis",
+            "crawl_cnep",
+            "normalize_cnep",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+        ]
+        normalize = report.steps[1]
+        assert normalize.rows_in == 2
+        assert normalize.rows_out == 2
+        assert normalize.errors == 0
+
+        assert report.outputs["ceis_entities"] == {"sanctions": 2}
+        assert report.outputs["cnep_entities"] == {"sanctions": 1}
+        silver = report.outputs["destination_lake_silver"]
+        assert silver["entities"] == {
+            "ceis": {"sanctions": 2},
+            "cnep": {"sanctions": 1},
+        }
+
+        rows = [r for batch in lake.read_silver_entities("sanctions") for r in batch]
+        assert len(rows) == 3
+        assert {r["list_name"] for r in rows} == {"ceis", "cnep"}
+        assert all(r["cnpj"] == "12345678000190" for r in rows)
+
+        # The raw payloads landed in the bronze raw tables
+        bronze = report.outputs["destination_lake_bronze"]
+        assert bronze["sources"] == ["ceis", "cnep"]
+        catalog = lake.get_catalog("bronze")
+        raw_ceis = catalog.load_table("capiba.raw_ceis").scan().to_arrow()
+        assert raw_ceis.num_rows == 1
+
+    def test_normalization_errors_are_counted(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Records that fail normalization are skipped and counted."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "ceis",
+            SourceDef(fetch=lambda *_a, **_k: [_ceis_raw(1), "not-a-dict"]),
+        )
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "cnep", SourceDef(fetch=lambda *_a, **_k: [])
+        )
+
+        report = run_pipeline(self._spec(["lake_silver"]), RUN_DATE)
+
+        assert report.success is True
+        normalize = report.steps[1]
+        assert normalize.rows_out == 1
+        assert normalize.errors == 1
+        rows = [r for batch in lake.read_silver_entities("sanctions") for r in batch]
+        assert len(rows) == 1
+
+    def test_silver_write_failure_is_best_effort(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failing silver write is counted, not fatal to the run."""
+        self._fake_sources(monkeypatch)
+        monkeypatch.setattr(
+            lake,
+            "write_silver_entities",
+            MagicMock(side_effect=RuntimeError("lake down")),
+        )
+
+        report = run_pipeline(self._spec(["lake_silver"]), RUN_DATE)
+
+        assert report.success is True
+        for step in report.steps:
+            if step.name.startswith("normalize_"):
+                assert step.errors == 1
+
+    def test_source_failure_fails_run(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failing sanction source raises PipelineRunError."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "ceis",
+            SourceDef(
+                fetch=MagicMock(side_effect=ConnectionError("transparency down"))
+            ),
+        )
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "cnep", SourceDef(fetch=lambda *_a, **_k: [])
+        )
+
+        with pytest.raises(PipelineRunError, match="transparency down"):
+            run_pipeline(self._spec(["lake_bronze"]), RUN_DATE)

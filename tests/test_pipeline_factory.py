@@ -282,3 +282,82 @@ class TestRealPipelines:
         assert "capiba://bronze/raw_pod_usage" in outlet_uris
         assert "capiba://gold/pod_usage_hourly" in outlet_uris
         assert "capiba://gold/platform_cost_daily" in outlet_uris
+
+ENTITIES_SPEC = """\
+name: factory_entities
+schedule: "22 3 * * 2"
+window: all
+sources:
+  - name: ceis
+  - name: cnep
+formula: entities_collect
+destinations:
+  - lake_bronze
+  - lake_silver
+  - gold_report
+"""
+
+
+class TestEntitiesCollectFactory:
+    """Tests for the entities_collect formula in the DAG factory."""
+
+    def test_generates_granular_tasks(
+        self, factory, tmp_path: Path
+    ) -> None:
+        """An entities_collect spec gets crawl + normalize tasks per source."""
+        (tmp_path / "entities.yaml").write_text(ENTITIES_SPEC, encoding="utf-8")
+
+        dags = factory.build_dags(tmp_path)
+        dag = dags["factory_entities"]
+
+        # The single-task simplification must never return.
+        assert "run" not in {t.task_id for t in dag.tasks}
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_ceis",
+            "crawl_cnep",
+            "normalize_ceis",
+            "normalize_cnep",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_gold_report",
+        }
+
+        # Dependencies: crawl_<source> -> normalize_<source> -> destinations
+        assert dag.get_task("crawl_ceis").downstream_task_ids == {"normalize_ceis"}
+        assert dag.get_task("crawl_cnep").downstream_task_ids == {"normalize_cnep"}
+        assert dag.get_task("normalize_ceis").downstream_task_ids == {
+            "destination_lake_bronze",
+            "destination_lake_silver",
+        }
+        assert dag.get_task("normalize_cnep").downstream_task_ids == {
+            "destination_lake_bronze",
+            "destination_lake_silver",
+        }
+        assert dag.get_task("destination_lake_bronze").downstream_task_ids == {
+            "destination_gold_report"
+        }
+
+        # Lineage assets: source inlets + bronze/sanctions/gold outlets
+        crawl = dag.get_task("crawl_ceis")
+        assert {a.uri for a in crawl.inlets} == {"capiba://source/ceis"}
+        outlet_uris = {a.uri for a in crawl.outlets}
+        assert "capiba://bronze/raw_ceis" in outlet_uris
+        assert "capiba://bronze/raw_cnep" in outlet_uris
+        assert "capiba://silver/sanctions" in outlet_uris
+        assert "capiba://silver/contracts" not in outlet_uris
+        assert "capiba://gold/reports/factory_entities" in outlet_uris
+
+    def test_real_weekly_sanctions_dag(self, factory) -> None:
+        """The shipped weekly_sanctions spec produces a granular DAG."""
+        dag = factory.weekly_sanctions
+
+        assert dag.schedule == "22 3 * * 2"
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_ceis",
+            "crawl_cnep",
+            "normalize_ceis",
+            "normalize_cnep",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_gold_report",
+        }

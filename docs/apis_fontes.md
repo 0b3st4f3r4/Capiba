@@ -65,7 +65,12 @@ https://api.portaldatransparencia.gov.br/api-de-dados
 
 - O crawler `crawler_transparency.py` envia o header `chave-api-dados` a partir da variável `TRANSPARENCY_API_KEY`.
 - A variável é injetada no chart Helm via `global.transparencyApiKey` (secret `capiba-secrets`).
-- **Próximo passo:** o usuário deve preencher `global.transparencyApiKey` em `charts/capiba/values.yaml` (ou a variável de ambiente `TRANSPARENCY_API_KEY`) e refazer o `helm upgrade`.
+- Os endpoints `GET /ceis` e `GET /cnep` já têm pipeline: a DAG `weekly_sanctions`
+  (spec `dags/pipelines/weekly_sanctions.yaml`, fórmula `entities_collect`)
+  coleta as duas listas semanalmente (`fetch_sanctions`, paginação até página
+  vazia), grava os payloads brutos nas tabelas bronze `raw_ceis`/`raw_cnep` e
+  os registros normalizados (modelo `Sanction`) na tabela silver `sanctions`.
+- **Próximo passo:** o usuário deve preencher `global.transparencyApiKey` em `charts/capiba/values.yaml` (ou a variável de ambiente `TRANSPARENCY_API_KEY`) e refazer o `helm upgrade`. Sem a chave, o pipeline falha com log claro.
 
 ---
 

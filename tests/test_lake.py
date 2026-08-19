@@ -429,6 +429,52 @@ def test_read_silver_entities_without_table(local_catalog: Path) -> None:
     assert list(lake.read_silver_entities("partners")) == []
 
 
+def _sanction_row(sanction_id: str = "ceis-1") -> dict[str, Any]:
+    """Builds a minimal Sanction-valid serializable record."""
+    return {
+        "id": sanction_id,
+        "list_name": "ceis",
+        "cnpj": "12345678000190",
+        "sanctioned_name": "EMPRESA SANCIONADA LTDA",
+        "uf": "DF",
+        "sanctioning_body": "MINISTERIO DA FAZENDA",
+        "sanction_type": "Inidoneidade - Legislação de Licitações",
+        "start_date": "2025-01-01",
+        "fine_amount": "1234.56",
+    }
+
+
+def test_write_silver_entities_sanctions_roundtrip_typed(local_catalog: Path) -> None:
+    """The silver sanctions table stores typed rows partitioned by dt."""
+    identifier = lake.write_silver_entities(
+        "sanctions", [_sanction_row()], run_date=RUN_DATE
+    )
+
+    assert identifier == "capiba.sanctions"
+    table = lake.get_catalog(config.ICEBERG_WAREHOUSE_SILVER).load_table(identifier)
+    rows = table.scan().to_arrow()
+    assert rows.num_rows == 1
+    assert rows.column("list_name")[0].as_py() == "ceis"
+    assert rows.column("start_date")[0].as_py() == date(2025, 1, 1)
+    assert rows.column("fine_amount")[0].as_py() == Decimal("1234.56")
+    assert rows.column("dt")[0].as_py() == RUN_DATE
+    assert [f.name for f in table.spec().fields] == ["dt"]
+
+
+def test_write_silver_entities_sanctions_skips_invalid(local_catalog: Path) -> None:
+    """Sanction rows failing the model (missing id/list_name) are skipped."""
+    lake.write_silver_entities(
+        "sanctions",
+        [{"cnpj": "123"}, _sanction_row("cnep-9")],
+        run_date=RUN_DATE,
+    )
+
+    table = lake.get_catalog(config.ICEBERG_WAREHOUSE_SILVER).load_table(
+        "capiba.sanctions"
+    )
+    assert table.scan().to_arrow().num_rows == 1
+
+
 def test_list_bronze_files_prefix(mock_client: MagicMock) -> None:
     """Bronze file listings use the <source>/files/dt=<date>/ prefix."""
     mock_client.list_objects.return_value = iter(

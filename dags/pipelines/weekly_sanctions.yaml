@@ -1,0 +1,18 @@
+# Weekly collection of the CEIS/CNEP sanction lists of the Portal da
+# Transparência (empresas inidôneas/suspensas e empresas punidas). The lists
+# are full snapshots (no temporal window): raw payloads land in the bronze
+# raw_ceis/raw_cnep tables and the normalized records in the silver
+# `sanctions` table — the input of a future "sanctioned supplier" signal
+# (pending pre-registration PR-D-03). Requires TRANSPARENCY_API_KEY.
+name: weekly_sanctions
+description: Weekly collection of the CEIS/CNEP sanction lists (Portal da Transparência)
+schedule: "22 3 * * 2" # Tuesdays 03:22 UTC — off-peak
+window: all # full snapshot; the window is ignored by the sources
+sources:
+  - name: ceis
+  - name: cnep
+formula: entities_collect
+destinations:
+  - lake_bronze # raw audit copy + raw_ceis/raw_cnep Iceberg tables
+  - lake_silver # silver sanctions table (writes in the normalize tasks)
+  - gold_report # run report in the gold bucket
