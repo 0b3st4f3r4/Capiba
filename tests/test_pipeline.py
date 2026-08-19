@@ -16,6 +16,7 @@ from capiba.pipeline.tasks import (
     persist_contracts,
     task_dbt_run,
     task_detect,
+    task_post_step,
 )
 
 
@@ -326,6 +327,36 @@ class TestTaskDbtRun:
 
         mock_run_dbt.assert_called_once_with("run")
         assert summary == {"dbt": "run", "project_dir": DBT_PROJECT_DIR}
+
+
+class TestTaskPostStep:
+    """Tests for the post-step dispatcher (backfill skip)."""
+
+    def test_skips_on_backfill_run(self) -> None:
+        """Backfill runs skip post steps (deferred to a final regular run)."""
+        from airflow.exceptions import AirflowSkipException
+
+        dag_run = MagicMock()
+        dag_run.run_type = "backfill"
+        with pytest.raises(AirflowSkipException, match="backfill"):
+            task_post_step("detect", "spec.yaml", dag_run=dag_run)
+
+    def test_dispatches_on_regular_run(self) -> None:
+        """Non-backfill runs dispatch the post step normally."""
+        dag_run = MagicMock()
+        dag_run.run_type = "manual"
+        with patch("capiba.pipeline.tasks.task_detect") as mock_detect:
+            mock_detect.return_value = {"signals": 0}
+            summary = task_post_step("detect", "spec.yaml", dag_run=dag_run)
+        assert summary == {"signals": 0}
+        mock_detect.assert_called_once()
+
+    def test_dispatches_without_dag_run(self) -> None:
+        """A missing dag_run in the context dispatches normally."""
+        with patch("capiba.pipeline.tasks.task_dbt_run") as mock_dbt:
+            mock_dbt.return_value = {"dbt": "run"}
+            summary = task_post_step("dbt_run", "spec.yaml")
+        assert summary == {"dbt": "run"}
 
 
 class TestRecordQualityBatch:

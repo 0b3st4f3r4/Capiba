@@ -102,6 +102,10 @@ Airflow dessa fórmula vivem em `src/capiba/pipeline/entity_tasks.py`.
 permanece uma DAG imperativa. Transformações nomeadas ficam em
 `src/capiba/transformations/` (um módulo por transformação, expondo
 `transform(records, **params)`).
+Post steps (`dbt_run`, `detect`) são **pulados em runs de backfill**
+(`task_post_step` levanta `AirflowSkipException` quando `run_type ==
+"backfill"` — reprocessam as tabelas inteiras, O(n²) e pesado em memória);
+após um backfill, dispare uma run regular para reconstruir marts e sinais.
 Alertas best-effort por e-mail (`src/capiba/notification/alerts.py`, wrapper
 síncrono do `NotificationDispatcher` async) disparam do `task_detect`
 (sinais ≥ `NOTIFICATION_ALERT_SCORE`, default 0.7) e do

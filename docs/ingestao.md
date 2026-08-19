@@ -120,6 +120,14 @@ ser acompanhado pela UI do Airflow ou consultando o estado das `dag_run`
 no metadata DB. O primeiro backfill de produção rodou em 2026-08-19
 (jan/2026 → ago/2026) para alimentar a calibração do PR-D-03.
 
+> **Post steps são pulados em runs de backfill.** `dbt_run` e `detect`
+> reprocessam as tabelas silver/gold inteiras, então rodá-los por dia
+> lógico é trabalho O(n²) e pesado em memória (OOMKills no backfill de
+> 2026-08-19). O `task_post_step` levanta `AirflowSkipException` quando o
+> `run_type` é `backfill`; ao final do backfill, dispare uma run regular
+> (`airflow dags trigger daily_ingestion`, ou aguarde a schedule diária)
+> para reconstruir os marts e os sinais sobre todo o acumulado.
+
 ## Pipelines declarativos (specs YAML)
 
 Os pipelines de ingestão são **declarativos**: cada um é uma spec YAML em

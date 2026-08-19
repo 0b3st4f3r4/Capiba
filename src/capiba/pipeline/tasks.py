@@ -727,6 +727,13 @@ def task_destination(
 def task_post_step(step_name: str, spec_path: str, **context: Any) -> dict[str, Any]:
     """Task: run a single post step declared in the pipeline spec.
 
+    Post steps are skipped on backfill runs (``run_type == "backfill"``):
+    ``dbt_run`` and ``detect`` reprocess the whole silver/gold tables, so
+    running them per backfilled day is O(n²) work and memory-heavy
+    (OOMKills observed in the 2026-08-19 backfill). A final regular run
+    after the backfill rebuilds the marts and signals over the
+    accumulated data.
+
     Args:
         step_name: Name of the post step (``dbt_run`` or ``detect``).
         spec_path: Path of the YAML pipeline spec.
@@ -734,7 +741,17 @@ def task_post_step(step_name: str, spec_path: str, **context: Any) -> dict[str, 
 
     Returns:
         Post-step summary.
+
+    Raises:
+        AirflowSkipException: On backfill runs (post steps are deferred
+            to the final regular run).
     """
+    dag_run = context.get("dag_run")
+    run_type = getattr(dag_run, "run_type", None)
+    if str(getattr(run_type, "value", run_type)) == "backfill":
+        from airflow.exceptions import AirflowSkipException
+
+        raise AirflowSkipException(f"Post step '{step_name}' skipped on backfill run")
     if step_name == "dbt_run":
         return task_dbt_run(**context)
     if step_name == "detect":
