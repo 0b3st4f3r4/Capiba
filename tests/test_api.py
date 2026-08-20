@@ -501,7 +501,6 @@ class TestPortalAuth:
             name="keycloak",
             client_id=config.KEYCLOAK_CLIENT_ID,
             client_secret=config.KEYCLOAK_CLIENT_SECRET,
-            server_metadata_url=f"{self._FAKE_ISSUER}/.well-known/openid-configuration",
             authorize_url=self._FAKE_METADATA["authorization_endpoint"],
             client_kwargs={"scope": "openid profile email"},
         )
