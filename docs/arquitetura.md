@@ -100,7 +100,7 @@ sobre o catálogo gold), e a linhagem é catalogada pelo Marquez (lineage via
 OpenLineage, metastore no PostgreSQL do chart), com o dbt docs documentando
 os marts gold.
 
-O PostgreSQL do chart é o único banco relacional e veste dois uniformes:
+O PostgreSQL do chart é o único banco relacional e tem dois papéis:
 metastore do Airflow, do Grafana, do Keycloak, do Lakekeeper e do Marquez,
 e também DW complementar (database `dwh`, criado por job hook idempotente),
 que recebe os modelos de serving de `dbt/models/serving/`

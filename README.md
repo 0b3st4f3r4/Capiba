@@ -22,7 +22,7 @@ O coração é um lago. O MinIO guarda os dados brutos e as evidências; o Apach
 
 Quem mantém a casa em ordem: o Airflow orquestra os pipelines, o Marquez cataloga a linhagem via OpenLineage, o Grafana dá rosto aos números, e Prometheus e Kepler vigiam o consumo e a energia do cluster. A FastAPI serve os sinais de risco e o portal capiba-dashboard; o Keycloak (realm `capiba`) é a porta de entrada única, um login para todas as UIs. Tudo isso mora num k3s local com GPU NVIDIA schedulável, dashboard Headlamp e ingress Traefik.
 
-O PostgreSQL veste dois uniformes. É metastore do Airflow, do Grafana, do Keycloak, do Lakekeeper e do Marquez; e é também o DWH de serving da aplicação, o database `dwh` para onde o dbt materializa os modelos de `dbt/models/serving/` através do catálogo Trino `dwh`, cópias dos marts gold para consumo de baixa latência fora do lago.
+O PostgreSQL tem dois papéis. É o metastore do Airflow, do Grafana, do Keycloak, do Lakekeeper e do Marquez; e é também o DWH de serving da aplicação, o database `dwh` para onde o dbt materializa os modelos de `dbt/models/serving/` através do catálogo Trino `dwh`, cópias dos marts gold para consumo de baixa latência fora do lago.
 
 ## Setup
 
