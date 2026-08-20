@@ -13,6 +13,8 @@ import hashlib
 import logging
 import re
 from collections.abc import Iterable, Iterator
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from arango.database import StandardDatabase
@@ -185,6 +187,21 @@ _PARTNER_DOC_FIELDS = [
 ]
 
 
+def _json_safe(value: Any) -> Any:
+    """Converts typed silver values (Decimal, date) to JSON-serializable ones.
+
+    ``import_bulk`` serializes documents with the standard JSON encoder;
+    typed silver rows carry ``Decimal`` (``capital_social``) and ``date``
+    (``data_entrada``) values, which made every companies/partners batch
+    fail on the first full graph load (2026-08-20).
+    """
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
 def bulk_upsert_cnpj(
     db: StandardDatabase,
     companies: Iterable[dict[str, Any]],
@@ -225,7 +242,7 @@ def bulk_upsert_cnpj(
         docs = [
             {
                 "_key": _sanitize_key(str(company["cnpj_basico"])),
-                **{f: company.get(f) for f in _COMPANY_DOC_FIELDS},
+                **{f: _json_safe(company.get(f)) for f in _COMPANY_DOC_FIELDS},
             }
             for company in batch
         ]
@@ -247,7 +264,7 @@ def bulk_upsert_cnpj(
                 {
                     "_key": partner_id,
                     "partner_id": partner_id,
-                    **{f: partner.get(f) for f in _PARTNER_DOC_FIELDS},
+                    **{f: _json_safe(partner.get(f)) for f in _PARTNER_DOC_FIELDS},
                 }
             )
             company_key = partner.get("cnpj_basico")
@@ -259,7 +276,7 @@ def bulk_upsert_cnpj(
                         "_from": f"partners/{partner_id}",
                         "_to": f"companies/{company_key}",
                         "qualificacao": partner.get("qualificacao"),
-                        "data_entrada": partner.get("data_entrada"),
+                        "data_entrada": _json_safe(partner.get("data_entrada")),
                     }
                 )
         _import("partners", partner_docs, "partners")

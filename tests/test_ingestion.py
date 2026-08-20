@@ -772,3 +772,37 @@ class TestBulkUpsertCnpj:
 
         assert summary["companies"] == 5
         assert collections["companies"].import_bulk.call_count == 3
+
+    def test_typed_silver_values_are_json_safe(self) -> None:
+        """Decimal/date silver values are converted before import_bulk."""
+        import json
+        from datetime import date
+        from decimal import Decimal
+
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[{"cnpj_basico": "12345678", "capital_social": Decimal("1000.50")}],
+            partners=[
+                {
+                    "partner_id": "p1" * 16,
+                    "cnpj_basico": "12345678",
+                    "nome": "JOAO",
+                    "qualificacao": "22",
+                    "data_entrada": date(2015, 1, 1),
+                }
+            ],
+        )
+
+        assert summary["errors"] == 0
+        company_doc = collections["companies"].import_bulk.call_args.args[0][0]
+        assert company_doc["capital_social"] == 1000.50
+        partner_doc = collections["partners"].import_bulk.call_args.args[0][0]
+        assert partner_doc["data_entrada"] == "2015-01-01"
+        edge_doc = collections["partner_of"].import_bulk.call_args.args[0][0]
+        assert edge_doc["data_entrada"] == "2015-01-01"
+        # The docs must serialize with the standard JSON encoder.
+        json.dumps(company_doc)
+        json.dumps(partner_doc)
+        json.dumps(edge_doc)
