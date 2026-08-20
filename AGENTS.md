@@ -151,7 +151,8 @@ score doc-assistido 0,6 nome + 0,4 documento com limiar 0,85 e nome-only
 com limiar 0,95). As silvers TSE (`campaign_donations` + `candidacies`)
 alimentam, também no `task_detect` (best-effort), o sinal
 `political_connection` (`src/capiba/detection/political.py`, contrato
-PR-D-08 §3): doador de campanha de prefeito eleito (match exato por
+PR-D-08 §3 — validado no regime sintético pela bateria D-08,
+`docs/results/R-D-08.md`, P8/volume real pendentes da ingestão real): doador de campanha de prefeito eleito (match exato por
 documento, originário prioritário — nome nunca é evidência) que vira
 fornecedor do município na janela do mandato (posse + 4 anos, derivada de
 `TSE_ELECTION_YEAR`), com piso de doação `DETECTION_POLITICAL_MIN_DONATION`

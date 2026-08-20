@@ -3,7 +3,9 @@
 - **Pré-registro**: bateria D-08
 - **Criado em**: 2026-08-20
 - **Última atualização**: 2026-08-20
-- **Status**: rascunho para revisão humana (não executado)
+- **Status**: regime sintético executado em 2026-08-20 — veredito
+  **success** (7/7 predições P1–P7; ver `docs/results/R-D-08.md`); P8 e o
+  regime de volume real pendentes da ingestão real do dump TSE 2024
 - **Alvo**: sinal `political_connection` (novo `SignalType`) — match por
   documento entre doadores de campanha (prestação de contas eleitorais do
   TSE) e fornecedores do silver `contracts`, exigindo coincidência temporal
@@ -278,3 +280,9 @@ fórmula `file_dump`; sanções = `entities_collect`):
   (`dbt/tests/political_connections_*.sql`); a âncora de validação offline
   é o `dbt parse` + parsing sqlglot do SQL renderizado (Trino indisponível
   offline nesta máquina).
+- 2026-08-20: bateria D-08 executada (fatia 4) — veredito **success** no
+  regime sintético, P1–P7 exatas nas 5 seeds (runner
+  `src/capiba/detection/battery_political.py`, dispatch `"political"` no
+  `scripts/detect_battery.py`, saída em `results/detect/D-08/`); relatório
+  `docs/results/R-D-08.md`. P8 e o volume real seguem pendentes da
+  ingestão real (CDN TSE geo-bloqueada).
