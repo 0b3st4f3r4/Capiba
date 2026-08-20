@@ -210,8 +210,16 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    satisfeita em 3 amostras novas, precisão 1,00).
    Pendente: invariante P8 no grafo real (após o reload pós-backfill) e
    screening fuzzy de sanções (PR-D-06b).
-8. (aberto) **Diários oficiais municipais via Querido Diário (O7).** Source
-   `querido_diario` no registry; município-piloto persistindo no bronze.
+8. (feito) **Diários oficiais municipais via Querido Diário (O7).** Source
+   `querido_diario` no registry (crawler
+   `src/capiba/ingestion/crawler_querido_diario.py`), fórmula nova
+   `documents_collect` (crawl windowed + `download_<fonte>_texts` com
+   skip-existing no retry + validação declarada `gazette_rules`, bronze-only)
+   e pipeline diário `daily_querido_diario` do município-piloto Recife
+   (IBGE 2611606): metadados no bronze (`raw_querido_diario`) + texto
+   extraído de cada diário como arquivo bronze. Pendente: primeira run real
+   no cluster (após publish/rollout) e alimentar os sinais de NLP
+   (`semantic_gap`, `detect_clone`) com o corpus.
 9. (aberto) **TSE: doações × contratos (O8).** Sinal `political_connection` com
    pré-registro e critério de refutação.
 10. (aberto) **Saída pública para a comunidade (O11).** Marts gold baixáveis

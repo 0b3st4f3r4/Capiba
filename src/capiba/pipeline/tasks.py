@@ -47,6 +47,10 @@ from capiba.detection.statistical import (
 )
 from capiba.evidence.packages import store_signal_packages
 from capiba.evidence.storage import EvidenceStorage
+from capiba.ingestion.crawler_querido_diario import (
+    download_gazette_text,
+    text_file_name,
+)
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.persistence import bulk_upsert_cnpj, bulk_upsert_contracts
 from capiba.ingestion.validator import checksum, detect_duplicates
@@ -113,6 +117,103 @@ def validate_contracts(
 
     logger.info("Validation: %s", report)
     return report
+
+
+def validate_documents(
+    records: list[dict[str, Any]],
+    download_errors: int = 0,
+) -> dict[str, Any]:
+    """Validates raw document records of the documents_collect formula.
+
+    Same report shape as ``validate_contracts`` (compatible with the
+    validation alerts and the quality monitor), keyed by ``url`` — the
+    gazette records have no ``id`` field. ``download_errors`` counts the
+    text-download failures of the ``download_<source>_texts`` step.
+
+    Args:
+        records: Raw document records (e.g. Querido Diário gazettes).
+        download_errors: Errors recorded in the text-download step.
+
+    Returns:
+        Validation report.
+    """
+    logger.info("Validating %d documents", len(records))
+    duplicates = detect_duplicates([r for r in records if r.get("url")], key="url")
+    report = {
+        "total": len(records),
+        "duplicates": len(duplicates),
+        "duplicate_ids": duplicates,
+        "normalization_errors": download_errors,
+        "valid": len(duplicates) == 0,
+    }
+    logger.info("Validation: %s", report)
+    return report
+
+
+def persist_document_texts(
+    source_name: str,
+    records: list[dict[str, Any]],
+    run_date: date | None = None,
+) -> dict[str, Any]:
+    """Downloads the extracted text of each document record to the bronze layer.
+
+    Shared core of the documents_collect ``download_<source>_texts`` step
+    (runner and Airflow task): for each record with ``txt_url``, uploads the
+    text under a deterministic file name (``text_file_name``); files already
+    present in the bronze layer for the run date are skipped, so a retried
+    task resumes where it stopped. Best-effort per record: failures are
+    counted and logged, never fatal. Records gain ``text_bronze_file`` with
+    the persisted file name.
+
+    Args:
+        source_name: Source name (e.g. ``querido_diario``).
+        records: Raw document records.
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        Summary (texts downloaded/skipped, errors).
+    """
+    try:
+        existing = {
+            key.rsplit("/", 1)[-1]
+            for key in lake.list_bronze_files(source_name, run_date)
+        }
+    except Exception as exc:
+        logger.warning(
+            "Failed to list %s bronze files; downloading everything: %s",
+            source_name,
+            exc,
+        )
+        existing = set()
+
+    downloaded = skipped = errors = 0
+    for record in records:
+        txt_url = record.get("txt_url")
+        if not txt_url:
+            continue
+        filename = text_file_name(record)
+        if filename in existing:
+            record["text_bronze_file"] = filename
+            skipped += 1
+            continue
+        try:
+            data = download_gazette_text(txt_url)
+            lake.write_bronze_file(source_name, filename, data, run_date=run_date)
+        except Exception as exc:
+            errors += 1
+            logger.warning("Failed to persist document text %s: %s", txt_url, exc)
+            continue
+        record["text_bronze_file"] = filename
+        downloaded += 1
+
+    summary: dict[str, Any] = {
+        "source": source_name,
+        "texts_downloaded": downloaded,
+        "texts_skipped": skipped,
+        "errors": errors,
+    }
+    logger.info("Document texts persisted for %s: %s", source_name, summary)
+    return summary
 
 
 def persist_contracts(
@@ -844,6 +945,13 @@ def task_destination(
             if spec.formula == "file_dump":
                 value = ti.xcom_pull(
                     task_ids=f"download_{source.name}", key=f"manifest_{source.name}"
+                )
+            elif spec.formula == "documents_collect":
+                # Records enriched with ``text_bronze_file`` by the
+                # download_<source>_texts task.
+                value = ti.xcom_pull(
+                    task_ids=f"download_{source.name}_texts",
+                    key=f"raw_{source.name}",
                 )
             else:
                 value = ti.xcom_pull(

@@ -51,7 +51,9 @@ from capiba.pipeline.registry import (
 from capiba.pipeline.tasks import (
     persist_cnpj_entities,
     persist_contracts,
+    persist_document_texts,
     validate_contracts,
+    validate_documents,
 )
 from capiba.pipeline.window import DateRange, resolve_window
 from capiba.quality.validators import QualityValidator
@@ -499,6 +501,77 @@ def _formula_entities_collect(
     return result
 
 
+def _formula_documents_collect(
+    spec: PipelineSpec,
+    execution_date: date,
+    steps: list[StepMetrics],
+    window_override: DateRange | None = None,
+) -> FormulaResult:
+    """Formula: crawl -> download_<source>_texts -> validate? -> destinations.
+
+    Document sources (e.g. ``querido_diario``) are windowed crawls whose raw
+    records flow to the bronze destination; each source then gets a granular
+    ``download_<source>_texts`` step persisting the extracted text of every
+    document to the bronze layer (deterministic file names, skip-existing on
+    retry). The declared ruleset validates the raw records — there is no
+    silver normalization (documents are not contracts).
+    """
+    result = FormulaResult()
+
+    for source in spec.sources:
+        date_range = window_override or resolve_window(
+            source.window or spec.window, execution_date
+        )
+        fetch = SOURCE_REGISTRY[source.name].fetch
+        if fetch is None:  # guarded by spec validation
+            raise ValueError(f"Source '{source.name}' has no record fetcher")
+
+        def _crawl(
+            fetch: Callable[..., list[dict[str, Any]]] = fetch,
+            source_params: dict[str, Any] = source.params,
+            date_range: DateRange = date_range,
+        ) -> tuple[list[dict[str, Any]], int, int]:
+            records = fetch(date_range.start, date_range.end, **source_params)
+            return records, len(records), 0
+
+        result.raw[source.name] = _run_step(steps, f"crawl_{source.name}", _crawl)
+
+        def _download_texts(
+            source_name: str = source.name,
+        ) -> tuple[dict[str, Any], int, int]:
+            summary = persist_document_texts(
+                source_name, result.raw[source_name], run_date=execution_date
+            )
+            persisted = summary["texts_downloaded"] + summary["texts_skipped"]
+            return summary, persisted, summary["errors"]
+
+        result.outputs[f"{source.name}_texts"] = _run_step(
+            steps,
+            f"download_{source.name}_texts",
+            _download_texts,
+            rows_in=len(result.raw[source.name]),
+        )
+
+    if spec.validation:
+        ruleset = spec.validation.ruleset
+
+        def _validate(ruleset: str = ruleset) -> tuple[dict[str, Any], int, int]:
+            records = [r for raw in result.raw.values() for r in raw]
+            download_errors = sum(
+                result.outputs[f"{name}_texts"]["errors"] for name in result.raw
+            )
+            report = validate_documents(records, download_errors=download_errors)
+            quality = _apply_ruleset(ruleset, records)
+            if quality:
+                report["quality_rules"] = quality
+            return report, len(records), int(report["duplicates"])
+
+        total_raw = sum(len(records) for records in result.raw.values())
+        result.validation = _run_step(steps, "validate", _validate, rows_in=total_raw)
+
+    return result
+
+
 def _dest_lake_bronze(
     spec: PipelineSpec, execution_date: date, result: FormulaResult
 ) -> tuple[dict[str, Any], int | None, int]:
@@ -680,6 +753,7 @@ FORMULA_REGISTRY.update(
         "file_dump": _formula_file_dump,
         "metrics_collect": _formula_metrics_collect,
         "entities_collect": _formula_entities_collect,
+        "documents_collect": _formula_documents_collect,
     }
 )
 DESTINATION_REGISTRY.update(

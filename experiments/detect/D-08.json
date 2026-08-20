@@ -1,0 +1,98 @@
+{
+  "id": "D-08",
+  "runner": "political",
+  "description": "Conexao politica (O8): doadores de campanha TSE 2024 x fornecedores do ente apoiado. Match por documento exato (originario tem prioridade), gates de eleito a prefeito, janela de mandato 2025-2028, piso de doacao R$ 1000 e concentracao share >= 0.05; score = min(1.0, share / 0.25). Sem predicao dura no volume real (exploratorio declarado). Ver docs/preregistrations/PR-D-08.md (rascunho 2026-08-20).",
+  "seeds": [17, 27, 47, 57, 67],
+  "source": {
+    "dataset": "prestacao-de-contas-eleitorais-2024",
+    "dump_url": "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas/prestacao_de_contas_eleitorais_candidatos_2024.zip",
+    "candidates_url": "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/consulta_cand_2024.zip",
+    "election_year": 2024,
+    "sphere": "municipal",
+    "office": "prefeito"
+  },
+  "thresholds": {
+    "min_donation_brl": 1000.0,
+    "min_supplier_share": 0.05,
+    "score_share_reference": 0.25,
+    "mandate_start": "2025-01-01",
+    "mandate_end": "2028-12-31"
+  },
+  "control_pairs": 20,
+  "expected": {
+    "signal_cases": ["E1", "E5", "E9", "E10"],
+    "no_signal_cases": ["E2", "E3", "E4", "E6", "E7", "E8"]
+  },
+  "cases": [
+    {
+      "id": "E1",
+      "description": "PJ: doador CNPJ doa 50000 a prefeito eleito; contrato apos posse, share 0.40 -> sinal, score 1.0",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 50000.0, "candidate_elected": true, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.40},
+      "expected": {"signal": true, "score": 1.0}
+    },
+    {
+      "id": "E2",
+      "description": "Idem E1, contrato assinado antes da posse -> sem sinal (doacao licita nao e indicio por si)",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 50000.0, "candidate_elected": true, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": false, "supplier_share": 0.40},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "E3",
+      "description": "Candidato derrotado -> sem sinal",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 50000.0, "candidate_elected": false, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.40},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "E4",
+      "description": "Share 0.01 < 0.05 -> sem sinal (concentracao)",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 50000.0, "candidate_elected": true, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.01},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "E5",
+      "description": "PF: doador CPF, share 0.125 -> sinal, score 0.5 exato (ancora)",
+      "donor": {"doc_type": "cpf", "donation_total_brl": 20000.0, "candidate_elected": true, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.125},
+      "expected": {"signal": true, "score": 0.5}
+    },
+    {
+      "id": "E6",
+      "description": "Doacao total 500 < 1000 -> sem sinal (piso de doacao)",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 500.0, "candidate_elected": true, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.40},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "E7",
+      "description": "Doacao a vereador eleito -> sem sinal (v1: so executivo)",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 50000.0, "candidate_elected": true, "candidate_office": "vereador"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.40},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "E8",
+      "description": "Mesmo nome, documentos divergentes -> sem sinal (nome nao e documento)",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 50000.0, "candidate_elected": true, "candidate_office": "prefeito", "other_document": true},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.40},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "E9",
+      "description": "Doacao via partido: match pelo doador originario -> sinal",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 30000.0, "candidate_elected": true, "candidate_office": "prefeito", "via_party": true},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.30},
+      "expected": {"signal": true, "score": 1.0}
+    },
+    {
+      "id": "E10",
+      "description": "Share exatamente 0.05 (fronteira inclusiva) -> sinal, score 0.2 exato (ancora)",
+      "donor": {"doc_type": "cnpj", "donation_total_brl": 5000.0, "candidate_elected": true, "candidate_office": "prefeito"},
+      "contract": {"signed_after_inauguration": true, "supplier_share": 0.05},
+      "expected": {"signal": true, "score": 0.2}
+    }
+  ]
+}

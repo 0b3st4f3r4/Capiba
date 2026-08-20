@@ -1021,3 +1021,156 @@ class TestEntitiesCollectFormula:
 
         with pytest.raises(PipelineRunError, match="transparency down"):
             run_pipeline(self._spec(["lake_bronze"]), RUN_DATE)
+
+
+def _qd_raw(n: int) -> dict[str, Any]:
+    """Raw Querido Diário gazette record (Recife, IBGE 2611606)."""
+    return {
+        "territory_id": "2611606",
+        "territory_name": "Recife",
+        "state_code": "PE",
+        "date": f"2026-01-{14 + n:02d}",
+        "edition": str(n),
+        "is_extra_edition": False,
+        "scraped_at": "2026-01-16T03:53:53",
+        "url": f"https://data.queridodiario.ok.org.br/2611606/2026-01-{14 + n:02d}/abc{n}.pdf",
+        "txt_url": f"https://data.queridodiario.ok.org.br/2611606/2026-01-{14 + n:02d}/abc{n}.txt",
+        "excerpts": [],
+    }
+
+
+class TestDocumentsCollectFormula:
+    """Tests of the documents_collect formula (Querido Diário gazettes, O7)."""
+
+    def _spec(self, destinations: list[str]) -> PipelineSpec:
+        return PipelineSpec.model_validate(
+            {
+                "name": "test_documents",
+                "window": "previous_day",
+                "sources": [{"name": "querido_diario", "params": {"territory_id": "2611606"}}],
+                "formula": "documents_collect",
+                "validate": {"ruleset": "gazette_rules"},
+                "destinations": destinations,
+            }
+        )
+
+    def _fake_source(
+        self, monkeypatch: pytest.MonkeyPatch, records: list[dict[str, Any]]
+    ) -> None:
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "querido_diario",
+            SourceDef(fetch=lambda *_a, **_k: records),
+        )
+        monkeypatch.setattr(
+            tasks, "download_gazette_text", MagicMock(return_value=b"plain text")
+        )
+
+    def test_crawl_download_validate_to_bronze(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Gazettes are crawled, their texts persisted and the records validated."""
+        self._fake_source(monkeypatch, [_qd_raw(1), _qd_raw(2)])
+
+        report = run_pipeline(self._spec(["lake_bronze"]), RUN_DATE)
+
+        assert report.success is True
+        assert [s.name for s in report.steps] == [
+            "crawl_querido_diario",
+            "download_querido_diario_texts",
+            "validate",
+            "destination_lake_bronze",
+        ]
+        texts = report.outputs["querido_diario_texts"]
+        assert texts["texts_downloaded"] == 2
+        assert texts["texts_skipped"] == 0
+        assert texts["errors"] == 0
+
+        # The raw records were enriched with the bronze file name
+        download = report.steps[1]
+        assert download.rows_in == 2
+        assert download.rows_out == 2
+
+        # The declared ruleset validated the raw records
+        assert report.validation is not None
+        assert report.validation["total"] == 2
+        assert report.validation["valid"] is True
+        assert {r["rule"] for r in report.validation["quality_rules"]} == {
+            "valid_territory",
+            "date_present",
+            "file_url_present",
+            "text_url_present",
+        }
+
+        # The raw payload landed in the bronze raw table
+        catalog = lake.get_catalog("bronze")
+        raw = catalog.load_table("capiba.raw_querido_diario").scan().to_arrow()
+        assert raw.num_rows == 1
+
+    def test_texts_already_in_bronze_are_skipped(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A retried run skips texts already persisted for the run date."""
+        record = _qd_raw(1)
+        self._fake_source(monkeypatch, [record])
+        filename = tasks.text_file_name(record)
+        monkeypatch.setattr(
+            lake,
+            "list_bronze_files",
+            MagicMock(
+                return_value=[f"querido_diario/files/dt=2026-01-15/{filename}"]
+            ),
+        )
+
+        report = run_pipeline(self._spec(["lake_bronze"]), RUN_DATE)
+
+        assert report.success is True
+        texts = report.outputs["querido_diario_texts"]
+        assert texts["texts_downloaded"] == 0
+        assert texts["texts_skipped"] == 1
+        tasks.download_gazette_text.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_download_failure_is_best_effort(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failing text download is counted, not fatal to the run."""
+        self._fake_source(monkeypatch, [_qd_raw(1)])
+        monkeypatch.setattr(
+            tasks,
+            "download_gazette_text",
+            MagicMock(side_effect=ConnectionError("data host down")),
+        )
+
+        report = run_pipeline(self._spec(["lake_bronze"]), RUN_DATE)
+
+        assert report.success is True
+        texts = report.outputs["querido_diario_texts"]
+        assert texts["errors"] == 1
+        assert texts["texts_downloaded"] == 0
+        assert report.validation is not None
+        assert report.validation["normalization_errors"] == 1
+
+    def test_source_failure_fails_run(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failing document source raises PipelineRunError."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "querido_diario",
+            SourceDef(fetch=MagicMock(side_effect=ConnectionError("QD down"))),
+        )
+
+        with pytest.raises(PipelineRunError, match="QD down"):
+            run_pipeline(self._spec(["lake_bronze"]), RUN_DATE)

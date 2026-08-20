@@ -114,6 +114,11 @@ TRANSPARENCY_AGENCY_CODES = [
     if c.strip()
 ]
 
+QUERIDO_DIARIO_API_URL = os.getenv(
+    "QUERIDO_DIARIO_API_URL",
+    "https://api.queridodiario.ok.org.br",
+)
+
 # Registration data (Federal Revenue — CNPJ)
 FEDERAL_REVENUE_BASE_URL = os.getenv(
     "FEDERAL_REVENUE_BASE_URL",

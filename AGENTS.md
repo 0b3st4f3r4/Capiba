@@ -78,7 +78,7 @@ evidence, db, api, notification, pipeline, config, transformations). DAGs em
 destinos e post steps, sem código Python) resolvidos pelos registries de
 `src/capiba/pipeline/registry.py` e executados pelo runner
 (`src/capiba/pipeline/runner.py`, fórmulas `contracts_default`,
-`file_dump`, `metrics_collect` e `entities_collect`); `dags/pipeline_factory.py` gera uma DAG
+`file_dump`, `metrics_collect`, `entities_collect` e `documents_collect`); `dags/pipeline_factory.py` gera uma DAG
 por spec no parse do
 Airflow — ingestão de contratos separada por fonte
 (`daily_pncp` a partir de `daily_pncp.yaml`,
@@ -86,7 +86,10 @@ Airflow — ingestão de contratos separada por fonte
 steps — falha isolada, janelas naturais e rate limits independentes por
 fonte), mais `monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
 `hourly_pod_usage` a partir de `hourly_pod_usage.yaml`,
-`weekly_sanctions` a partir de `weekly_sanctions.yaml` e
+`weekly_sanctions` a partir de `weekly_sanctions.yaml`,
+`daily_querido_diario` a partir de `daily_querido_diario.yaml` (O7 — diários
+oficiais do município-piloto Recife, IBGE 2611606, via API do Querido
+Diário/OKBR) e
 `daily_pncp_updates` a partir de `daily_pncp_updates.yaml` (fonte
 `pncp_contract_updates`, `/v1/contratos/atualizacao`, bronze-only — flags
 de aditivo do PR-D-05 leem as observações bronze; o silver não é tocado).
@@ -135,6 +138,17 @@ A tabela silver `sanctions` alimenta no `task_detect` (best-effort) os sinais
 bateria D-06b, `docs/results/R-D-06b.md`: veto por documento divergente,
 score doc-assistido 0,6 nome + 0,4 documento com limiar 0,85 e nome-only
 com limiar 0,95).
+A fórmula `documents_collect` cobre fontes de documentos datados com janela
+(fonte `querido_diario` — crawler `fetch_gazettes` em
+`src/capiba/ingestion/crawler_querido_diario.py`): etapa `crawl_<fonte>`
+(metadados para o bronze) + etapa granular `download_<fonte>_texts`
+(`persist_document_texts` em `src/capiba/pipeline/tasks.py`; wrappers em
+`src/capiba/pipeline/document_tasks.py`) que baixa o texto extraído de cada
+diário (`txt_url`) para `<fonte>/files/dt=<run>/` no bronze com nome
+determinístico (`text_file_name`) — num retry, textos já persistidos são
+pulados; falhas de download são best-effort (contadas, nunca fatais). A
+validação declarada (`gazette_rules`) roda sobre os registros crus; não há
+normalização silver (documentos não são contratos).
 O crawl (`task_crawl_entities`) persiste **checkpoint por página** no
 bronze (`<fonte>/pages/dt=<data>/page-NNNNN.json.gz`,
 `lake.write_bronze_page`/`list_bronze_pages`/`read_bronze_page`): um retry

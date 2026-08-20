@@ -1,0 +1,22 @@
+# Daily collection of the official gazettes of the pilot municipality
+# (Recife, IBGE 2611606) via the Querido Diário API (OKBR, MIT) — O7. The
+# raw metadata lands in the bronze audit copies and the raw_querido_diario
+# Iceberg table; the extracted plain text of each gazette (txt_url) is
+# persisted as a bronze file (<source>/files/dt=<run>/…, deterministic name,
+# skip-existing on retry). No silver normalization (documents are not
+# contracts); the declared gazette_rules validate the raw records. The text
+# corpus is raw material for the NLP signals (semantic_gap, detect_clone).
+name: daily_querido_diario
+description: Daily collection of Recife's official gazettes (Querido Diário API)
+schedule: "41 4 * * *" # 04:41 UTC — after the QD nightly scrape (~03:50 UTC), off-peak
+window: previous_day
+sources:
+  - name: querido_diario
+    params:
+      territory_id: "2611606" # Recife (IBGE) — pilot municipality (O7)
+formula: documents_collect
+validate:
+  ruleset: gazette_rules
+destinations:
+  - lake_bronze # raw audit copies + raw_querido_diario Iceberg table
+  - gold_report # run report in the gold bucket

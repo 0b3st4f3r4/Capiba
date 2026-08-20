@@ -8,6 +8,7 @@ scheduler can retry failures independently:
 - one ``crawl_<source>`` task per source
 - ``normalize`` and ``validate`` for ``contracts_default`` formulas
 - ``normalize_<source>`` for ``file_dump``/``entities_collect`` formulas
+- ``download_<source>_texts`` and ``validate`` for ``documents_collect``
 - one ``destination_<name>`` task per destination
 - ``dbt_run`` / ``detect`` for declared post steps
 
@@ -26,6 +27,10 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk.definitions.asset import Asset
 
+from capiba.pipeline.document_tasks import (
+    task_download_document_texts,
+    task_validate_documents,
+)
 from capiba.pipeline.entity_tasks import (
     task_crawl_entities,
     task_normalize_entities,
@@ -73,6 +78,8 @@ SOURCE_INLETS = {
     # CEIS/CNEP sanction lists of the Portal da Transparência.
     "ceis": Asset(uri="capiba://source/ceis"),
     "cnep": Asset(uri="capiba://source/cnep"),
+    # Municipal official gazettes via the Querido Diário API (OKBR).
+    "querido_diario": Asset(uri="capiba://source/querido_diario"),
 }
 
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
@@ -292,6 +299,36 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                     outlets=shared_outlets,
                 )
                 normalize >> validate
+                intermediate_tail = [validate]
+
+        if spec.formula == "documents_collect":
+            # Persist the extracted text of each crawled document — one
+            # granular task per source (skip-existing on retry).
+            new_tail = []
+            for src_task, source in zip(source_tasks, spec.sources, strict=True):
+                download = PythonOperator(
+                    task_id=f"download_{source.name}_texts",
+                    python_callable=partial(
+                        task_download_document_texts,
+                        source_name=source.name,
+                        spec_path=str(spec_path),
+                    ),
+                    outlets=shared_outlets,
+                )
+                src_task >> download
+                new_tail.append(download)
+            intermediate_tail = new_tail
+
+            if spec.validation:
+                validate = PythonOperator(
+                    task_id="validate",
+                    python_callable=partial(
+                        task_validate_documents, spec_path=str(spec_path)
+                    ),
+                    outlets=shared_outlets,
+                )
+                for download_task in new_tail:
+                    download_task >> validate
                 intermediate_tail = [validate]
 
         # --- Destinations ----------------------------------------------------

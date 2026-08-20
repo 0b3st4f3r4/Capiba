@@ -421,3 +421,94 @@ class TestEntitiesCollectFactory:
             "destination_lake_silver",
             "destination_gold_report",
         }
+
+
+DOCUMENTS_SPEC = """\
+name: factory_documents
+schedule: "41 4 * * *"
+window: previous_day
+sources:
+  - name: querido_diario
+    params:
+      territory_id: "2611606"
+formula: documents_collect
+validate:
+  ruleset: gazette_rules
+destinations:
+  - lake_bronze
+  - gold_report
+"""
+
+
+class TestDocumentsCollectFactory:
+    """Tests for the documents_collect formula in the DAG factory (O7)."""
+
+    def test_generates_granular_tasks(self, factory, tmp_path: Path) -> None:
+        """A documents_collect spec gets crawl + download + validate tasks."""
+        (tmp_path / "documents.yaml").write_text(DOCUMENTS_SPEC, encoding="utf-8")
+
+        dags = factory.build_dags(tmp_path)
+        dag = dags["factory_documents"]
+
+        # The single-task simplification must never return.
+        assert "run" not in {t.task_id for t in dag.tasks}
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_querido_diario",
+            "download_querido_diario_texts",
+            "validate",
+            "destination_lake_bronze",
+            "destination_gold_report",
+        }
+
+        # Dependencies: crawl -> download_texts -> validate -> destinations
+        assert dag.get_task("crawl_querido_diario").downstream_task_ids == {
+            "download_querido_diario_texts"
+        }
+        assert dag.get_task("download_querido_diario_texts").downstream_task_ids == {
+            "validate"
+        }
+        assert dag.get_task("validate").downstream_task_ids == {
+            "destination_lake_bronze"
+        }
+        assert dag.get_task("destination_lake_bronze").downstream_task_ids == {
+            "destination_gold_report"
+        }
+
+        # Lineage assets: source inlet + bronze/gold outlets
+        crawl = dag.get_task("crawl_querido_diario")
+        assert {a.uri for a in crawl.inlets} == {"capiba://source/querido_diario"}
+        outlet_uris = {a.uri for a in crawl.outlets}
+        assert "capiba://bronze/raw_querido_diario" in outlet_uris
+        assert "capiba://silver/contracts" not in outlet_uris
+        assert "capiba://gold/reports/factory_documents" in outlet_uris
+
+    def test_download_uses_the_document_texts_task(
+        self, factory, tmp_path: Path
+    ) -> None:
+        """documents_collect downloads run the skip-existing texts task."""
+        from capiba.pipeline.document_tasks import (
+            task_download_document_texts,
+            task_validate_documents,
+        )
+
+        (tmp_path / "documents.yaml").write_text(DOCUMENTS_SPEC, encoding="utf-8")
+
+        dag = factory.build_dags(tmp_path)["factory_documents"]
+
+        download = dag.get_task("download_querido_diario_texts").python_callable
+        assert download.func is task_download_document_texts
+        validate = dag.get_task("validate").python_callable
+        assert validate.func is task_validate_documents
+
+    def test_real_daily_querido_diario_dag(self, factory) -> None:
+        """The shipped daily_querido_diario spec produces a granular DAG."""
+        dag = factory.daily_querido_diario
+
+        assert dag.schedule == "41 4 * * *"
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_querido_diario",
+            "download_querido_diario_texts",
+            "validate",
+            "destination_lake_bronze",
+            "destination_gold_report",
+        }

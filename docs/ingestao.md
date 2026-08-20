@@ -327,13 +327,25 @@ fonte `pod_usage`), insumo dos marts `pod_usage_hourly` e
 `platform_cost_daily`.
 
 **`weekly_sanctions`** (`weekly_sanctions.yaml`, `22 3 * * 2`): coleta as
-listas de sanções CEIS (inidôneas/suspensas) e CNEP (empresas punidas) do
-Portal da Transparência (fórmula `entities_collect`, fontes `ceis`/`cnep`,
+listas de sanções CEIS (inidôneas/suspensas), CNEP (empresas punidas) e
+CEAF (expulsões da administração federal, documento mascarado) do
+Portal da Transparência (fórmula `entities_collect`, fontes `ceis`/`cnep`/`ceaf`,
 crawler `fetch_sanctions` em `crawler_transparency.py`, modelo `Sanction`
 em `src/capiba/ingestion/sanctions.py`), com payloads brutos nas tabelas
-bronze `raw_ceis`/`raw_cnep` e registros normalizados na tabela silver
-`sanctions`. Requer `TRANSPARENCY_API_KEY`; é o insumo de ingestão de um
-futuro sinal "fornecedor sancionado" (pendente de pré-registro PR-D-03).
+bronze `raw_ceis`/`raw_cnep`/`raw_ceaf` e registros normalizados na tabela silver
+`sanctions`. Requer `TRANSPARENCY_API_KEY`; alimenta os sinais
+`sanctioned_supplier` (match exato, PR-D-06) e `sanctioned_name_match`
+(screening fuzzy, PR-D-06b) no `detect`.
+
+**`daily_querido_diario`** (`daily_querido_diario.yaml`, `41 4 * * *`):
+coleta os diários oficiais do município-piloto Recife (IBGE 2611606) pela
+API do Querido Diário/OKBR (fórmula `documents_collect`, fonte
+`querido_diario`, crawler em `crawler_querido_diario.py`): metadados no
+bronze (tabela `raw_querido_diario`) e o texto extraído de cada diário como
+arquivo bronze (`querido_diario/files/dt=YYYY-MM-DD/`, nome determinístico,
+skip-existing no retry), com validação declarada `gazette_rules`. Sem
+normalização silver — o corpus textual é matéria-prima para os sinais de
+NLP (`semantic_gap`, `detect_clone`).
 
 **`lake_maintenance`** (`dags/lake_maintenance.py`, semanal): DAG
 imperativa, executa `expire_snapshots` (retenção de 7 dias) e

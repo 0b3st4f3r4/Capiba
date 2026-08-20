@@ -81,7 +81,29 @@ Não pede autenticação. Os arquivos são CSV dentro de ZIPs, separados por pon
 
 O crawler `crawler_federal_revenue.py` baixa os múltiplos ZIPs do compartilhamento SERPRO+ (`download_cnpj_dump`, `extract_cnpj_zip`, `parse_cnpj_csv`). A URL base é configurável via `FEDERAL_REVENUE_BASE_URL` e o mês de referência chega como parâmetro `reference_month` para `download_cnpj_dump`. A integração já é completa: a DAG `monthly_federal_revenue` (spec `dags/pipelines/monthly_federal_revenue.yaml`, fórmula `file_dump`) baixa os ZIPs para o bronze (arquivos no bucket e manifesto na tabela `raw_federal_revenue`), normaliza Empresas/Estabelecimentos/Socios em streaming para as tabelas silver `companies`/`establishments`/`partners` (parser em `src/capiba/ingestion/cnpj.py`, opt-in via `FEDERAL_REVENUE_FILES`) e carrega vértices e arestas no grafo ArangoDB (destino `arangodb_graph`). Não há credenciais a configurar, mas a URL pode precisar de ajuste se a Receita Federal mudar o compartilhamento.
 
-## 4. API interna do Capiba
+## 4. Querido Diário (OKBR)
+
+### URL base
+
+`https://api.queridodiario.ok.org.br` (projeto Querido Diário, Open Knowledge Brasil, MIT — diários oficiais municipais raspados das prefeituras). A raiz `queridodiario.ok.org.br` é só a SPA de busca; a API vive no subdomínio `api.`.
+
+### Endpoints relevantes
+
+| Endpoint | Uso no Capiba |
+|----------|---------------|
+| `GET /gazettes` | Lista diários por território e janela de publicação (`territory_ids` — array, **não** `territory_id` —, `published_since`/`published_until`, paginação `size`/`offset`, `sort_by=ascending_date`) |
+
+Cada registro traz `territory_id`/`territory_name`/`state_code`, `date`, `edition`, `is_extra_edition`, `scraped_at`, `url` (PDF original) e `txt_url` (texto puro extraído do PDF — sem estrutura markdown, com artefatos de hifenização).
+
+### Requisitos técnicos
+
+Não pede autenticação. A raspagem dos diários roda de madrugada (~03:50 UTC), então a coleta diária é agendada para depois disso.
+
+### Estado no Capiba
+
+O crawler `crawler_querido_diario.py` (`fetch_gazettes`, `download_gazette_text`, `text_file_name`) alimenta a DAG `daily_querido_diario` (spec `dags/pipelines/daily_querido_diario.yaml`, fórmula `documents_collect`): município-piloto Recife (IBGE 2611606), metadados no bronze (`raw_querido_diario`) + texto extraído de cada diário como arquivo bronze (nome determinístico, skip-existing no retry), validação declarada `gazette_rules`. O corpus é matéria-prima para os sinais de NLP (`semantic_gap`, `detect_clone`).
+
+## 5. API interna do Capiba
 
 ### Estado atual
 
@@ -102,7 +124,7 @@ O crawler `crawler_federal_revenue.py` baixa os múltiplos ZIPs do compartilhame
 
 O portal capiba-dashboard (`GET /`) e o fluxo SSO (`/auth/login`, `/auth/callback`, `/auth/logout`) completam a superfície. Contratos, scores, pesos e códigos de erro estão documentados em `docs/api.md`.
 
-## 5. Resumo de gaps e próximos passos recomendados
+## 6. Resumo de gaps e próximos passos recomendados
 
 As fontes estão ligadas e o lago recebe água de todas elas; o que falta é apertar a torneira.
 

@@ -28,6 +28,9 @@ from capiba.ingestion.cnpj import parse_cnpj_zip
 from capiba.ingestion.crawler_federal_revenue import download_cnpj_dump
 from capiba.ingestion.crawler_pncp import fetch_contract_updates as pncp_fetch_updates
 from capiba.ingestion.crawler_pncp import fetch_contracts as pncp_fetch_contracts
+from capiba.ingestion.crawler_querido_diario import (
+    fetch_gazettes as querido_diario_fetch_gazettes,
+)
 from capiba.ingestion.crawler_transparency import (
     fetch_contracts as transparency_fetch_contracts,
 )
@@ -38,7 +41,7 @@ from capiba.ingestion.mock import mock_pncp, mock_transparency
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.pod_usage import fetch_pod_usage
 from capiba.ingestion.sanctions import Sanction
-from capiba.quality.validators import CONTRACT_RULES, ValidationRule
+from capiba.quality.validators import CONTRACT_RULES, GAZETTE_RULES, ValidationRule
 
 if TYPE_CHECKING:
     from datetime import date
@@ -138,6 +141,15 @@ def _fetch_ceaf(
     return fetch_sanctions("ceaf", **params)
 
 
+def _fetch_querido_diario(
+    start: date | None, end: date | None, **params: Any
+) -> list[dict[str, Any]]:
+    """Adapts the Querido Diário crawler to the registry window signature."""
+    if start is None or end is None:
+        raise ValueError("The querido_diario source requires a bounded window")
+    return querido_diario_fetch_gazettes(start_date=start, end_date=end, **params)
+
+
 SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pncp": SourceDef(fetch=_fetch_pncp),
     "pncp_contract_updates": SourceDef(fetch=_fetch_pncp_contract_updates),
@@ -149,6 +161,7 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
     "ceis": SourceDef(fetch=_fetch_ceis),
     "cnep": SourceDef(fetch=_fetch_cnep),
     "ceaf": SourceDef(fetch=_fetch_ceaf),
+    "querido_diario": SourceDef(fetch=_fetch_querido_diario),
 }
 
 # Normalizer per source: raw record -> unified Contract. Mock sources reuse
@@ -166,6 +179,7 @@ NORMALIZER_REGISTRY: dict[str, Callable[[dict[str, Any]], Contract]] = {
 
 RULESET_REGISTRY: dict[str, list[ValidationRule]] = {
     "contract_rules": CONTRACT_RULES,
+    "gazette_rules": GAZETTE_RULES,
 }
 
 

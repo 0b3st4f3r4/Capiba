@@ -165,3 +165,37 @@ CONTRACT_RULES = [
         severity="error",
     ),
 ]
+
+# Pre-defined rules for official gazette records (Querido Diário, O7) —
+# applied over the raw gazette metadata of the documents_collect formula.
+
+GAZETTE_RULES = [
+    ValidationRule(
+        name="valid_territory",
+        description="Territory must be a 7-digit IBGE id",
+        column="territory_id",
+        condition=lambda s: s.astype(str).str.match(r"^\d{7}$"),
+        severity="error",
+    ),
+    ValidationRule(
+        name="date_present",
+        description="Gazette publication date cannot be null",
+        column="date",
+        condition=lambda s: s.notna(),
+        severity="error",
+    ),
+    ValidationRule(
+        name="file_url_present",
+        description="Gazette file URL cannot be empty",
+        column="url",
+        condition=lambda s: s.notna() & (s.astype(str).str.len() > 0),
+        severity="error",
+    ),
+    ValidationRule(
+        name="text_url_present",
+        description="Extracted text URL should exist",
+        column="txt_url",
+        condition=lambda s: s.notna() & (s.astype(str).str.len() > 0),
+        severity="warning",
+    ),
+]

@@ -69,6 +69,7 @@ class TestLoadSpec:
             "monthly_federal_revenue",
             "hourly_pod_usage",
             "weekly_sanctions",
+            "daily_querido_diario",
         }
         updates = specs["daily_pncp_updates"]
         assert updates.name == "daily_pncp_updates"
@@ -101,6 +102,14 @@ class TestLoadSpec:
         assert weekly.schedule == "22 3 * * 2"
         assert weekly.formula == "entities_collect"
         assert [s.name for s in weekly.sources] == ["ceis", "cnep", "ceaf"]
+        gazettes = specs["daily_querido_diario"]
+        assert gazettes.schedule == "41 4 * * *"
+        assert gazettes.formula == "documents_collect"
+        assert gazettes.window == "previous_day"
+        assert [s.name for s in gazettes.sources] == ["querido_diario"]
+        assert gazettes.sources[0].params == {"territory_id": "2611606"}
+        assert gazettes.validation is not None
+        assert gazettes.validation.ruleset == "gazette_rules"
 
     def test_string_shorthand(self, tmp_path: Path) -> None:
         """Plain strings are accepted as shorthand for name-only entries."""
