@@ -1,4 +1,4 @@
-# Daily collection of PNCP contracts by UPDATE date (PR-D-05, O2):
+# Daily collection of PNCP contracts by UPDATE date (PR-D-05):
 # captures contracts amended after their original publication. Bronze-only
 # by design — the amendment red flags (mart contract_amendments) are
 # computed from the bronze observations (raw_pncp +

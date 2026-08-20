@@ -1,5 +1,5 @@
 # Daily collection of the official gazettes of the pilot municipality
-# (Recife, IBGE 2611606) via the Querido Diário API (OKBR, MIT) — O7. The
+# (Recife, IBGE 2611606) via the Querido Diário API (OKBR, MIT). The
 # raw metadata lands in the bronze audit copies and the raw_querido_diario
 # Iceberg table; the extracted plain text of each gazette (txt_url) is
 # persisted as a bronze file (<source>/files/dt=<run>/…, deterministic name,
@@ -13,7 +13,7 @@ window: previous_day
 sources:
   - name: querido_diario
     params:
-      territory_id: "2611606" # Recife (IBGE) — pilot municipality (O7)
+      territory_id: "2611606" # Recife (IBGE) — pilot municipality
 formula: documents_collect
 validate:
   ruleset: gazette_rules

@@ -1,4 +1,4 @@
-"""FollowTheMoney JSON export of the graph (O4).
+"""FollowTheMoney JSON export of the graph.
 
 Chunk: db
 Responsibility: Serialize the subgraph around a company (itself, its

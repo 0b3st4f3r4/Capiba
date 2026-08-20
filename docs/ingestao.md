@@ -356,7 +356,7 @@ bronze/silver/gold, via Trino.
 
 Contratos são salvos na collection `contracts`. Fornecedores são salvos em
 `suppliers` e conectados via aresta `won`. Compradores são salvos em
-`buyers`. Empresas e sócios do dump CNPJ seguem o vocabulário FtM (O4):
+`buyers`. Empresas e sócios do dump CNPJ seguem o vocabulário FtM:
 vértices `companies`/`persons` (carga em lote por `bulk_upsert_cnpj`, a
 partir das tabelas silver) conectados via arestas
 `ownership`/`directorship`, classificadas pela qualificação RFB.

@@ -6,33 +6,29 @@ Capiba — **C**ruzamento e **A**nálise de **P**adrões e **I**ndícios em **B*
 
 Motor de detecção de fraude via dados abertos, a serviço do
 **jornalismo de dados comunitário** (processo editorial em
-`docs/jornalismo_dados.md`). A missão de longo prazo é
-construir **comunidades de dados** — empresas, clientes e instituições
-públicas compartilhando dados para formar inteligência soberana em
-território nacional, como alternativa comunitária ao imperialismo de dados
-e à hipervigilância global (ver README.md, "Objetivo").
+`docs/jornalismo_dados.md`). A missão de longo prazo é construir
+**comunidades de dados** — empresas, clientes e instituições públicas
+compartilhando dados para formar inteligência soberana em território
+nacional, como alternativa comunitária ao imperialismo de dados e à
+hipervigilância global (ver README.md, "Objetivo").
 
-Stack: Python 3.13, FastAPI, Airflow,
-ArangoDB (multi-modelo), MinIO, scikit-learn + spaCy, Grafana,
-Keycloak (SSO/OIDC de todas as UIs, realm `capiba`),
-Marquez (catálogo de dados/lineage via OpenLineage),
-Trino (SQL sobre o lake; fonte de dados do Grafana para os marts gold),
-Apache Iceberg (tabelas Parquet no MinIO) com catálogo REST Lakekeeper e
-dbt (dbt-trino) para os marts gold — e para os modelos de serving
-(`dbt/models/serving/`) materializados no PostgreSQL DWH via catálogo Trino
-`dwh`. Redis (cache do monitor de qualidade e dos hot paths da API) vem
-habilitado por padrão; tudo degrada graciosamente sem ele
-(`redis.enabled: false` para economizar recursos).
-Observabilidade: Prometheus (`prometheus.enabled`, TSDB em emptyDir —
-dev; retenção 7d) scrapeando kubelet/cAdvisor do k3s e o Kepler
-(`kepler.enabled`, DaemonSet, métricas de energia na porta 28282), com
-dashboards como código em `charts/capiba/dashboards/*.json` montados via
-ConfigMap no provider de arquivos do Grafana. O runner publica métricas
-por step de cada run na tabela gold `platform_metrics`
-(`lake.write_platform_metrics`, best-effort) e o pipeline declarativo
-`hourly_pod_usage` (fonte `pod_usage` — metrics-server in-cluster,
-`kubectl top` fora; fórmula `metrics_collect`) alimenta os marts
-`pod_usage_hourly`/`platform_cost_daily` (requests na seed dbt
+Stack: Python 3.13, FastAPI, Airflow, ArangoDB (multi-modelo), MinIO,
+scikit-learn + spaCy, Grafana, Keycloak (SSO/OIDC de todas as UIs, realm
+`capiba`), Marquez (catálogo/lineage via OpenLineage), Trino (SQL sobre o
+lake; fonte do Grafana para os marts gold), Apache Iceberg (Parquet no
+MinIO) com catálogo REST Lakekeeper, dbt (dbt-trino) para os marts gold e
+para os modelos de serving (`dbt/models/serving/`, materializados no
+PostgreSQL DWH via catálogo Trino `dwh`). Redis (cache do quality monitor
+e dos hot paths da API) vem habilitado por padrão; tudo degrada
+graciosamente sem ele (`redis.enabled: false`). Observabilidade:
+Prometheus (`prometheus.enabled`, TSDB em emptyDir, retenção 7d)
+scrapeando kubelet/cAdvisor e Kepler (`kepler.enabled`, métricas de
+energia na 28282); dashboards como código em `charts/capiba/dashboards/*.json`
+via ConfigMap no provider de arquivos do Grafana. O runner publica
+métricas por step na gold `platform_metrics` (`lake.write_platform_metrics`,
+best-effort); o pipeline `hourly_pod_usage` (fonte `pod_usage` —
+metrics-server in-cluster, `kubectl top` fora; fórmula `metrics_collect`)
+alimenta `pod_usage_hourly`/`platform_cost_daily` (requests na seed
 `dbt/seeds/requests.csv` — regerar quando o values.yaml mudar).
 
 Comandos:
@@ -71,264 +67,265 @@ imagem: mudanças em DAGs e `dbt/` são capturadas pelo sidecar; mudanças em
 `src/` pedem `kubectl rollout restart deploy/capiba-airflow -n capiba` após
 publicar.
 
-Layout: código em `src/capiba/` por vertical (ingestion, detection, quality,
-evidence, db, api, notification, pipeline, config, transformations). DAGs em
-`dags/`: pipelines de ingestão são declarativos — specs YAML em
-`dags/pipelines/*.yaml` (fontes, janela temporal, fórmula, validações,
-destinos e post steps, sem código Python) resolvidos pelos registries de
-`src/capiba/pipeline/registry.py` e executados pelo runner
-(`src/capiba/pipeline/runner.py`, fórmulas `contracts_default`,
-`file_dump`, `metrics_collect`, `entities_collect` e `documents_collect`); `dags/pipeline_factory.py` gera uma DAG
-por spec no parse do
-Airflow — ingestão de contratos separada por fonte
-(`daily_pncp` a partir de `daily_pncp.yaml`,
-`monthly_transparency` a partir de `monthly_transparency.yaml`, sem post
-steps — falha isolada, janelas naturais e rate limits independentes por
-fonte), mais `monthly_federal_revenue` a partir de `monthly_federal_revenue.yaml`,
-`hourly_pod_usage` a partir de `hourly_pod_usage.yaml`,
-`weekly_sanctions` a partir de `weekly_sanctions.yaml`,
-`daily_querido_diario` a partir de `daily_querido_diario.yaml` (O7 — diários
-oficiais do município-piloto Recife, IBGE 2611606, via API do Querido
-Diário/OKBR) e
-`daily_pncp_updates` a partir de `daily_pncp_updates.yaml` (fonte
-`pncp_contract_updates`, `/v1/contratos/atualizacao`, bronze-only — flags
-de aditivo do PR-D-05 leem as observações bronze; o silver não é tocado) e
-`monthly_tse` a partir de `monthly_tse.yaml` (O8 — snapshot fixo da
-prestação de contas eleitorais do TSE, ano via `params.year`/`TSE_ELECTION_YEAR`;
-o `reference_month` não se aplica; o download cobre dois dumps — prestação
-de contas e `consulta_cand_<ano>.zip` (diretório `TSE_CANDIDATES_BASE_URL`,
-gate do eleito); o normalize streaming grava as silvers
-`campaign_donations` a partir do `receitas_candidatos_<ano>_BRASIL.csv` e
-`candidacies` a partir do `consulta_cand_<ano>_BRASIL.csv` (coluna
-`DS_SITUACAO_TOTALIZACAO_TURNO`) —
-parser `src/capiba/ingestion/tse.py`; documentos completos no silver para o
-match do sinal `political_connection`, mascaramento é preocupação do mart
-gold, PR-D-08 §2).
-A fórmula `file_dump`, quando a spec declara `lake_silver`/`arangodb_graph`
-e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
-`src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
-streaming: parse chunked dos ZIPs Empresas/Estabelecimentos/Socios para as
-tabelas silver Iceberg `companies`/`establishments`/`partners`
-(opt-in via `FEDERAL_REVENUE_FILES`) — o `Municipios.zip` (baixado por
-padrão) vira a silver de referência `rfb_municipalities` (código TOM → nome
-do município, elo da cadeia de geo do fornecedor) —, e o destino `arangodb_graph` carrega
-o grafo em vocabulário FtM (O4): vértices `companies` (Company) e
-`persons` (Person — sócios PF/estrangeiros e representantes legais) e
-arestas `ownership` ({persons,companies}→companies — sócio PJ vira
-Company e alimenta o `trace_ownership` com dados reais) e `directorship`
-(persons→companies), classificadas pela qualificação RFB
-(`cnpj.edge_kind_for_qualificacao`), via `bulk_upsert_cnpj` em lote a
-partir do silver. A resolução de entidades (O5,
-`src/capiba/detection/entities.py` — matcher conservador validado pelas
-baterias D-07/D-07b: nome 0,6 + documento mascarado 0,3 + faixa etária 0,1,
-limiar 0,85; link supplier↔company determinístico por CNPJ) grava arestas
-`same_as` (persons↔persons) com score + details via
-`resolve_entities(db, threshold)` ao final da carga do grafo
-(`persist_cnpj_entities`, limiar `DETECTION_ENTITY_THRESHOLD`,
-default 0,85) — best-effort (`resolution_error` no sumário, nunca derruba
-a carga), sem colapsar vértices.
-A referência geográfica de municípios (O6, fatia 1 — infra do sinal
-`anomalous_geography`, que segue desativado pendendo pré-registro) vive em
-`src/capiba/ingestion/geography.py`: CSV vendored
-`src/capiba/ingestion/reference/municipios.csv` (kelvins/Municipios-Brasileiros,
-MIT — atribuição em `reference/README.md`), carregamento lazy e lookups puros por
-(nome, UF) normalizado e por código IBGE (nomes de município são únicos por
-UF no IBGE, então o de-para do comprador PNCP é determinístico). A silver de
-referência `municipalities` (ibge_code, name, uf, siafi_code, latitude,
-longitude) é carregada por `lake.load_municipalities` — idempotente por
-conteúdo (ibge_codes já presentes na partição são pulados), sem DAG nova. Na
-persistência (`upsert_contract`/`bulk_upsert_contracts`), o vértice `buyers`
-ganha `ibge_code`/`latitude`/`longitude` via (city, uf) e o vértice
-`suppliers` ganha `latitude`/`longitude` quando o CNPJ resolve na cadeia
-silver `establishments` (código TOM) → `rfb_municipalities` → referência
-vendored — best-effort (falha de lookup nunca derruba o upsert) e com a
-resolução em funções puras injetáveis (`geography.buyer_geo_fields` e
-`geography.build_supplier_geo_index`).
-O download da fórmula
-(`task_download_source`) sobe cada arquivo ao bronze assim que termina e o
-remove do tempdir; num retry, os arquivos já presentes no bronze
-(`lake.list_bronze_files`) são pulados (`skip`/`on_file` em
-`download_cnpj_dump`) e reentram no manifesto — um restart de pod não
-recomeça um dump multi-GB do zero. O normalize (`task_normalize_dump`) é
-append-por-chunk no silver; antes de parsear ele DELETA a partição
-`dt=<run_date>` de cada entidade do manifesto via Trino
-(`lake.delete_silver_entities_partition`, falha aborta sem append), então
-um retry reprocessa o dump do zero sem duplicar linhas (o loop de
-OOMKill de 2026-08-20 duplicava a partição a cada restart do pod).
-A fórmula `entities_collect` cobre listas de entidades snapshot (fontes
-`ceis`/`cnep`/`ceaf` do Portal da Transparência — crawler `fetch_sanctions`,
-modelo `Sanction` em `src/capiba/ingestion/sanctions.py`; o CEAF traz
-documento mascarado em `masked_document`): etapa
-`normalize_<fonte>` por fonte escreve na tabela silver da entidade
-registrada no `ENTITY_NORMALIZER_REGISTRY` (hoje `sanctions`); os wrappers
-Airflow dessa fórmula vivem em `src/capiba/pipeline/entity_tasks.py`.
-A tabela silver `sanctions` alimenta no `task_detect` (best-effort) os sinais
-`sanctioned_supplier` (match exato por documento) e `sanctioned_name_match`
-(screening fuzzy, `src/capiba/detection/screening_fuzzy.py` — validado pela
-bateria D-06b, `docs/results/R-D-06b.md`: veto por documento divergente,
-score doc-assistido 0,6 nome + 0,4 documento com limiar 0,85 e nome-only
-com limiar 0,95). As silvers TSE (`campaign_donations` + `candidacies`)
-alimentam, também no `task_detect` (best-effort), o sinal
-`political_connection` (`src/capiba/detection/political.py`, contrato
-PR-D-08 §3 — validado no regime sintético pela bateria D-08,
-`docs/results/R-D-08.md`, P8/volume real pendentes da ingestão real): doador de campanha de prefeito eleito (match exato por
-documento, originário prioritário — nome nunca é evidência) que vira
-fornecedor do município na janela do mandato (posse + 4 anos, derivada de
-`TSE_ELECTION_YEAR`), com piso de doação `DETECTION_POLITICAL_MIN_DONATION`
-(default R$ 1.000), concentração `DETECTION_POLITICAL_MIN_SHARE` (default
-0,05) e score `min(1.0, share / DETECTION_POLITICAL_SCORE_REFERENCE)`
-(default 0,25) — placeholders pré-registrados (mudança exige PR-D-08b);
-município da urna casado com o comprador por (cidade, UF) normalizados.
-O mart gold `political_connections` (`dbt/models/marts/`) publica os sinais
-enriquecidos com as silvers TSE (última partição — snapshots mensais) e com
-o de-para UE↔SIAFI da seed `dbt/seeds/ue_siafi_crosswalk.csv` (incremental,
-piloto Recife: UE 25313, SIAFI 2531); LGPD no mart: CPF mascarado no padrão
-CEAF, CNPJ completo (dado público), chave `signal_id` sha256 — o silver
-mantém documentos completos (PR-D-08 §2).
-A fórmula `documents_collect` cobre fontes de documentos datados com janela
-(fonte `querido_diario` — crawler `fetch_gazettes` em
-`src/capiba/ingestion/crawler_querido_diario.py`): etapa `crawl_<fonte>`
-(metadados para o bronze) + etapa granular `download_<fonte>_texts`
-(`persist_document_texts` em `src/capiba/pipeline/tasks.py`; wrappers em
-`src/capiba/pipeline/document_tasks.py`) que baixa o texto extraído de cada
-diário (`txt_url`) para `<fonte>/files/dt=<run>/` no bronze com nome
-determinístico (`text_file_name`) — num retry, textos já persistidos são
-pulados; falhas de download são best-effort (contadas, nunca fatais). A
-validação declarada (`gazette_rules`) roda sobre os registros crus; não há
-normalização silver (documentos não são contratos).
-O crawl (`task_crawl_entities`) persiste **checkpoint por página** no
-bronze (`<fonte>/pages/dt=<data>/page-NNNNN.json.gz`,
-`lake.write_bronze_page`/`list_bronze_pages`/`read_bronze_page`): um retry
-relê as páginas já gravadas e retoma da próxima, em vez de reiniciar a
-varredura de centenas de páginas (interrupção por restart de liveness
-observada em 2026-08); 400s esporádicos desses endpoints são transitórios
-(retry longo), não fatais.
-`lake_maintenance.py` (semanal: expire_snapshots + optimize via Trino)
-permanece uma DAG imperativa, assim como `gold_detection.py` (diária, 08:00
-UTC, após as ingestões: `dbt_run` → `detect`, reconstruindo marts e sinais
-sobre TODO o acumulado do silver — é também a "run final" a disparar após
-um backfill, já que os post steps são pulados em backfill). A escrita no
-silver `contracts` (`lake.write_silver`) é **upsert-por-id**: DELETE via
-Trino dos ids do lote + append (falha no DELETE aborta sem append; falha no
-append é restaurada pelo re-run); no catálogo sqlite offline degrada para
-append puro. Como o DELETE+append não é atômico, as DAGs da factory usam
-`max_active_runs=1`: runs sobrepostas do mesmo pipeline (agendada + manual/
-backfill) corriam o DELETE e duplicavam linhas no silver (observado em
-dt=2026-08-18/19; dedup manual via Trino em 2026-08-20). Transformações nomeadas ficam em
-`src/capiba/transformations/` (um módulo por transformação, expondo
-`transform(records, **params)`).
+## Layout e pipelines
+
+Código em `src/capiba/` por vertical (ingestion, detection, quality,
+evidence, db, api, notification, pipeline, config, transformations).
+Pipelines de ingestão são **declarativos**: specs YAML em
+`dags/pipelines/*.yaml` (fontes, janela, fórmula, validações, destinos,
+post steps) resolvidos pelos registries de `pipeline/registry.py` e
+executados pelo runner (`pipeline/runner.py`); `dags/pipeline_factory.py`
+gera uma DAG por spec. Specs ativas: `daily_pncp` e
+`monthly_transparency` (contratos, separados por fonte — falha isolada e
+rate limits independentes, sem post steps), `daily_pncp_updates`
+(`/v1/contratos/atualizacao`, bronze-only — flags de aditivo do PR-D-05
+leem o bronze; o silver não é tocado), `monthly_federal_revenue`,
+`weekly_sanctions`, `hourly_pod_usage`, `daily_querido_diario`
+(diários oficiais de Recife, IBGE 2611606, via Querido Diário/OKBR) e
+`monthly_tse` (snapshot fixo da prestação de contas eleitorais, ano
+via `params.year`/`TSE_ELECTION_YEAR`, `reference_month` não se aplica).
+
+Fórmulas do runner:
+
+- `contracts_default` — crawl+normalize de contratos (PNCP, transparência).
+- `file_dump` — dumps multi-arquivo (ex.: `federal_revenue` →
+  `ingestion/cnpj.py`). Com `lake_silver`/`arangodb_graph` declarados e
+  parser no `DUMP_PARSER_REGISTRY`, ganha `normalize_<fonte>` streaming:
+  ZIPs Empresas/Estabelecimentos/Socios → silvers Iceberg
+  `companies`/`establishments`/`partners` (opt-in via
+  `FEDERAL_REVENUE_FILES`); o `Municipios.zip` vira a silver
+  `rfb_municipalities` (código TOM → nome, elo da geo do fornecedor). O
+  destino `arangodb_graph` carrega o grafo FtM: vértices `companies`
+  e `persons`, arestas `ownership` ({persons,companies}→companies — sócio
+  PJ vira Company e alimenta o `trace_ownership`) e `directorship`,
+  classificadas por `cnpj.edge_kind_for_qualificacao`, via
+  `bulk_upsert_cnpj` a partir do silver. Ao final da carga, a resolução de
+  entidades (`detection/entities.py` — validada por D-07/D-07b: nome
+  0,6 + documento mascarado 0,3 + faixa etária 0,1, limiar
+  `DETECTION_ENTITY_THRESHOLD` default 0,85) grava arestas `same_as`
+  (persons↔persons) best-effort, sem colapsar vértices.
+- `entities_collect` — listas snapshot de sanções (`ceis`/`cnep`/`ceaf`;
+  crawler `fetch_sanctions`, modelo `Sanction` em `ingestion/sanctions.py`;
+  CEAF traz `masked_document`): `normalize_<fonte>` escreve na silver do
+  `ENTITY_NORMALIZER_REGISTRY` (hoje `sanctions`); wrappers em
+  `pipeline/entity_tasks.py`. O crawl (`task_crawl_entities`) persiste
+  **checkpoint por página** no bronze (`<fonte>/pages/dt=<data>/page-NNNNN.json.gz`)
+  — retry retoma da próxima página; 400s esporádicos são transitórios.
+- `documents_collect` — documentos datados com janela (`querido_diario`,
+  crawler `fetch_gazettes` em `ingestion/crawler_querido_diario.py`):
+  `crawl_<fonte>` (metadados ao bronze) + `download_<fonte>_texts`
+  (`persist_document_texts`; wrappers em `pipeline/document_tasks.py`)
+  baixa o `txt_url` de cada diário para `<fonte>/files/dt=<run>/` com nome
+  determinístico (`text_file_name`) — retry pula textos já persistidos,
+  falhas de download são best-effort. Sem normalização silver.
+- `metrics_collect` — telemetria (pod_usage).
+
+Ingestão TSE (parser `ingestion/tse.py`): o download cobre prestação
+de contas e `consulta_cand_<ano>.zip` (`TSE_CANDIDATES_BASE_URL`, gate do
+eleito); o normalize streaming grava as silvers `campaign_donations`
+(`receitas_candidatos_<ano>_BRASIL.csv`) e `candidacies`
+(`consulta_cand_<ano>_BRASIL.csv`, coluna `DS_SITUACAO_TOTALIZACAO_TURNO`).
+Documentos completos no silver; mascaramento é preocupação do mart gold
+(PR-D-08 §2).
+
+Idempotência e retry do lake: o download (`task_download_source`) sobe
+cada arquivo ao bronze ao terminar e remove do tempdir; num retry,
+arquivos já no bronze (`lake.list_bronze_files`) são pulados e reentram
+no manifesto. O normalize (`task_normalize_dump`) é append-por-chunk e,
+antes de parsear, DELETA a partição `dt=<run_date>` de cada entidade via
+Trino (`lake.delete_silver_entities_partition`; falha aborta sem append)
+— retry reprocessa sem duplicar. A escrita no silver `contracts`
+(`lake.write_silver`) é **upsert-por-id** (DELETE via Trino dos ids do
+lote + append; no catálogo sqlite offline degrada para append puro). Como
+DELETE+append não é atômico, as DAGs da factory usam `max_active_runs=1`
+(runs sobrepostas duplicavam linhas — observado em dt=2026-08-18/19).
+`lake_maintenance.py` (semanal: expire_snapshots + optimize) e
+`gold_detection.py` (diária 08:00 UTC: `dbt_run` → `detect` sobre TODO o
+silver — é a "run final" após um backfill) seguem DAGs imperativas.
+Transformações nomeadas em `src/capiba/transformations/` (um módulo por
+transformação, `transform(records, **params)`).
+
+## Geografia
+
+Referência de municípios em `ingestion/geography.py`: CSV vendored
+`ingestion/reference/municipios.csv` (kelvins/Municipios-Brasileiros, MIT
+— atribuição em `reference/README.md`), lookups puros por (nome, UF)
+normalizado e por IBGE (nomes são únicos por UF — de-para do comprador
+PNCP determinístico). Silver `municipalities` (ibge_code, name, uf,
+siafi_code, latitude, longitude) carregada por `lake.load_municipalities`
+(idempotente por conteúdo, sem DAG nova). Na persistência
+(`upsert_contract`/`bulk_upsert_contracts`), `buyers` ganha
+ibge/lat/long via (city, uf) e `suppliers` ganha lat/long via cadeia
+silver `establishments` (TOM) → `rfb_municipalities` → referência
+vendored — best-effort, funções puras injetáveis
+(`geography.buyer_geo_fields`, `geography.build_supplier_geo_index`).
+
+O sinal `anomalous_geography` (contrato PR-D-09 §3, validado no sintético
+pela bateria D-09, `docs/results/R-D-09.md`, 5/5; P6/volume real
+pendentes) vive em `detection/geography.py` (puro, sobre o silver):
+haversine R = 6371,0 km entre sedes municipais, gate estrito
+`DETECTION_GEOGRAPHY_MAX_DISTANCE_KM` (default 100 km), score
+`round(min(1.0, distância / DETECTION_GEOGRAPHY_SCORE_REFERENCE), 4)`
+(default 1000 km) — placeholders pré-registrados (mudança exige PR-D-09b);
+um sinal por (fornecedor PJ, município comprador); PF e pares com elo de
+de-para ausente nunca sinalizam. Emissão best-effort no `task_detect`
+(carrega `municipalities` idempotente antes). O operador AQL legado
+`graphs.anomalous_geography` foi removido (morto — vértices `bid`
+inexistentes; decisão em Revisões do PR-D-09).
+
+## Detecção, evidência e triagem
+
+Sinais best-effort emitidos no `task_detect` (nunca derrubam a task):
+
+- `sanctioned_supplier` (match exato por documento) e
+  `sanctioned_name_match` (screening fuzzy, `detection/screening_fuzzy.py`
+  — validado por D-06b, `docs/results/R-D-06b.md`: veto por documento
+  divergente, score 0,6 nome + 0,4 documento, limiares 0,85/0,95), sobre a
+  silver `sanctions`.
+- `political_connection` (`detection/political.py`, contrato PR-D-08 §3 —
+  validado no sintético por D-08, `docs/results/R-D-08.md`, P8/volume real
+  pendentes): doador de campanha de prefeito eleito (match exato por
+  documento, originário prioritário — nome nunca é evidência) que vira
+  fornecedor do município na janela do mandato (derivada de
+  `TSE_ELECTION_YEAR`); piso `DETECTION_POLITICAL_MIN_DONATION` (default
+  R$ 1.000), concentração `DETECTION_POLITICAL_MIN_SHARE` (default 0,05),
+  score `min(1.0, share / DETECTION_POLITICAL_SCORE_REFERENCE)` (default
+  0,25) — placeholders pré-registrados (mudança exige PR-D-08b). O mart
+  gold `political_connections` publica os sinais enriquecidos com as
+  silvers TSE (última partição) e a seed `dbt/seeds/ue_siafi_crosswalk.csv`
+  (incremental, piloto Recife: UE 25313, SIAFI 2531); LGPD: CPF mascarado
+  padrão CEAF, CNPJ completo, chave `signal_id` sha256.
+- `collusion_network` (`detect_collusion` sobre o ArangoDB) com limiar
+  `DETECTION_COLLUSION_MIN_WINS` (default 3, placeholder validado por
+  D-02; calibração em volume real D-03/D-03b **inconclusiva** — pares
+  explodem no regime real; próximo refinamento PR-D-03c) e score binário.
+
+Grafo na API: `GET /v1/graph/ownership/{cnpj}` (aresta FtM `ownership`;
+CNPJ normalizado para `cnpj_basico`), `GET /v1/graph/partners/{siafi_code}`
+(`partners_of_buyer`), `GET /v1/graph/ftm/{cnpj}` (`db/ftm.py`).
+
+Evidência: vertical exposta no router `/v1/evidence` (upload
+multipart, listagem por contrato, download por SHA-256; storage MinIO sob
+demanda via `get_storage()`). O `task_detect` grava, best-effort, pacotes
+reproduzíveis por sinal (`evidence/packages.py`): pacote de lote por run
+(linhas silver + `source_rows_sha256` + janela + versão) e manifesto por
+sinal com a chave de triagem e `batch_sha256`, servidos por
+`GET /v1/signals/{key}/evidence`; `reproduce_signal` reexecuta
+`detect_fraud_signals` sobre o pacote para conferir o score.
+
+Triagem editorial: `db/triage.py` (coleção `signal_reviews`, chave
+`{entity_type}:{entity_id}:{signal_type}`; `pending_review` →
+`confirmed`/`rejected`/`published`, revisor obrigatório, `published`
+terminal). O `task_detect` registra sinais novos como `pending_review`;
+a API expõe `/v1/triage` (listagem, transição, relatório de precisão por
+operador — rótulos para o ML). Interface humana: página `/triage` do
+portal (CSS em `api/static/portal.css`).
+
+Assinatura de alertas por município: dispara SOMENTE na transição
+para `published` (gancho best-effort em `api/routers/triage.py` →
+`notification/subscriptions.py`): o município do sinal é resolvido para
+IBGE via `details` (city/uf) ou pelo par comprador city/UF mais frequente
+dos contratos da entidade (→ `ingestion/geography.py`); sinais sem
+município resolvível não disparam (contados em log). Coleção
+`subscriptions` (`db/subscriptions.py`): email, ibge_code, status
+(pending/confirmed/unsubscribed) e apenas o HASH sha256 do token opaco
+permanente (o mesmo link confirma e cancela, entregue no e-mail de
+confirmação). Rotas públicas: `POST /v1/subscriptions` (resposta genérica,
+sem enumerar), `GET /v1/subscriptions/confirm|unsubscribe?token=...`.
+E-mails (um por assinante) usam o template `subscription` do
+NotificationDispatcher e linkam o pacote de evidências; URL base
+`PUBLIC_API_URL` (default `https://api.{PORTAL_DOMAIN}:8443`).
+
+Alertas internos por e-mail (`notification/alerts.py`, wrapper síncrono
+do dispatcher async) disparam do `task_detect` (sinais ≥
+`NOTIFICATION_ALERT_SCORE`, default 0.7) e do `task_validate_pipeline`
+(relatório inválido ou erro de normalização > 5%); no-op sem
+`NOTIFICATION_RECIPIENTS`. O `task_validate_pipeline` também alimenta o
+`QualityMonitor` (`record_batch`, best-effort); o `NotificationScheduler`
+(relatórios periódicos) só inicia no lifespan da API com
+`NOTIFICATION_RECIPIENTS` configurado.
+
+## Saída pública e pós-steps
+
+A `gold_detection` termina com o post step `export_public_marts`
+(`pipeline/public_export.py`): exporta os marts liberados para o bucket
+`capiba-public` (`PUBLIC_EXPORT_BUCKET`) em CSV + Parquet + manifest,
+versionado `marts/<mart>/dt=<data-da-run>/` (leitura via Trino, escrita
+via client MinIO do lake). Allowlist LGPD declarativa e **fail-closed** —
+`PUBLIC_MARTS` (justificativa por mart) e `EXCLUDED_MARTS` (`pod_usage_*`,
+`platform_cost_*`, `data_quality_*` = telemetria interna;
+`contract_red_flags` = `supplier_id` pode ser CPF completo);
+`political_connections` entra porque mascara CPF na origem. Mart novo sem
+classificação falha o guarda (`tests/test_public_export.py`). API pública
+(`api/routers/public.py`, sem auth): `GET /v1/public/marts`,
+`GET /v1/public/marts/{name}/{csv|parquet}` (302 presignado, `?dt=` pina)
+e `GET /v1/public/methodology` (gerado do `_marts.yml` + specs YAML;
+degrada sem dags/ e dbt/ na imagem). Bucket criado pelo
+`make init-buckets`; política de leitura pública é decisão de deploy.
+
 Post steps (`dbt_run`, `detect`) são **pulados em runs de backfill**
 (`task_post_step` levanta `AirflowSkipException` quando `run_type ==
-"backfill"` — reprocessam as tabelas inteiras, O(n²) e pesado em memória);
-após um backfill, dispare uma run regular para reconstruir marts e sinais.
-O post step `dbt_run` aceita a forma de mapping com `select` (seleção de
-modelos dbt; vazio = projeto todo): pipelines frequentes devem declarar só
-os marts alimentados pelo dado recém-coletado — o `hourly_pod_usage` roda
-`--select pod_usage_hourly platform_cost_daily`, pois um run completo
-reconstrói os marts de contratos sobre todo o histórico e OOMKillava o
-Trino (unnest full do `contract_red_flags`, 2026-08-19); o run completo
-fica a cargo da `gold_detection` diária.
-Alertas best-effort por e-mail (`src/capiba/notification/alerts.py`, wrapper
-síncrono do `NotificationDispatcher` async) disparam do `task_detect`
-(sinais ≥ `NOTIFICATION_ALERT_SCORE`, default 0.7) e do
-`task_validate_pipeline` (relatório inválido ou erro de normalização > 5%);
-no-op quando `NOTIFICATION_RECIPIENTS` está vazio, nunca derrubam a task.
-O `task_detect` também emite o sinal de grafo `collusion_network`
-(`detect_collusion` sobre o ArangoDB, best-effort) com limiar
-`DETECTION_COLLUSION_MIN_WINS` (default 3, placeholder de calibração validado
-pela bateria D-02; a calibração em volume real (bateria D-03,
-`docs/results/R-D-03.md`) foi **inconclusiva** — a semântica de pares
-explode no regime real (627 mil pares em w=3); o refinamento por
-co-ocorrência entre compradores (PR-D-03b, executado em
-`docs/results/R-D-03b.md`) também foi **inconclusivo** — redução ~28×,
-mas o menor backlog da grade {3,4,5} × {2,3} (1.397 pares em (5,3)) segue
-acima do orçamento de 500; próximo refinamento em PR-D-03c) e score binário 1.0;
-a cadeia de titularidade é exposta na API em `GET /v1/graph/ownership/{cnpj}`
-(aresta FtM `ownership`; CNPJ de 14 dígitos normalizado para o
-`cnpj_basico`), os sócios dos fornecedores de um órgão em
-`GET /v1/graph/partners/{siafi_code}` (`partners_of_buyer`) e o subgrafo
-de uma empresa em FtM JSON em `GET /v1/graph/ftm/{cnpj}` (`db/ftm.py`).
-O `task_validate_pipeline` também alimenta o `QualityMonitor`
-(`record_batch`, best-effort) e o `NotificationScheduler` (relatórios
-periódicos com as métricas reais do monitor) é iniciado no lifespan da API
-somente quando `NOTIFICATION_RECIPIENTS` está configurado.
-A vertical `evidence` é exposta pela API no router `/v1/evidence`
-(upload multipart, listagem por contrato, download por SHA-256; storage
-MinIO instanciado sob demanda via `get_storage()`). O `task_detect` também
-grava, best-effort, os pacotes de evidência reproduzíveis por sinal (O9,
-`src/capiba/evidence/packages.py`): um pacote de lote por run (linhas
-silver + `source_rows_sha256` + janela + versão) e um manifesto por sinal
-com a chave do O10 e `batch_sha256`, servidos por
-`GET /v1/signals/{key}/evidence`; `reproduce_signal` reexecuta
-`detect_fraud_signals` sobre as linhas do pacote para conferir o score.
-A triagem editorial de sinais (O10) vive em `src/capiba/db/triage.py`
-(coleção ArangoDB `signal_reviews`, chave estável
-`{entity_type}:{entity_id}:{signal_type}`; `pending_review` →
-`confirmed`/`rejected`/`published`, revisor obrigatório, motivo no
-descarte, `published` terminal): o `task_detect` registra sinais novos
-como `pending_review` (best-effort) e a API expõe `/v1/triage`
-(listagem, transição e relatório de precisão por operador — rótulos
-para o ML supervisionado). A interface humana é a página `/triage` do
-portal (fila por estado, formulários de transição com revisor da sessão
-SSO ou do campo, banner de erro no lugar de páginas 4xx; CSS
-compartilhado em `api/static/portal.css`).
-Projeto dbt em `dbt/` (profile `capiba`, dbt-trino sobre o catálogo gold;
-marts Iceberg no bucket capiba-gold).
-O lake usa tabelas Iceberg (via `src/capiba/pipeline/lake.py` + pyiceberg)
-catalogadas pelo Lakekeeper; offline, aponte `ICEBERG_CATALOG_URI` para
-`sqlite:///...` com `ICEBERG_LOCAL_WAREHOUSE`. Testes que exigem
-ArangoDB (ou outra infra externa) são marcados `@pytest.mark.integration` e pulados por
-padrão; ative com `CAPIBA_INTEGRATION=1`. Testes de regime/calibração
-(baterias de detecção, ex.: `tests/test_detect_battery.py`) são marcados
-`@pytest.mark.slow` e também pulados por padrão; ative com `CAPIBA_SLOW=1`
-(o CI e `make test-cov`/`make test-slow` habilitam). Testes BDD (Gherkin, pytest-bdd)
-ficam em `tests/bdd/` — features em `tests/bdd/features/*.feature`.
+"backfill"` — reprocessam as tabelas inteiras); após um backfill, dispare
+uma run regular. O post step `dbt_run` aceita mapping com `select`
+(vazio = projeto todo): pipelines frequentes declaram só os marts
+alimentados — o `hourly_pod_usage` roda `--select pod_usage_hourly
+platform_cost_daily` (run completo OOMKillava o Trino); o run completo
+fica com a `gold_detection`.
 
-Experimentos de detecção (novos sinais, calibração de limiares) seguem
-doutrina de pré-registro (adaptada do programa Tanajura): predição numérica
+## Infra e convenções
+
+Projeto dbt em `dbt/` (profile `capiba`, dbt-trino sobre o catálogo gold;
+marts Iceberg no bucket capiba-gold). O lake usa Iceberg via
+`pipeline/lake.py` + pyiceberg, catalogado pelo Lakekeeper; offline,
+aponte `ICEBERG_CATALOG_URI` para `sqlite:///...` com
+`ICEBERG_LOCAL_WAREHOUSE`. Testes que exigem infra externa são marcados
+`@pytest.mark.integration` (ative com `CAPIBA_INTEGRATION=1`); testes de
+regime/calibração (baterias) são `@pytest.mark.slow` (ative com
+`CAPIBA_SLOW=1` — CI e `make test-cov`/`make test-slow` habilitam).
+Testes BDD (pytest-bdd) em `tests/bdd/`, features em
+`tests/bdd/features/*.feature`.
+
+Experimentos de detecção (novos sinais, calibração) seguem doutrina de
+pré-registro (adaptada do programa Tanajura): predição numérica
 falsificável com critérios de sucesso **e de refutação** em
-`docs/preregistrations/PR-D-*.md` antes de qualquer execução, configuração
+`docs/preregistrations/PR-D-*.md` antes de qualquer execução, config
 declarativa em `experiments/detect/*.json` (seeds inclusas), resultados —
-inclusive negativos — publicados em `docs/results/R-D-*.md`. Detalhes em
+inclusive negativos — em `docs/results/R-D-*.md`. Detalhes em
 `docs/preregistrations/README.md`.
 
-Governança de dados (mapeamento DAMA-DMBOK para os componentes, papéis de
-data steward/custodian, régua regulatória LGPD/LAI e visão de federação):
-`docs/governanca.md`.
+Governança de dados (DAMA-DMBOK, papéis steward/custodian, régua
+LGPD/LAI, federação): `docs/governanca.md`. Processo editorial:
+`docs/jornalismo_dados.md`. Backlog orientado à missão:
+`docs/oportunidades.md`.
 
-Jornalismo de dados a serviço da comunidade (processo editorial — obter,
-compreender, verificar, documentar, analisar, confirmar, publicar —
-mapeado para os componentes da plataforma): `docs/jornalismo_dados.md`.
-O backlog de evolução orientado a essa missão (itens dimensionados por
-sessão, com critério de aceitação) está em `docs/oportunidades.md`.
+Convenção de nomenclatura: os códigos `O*` do backlog (O1..O12) são
+exclusivos dos trackers de processo (`docs/oportunidades.md`,
+`docs/gaps.md`) e não devem ser citados em código nem em documentação
+permanente.
 
 Acesso às UIs sem port-forward: ingress Traefik (DaemonSet, hostPorts
 8088/8443 — a porta 80 é do Apache do host) em
 `https://<serviço>.capiba.local:8443` (api, grafana, marquez, iceberg,
-minio, s3, trino, airflow); o `scripts/setup.sh` mapeia os hosts no
-`/etc/hosts` e verifica as ferramentas de cluster (docker + grupo docker,
-kubectl, helm). O certificado é self-signed (wildcard `*.capiba.local`,
-gerado por `scripts/gen-certs.sh` no secret `capiba-tls`) — o browser pede
-exceção de segurança. HTTP na 8088 segue respondendo (sem redirect, pois
-o redirect de entrypoint não carrega a porta externa). CI em
-`.github/workflows/ci.yml` (ruff, mypy, pytest com piso de cobertura de
-85% — também aplicado pelo hook `pytest-cov` do pre-commit).
+minio, s3, trino, airflow); `scripts/setup.sh` mapeia os hosts no
+`/etc/hosts`. Certificado self-signed (wildcard `*.capiba.local`,
+`scripts/gen-certs.sh`, secret `capiba-tls`) — o browser pede exceção.
+HTTP na 8088 segue respondendo (sem redirect). CI em
+`.github/workflows/ci.yml` (ruff, mypy, pytest com piso de 85% — também
+aplicado pelo hook `pytest-cov` do pre-commit).
 
-SSO: Keycloak (chart, realm `capiba`) é o IdP OIDC de todas as UIs — portal
-capiba-dashboard na API (`/`, `src/capiba/api/portal.py`), Grafana, Airflow
-(FAB OAuth), MinIO Console, Lakekeeper UI e Headlamp. Usuário dev:
-`capiba`/`capiba-sso` (`keycloak.devUser`), ressincronizado a cada
-`make helm-upgrade` pelo hook `templates/keycloak/job-sync-user.yaml` (o
-`--import-realm` só cria o realm no primeiro boot). O issuer é HTTPS em
-`https://keycloak.capiba.local:8443` (os pods confiam no cert self-signed via
-CA `capiba-tls` montada pela chart como `SSL_CERT_FILE`);
-um rewrite de CoreDNS (`scripts/cluster.sh`, passo 4) resolve esse host para
-o ClusterIP do Traefik (pinado na instalação e reutilizado depois — o
-clusterIP é imutável), e backchannels de máquina usam o
-DNS de serviço `capiba-keycloak:8080`. Clientes de máquina do lake (Trino,
-pyiceberg, `init_buckets.py`) usam o client `capiba-services`
-(client_credentials). Fallbacks locais: MinIO root, Grafana admin
-(`grafana.auth`) e token do Headlamp (`make dashboard-token`).
+SSO: Keycloak é o IdP OIDC de todas as UIs — portal capiba-dashboard na
+API (`/`, `api/portal.py`), Grafana, Airflow (FAB OAuth), MinIO Console,
+Lakekeeper UI e Headlamp. Usuário dev: `capiba`/`capiba-sso`
+(`keycloak.devUser`), ressincronizado a cada `make helm-upgrade` pelo
+hook `templates/keycloak/job-sync-user.yaml`. O issuer é HTTPS em
+`https://keycloak.capiba.local:8443` (pods confiam no cert via CA
+`capiba-tls` como `SSL_CERT_FILE`); um rewrite de CoreDNS
+(`scripts/cluster.sh`, passo 4) resolve esse host para o ClusterIP do
+Traefik (pinado — clusterIP é imutável), e backchannels de máquina usam
+`capiba-keycloak:8080`. Clientes de máquina do lake (Trino, pyiceberg,
+`init_buckets.py`) usam o client `capiba-services` (client_credentials).
+Fallbacks locais: MinIO root, Grafana admin (`grafana.auth`) e token do
+Headlamp (`make dashboard-token`).
 
 ## Processo de desenvolvimento
 
@@ -447,15 +444,14 @@ usuário antes de commitar.
 
 A redução de tokens do RTK é aplicada por um hook **block-and-suggest**
 mantido no projeto: `.kimi/hooks/rtk-rewrite.py` (PreToolUse sobre `Bash`).
-O hook consulta `rtk rewrite` — a fonte única de reescrita do próprio RTK —
-e bloqueia o comando original com a forma RTK como sugestão; o agente
-reemite o comando já reescrito. É fail-open: sem `rtk` na máquina ou sem o
-arquivo no projeto, nada é bloqueado.
+O hook consulta `rtk rewrite` e bloqueia o comando original com a forma RTK
+como sugestão; o agente reemite já reescrito. Fail-open: sem `rtk` na
+máquina ou sem o arquivo no projeto, nada é bloqueado.
 
 O Kimi só registra hooks no `~/.kimi/config.toml` global (não há config de
-projeto para hooks). Em cada máquina, basta uma entrada apontando para o
-caminho relativo — o working directory do hook é o projeto da sessão, então
-ela vale para qualquer checkout que tenha o arquivo:
+projeto). Em cada máquina, basta uma entrada apontando para o caminho
+relativo — o working directory do hook é o projeto da sessão, então ela
+vale para qualquer checkout que tenha o arquivo:
 
 ```toml
 [[hooks]]
@@ -465,72 +461,17 @@ command = "/usr/bin/python3 .kimi/hooks/rtk-rewrite.py"
 timeout = 10
 ```
 
-### Command Rewriting Rules
+Comandos reescritos (redução de 60-90%): `ls`/`tree` → `rtk ls`;
+`cat`/`head`/`tail` → `rtk read`; `grep`/`rg` → `rtk grep`; `git
+status`/`log`/`diff`/`add`/`commit`/`push` → `rtk git ...`; `pytest` →
+`rtk pytest`; `ruff check` → `rtk ruff check`; `docker ps`/`logs` →
+`rtk docker ...`.
 
-Comandos com equivalente RTK (bloqueados pelo hook até serem reemitidos na
-forma reescrita). Reduzem o consumo de tokens em 60-90% nos comandos de dev
-mais comuns:
-
-| Original | Rewritten | Reduction |
-|---|---|---|
-| `ls` | `rtk ls` | ~70% |
-| `tree` | `rtk ls` | ~70% |
-| `cat <file>` | `rtk read <file>` | ~80% |
-| `head <file>` | `rtk read <file>` | ~80% |
-| `tail <file>` | `rtk read <file>` | ~80% |
-| `grep <pattern>` | `rtk grep <pattern>` | ~75% |
-| `rg <pattern>` | `rtk grep <pattern>` | ~75% |
-| `git status` | `rtk git status` | ~85% |
-| `git log` | `rtk git log` | ~90% |
-| `git diff` | `rtk git diff` | ~80% |
-| `git add` | `rtk git add` | ~95% |
-| `git commit` | `rtk git commit` | ~95% |
-| `git push` | `rtk git push` | ~95% |
-| `pytest` | `rtk pytest` | ~90% |
-| `ruff check` | `rtk ruff check` | ~80% |
-| `docker ps` | `rtk docker ps` | ~70% |
-| `docker logs` | `rtk docker logs` | ~80% |
-
-### Explicit RTK Commands
-
-When Kimi built-in tools (`Read`, `Grep`, `Glob`) are used, the bash hook does not
-apply. Use these explicit RTK commands instead:
-
-```bash
-rtk read <file>              # Smart file reading
-rtk read <file> -l aggressive # Signatures only (strips bodies)
-rtk smart <file>             # 2-line heuristic code summary
-rtk grep <pattern> <path>    # Grouped search results
-rtk find <pattern> <path>    # Compact find results
-rtk diff <file1> <file2>     # Condensed diff
-```
-
-### Analytics
-
-```bash
-rtk gain              # Summary stats
-rtk gain --graph      # ASCII graph (last 30 days)
-rtk gain --history    # Recent command history
-rtk gain --daily      # Day-by-day breakdown
-rtk discover          # Find missed savings opportunities
-```
-
-### Configuration
-
-`~/.config/rtk/config.toml`:
-
-```toml
-[hooks]
-exclude_commands = []
-
-[tee]
-enabled = true
-mode = "failures"
-```
-
-### Notes
-
-- RTK only intercepts bash tool calls. Kimi built-in tools bypass the hook.
-- For compact output from built-in tools, use shell commands or explicit `rtk` calls.
-- RTK ships no tokenizer. Token estimates are `bytes / 4`.
-- Percentages are reductions in bash output, not reductions in total bill.
+Com as ferramentas built-in do Kimi (`Read`, `Grep`, `Glob`) o hook não se
+aplica; para saída compacta, use explicitamente: `rtk read <file>` (`-l
+aggressive` = só assinaturas), `rtk smart <file>`, `rtk grep <pat> <path>`,
+`rtk find <pat> <path>`, `rtk diff <f1> <f2>`. Analytics: `rtk gain`
+(`--graph`/`--history`/`--daily`) e `rtk discover`. Config em
+`~/.config/rtk/config.toml` (`[hooks] exclude_commands`, `[tee] enabled,
+mode = "failures"`). Notas: RTK só intercepta bash; estimativas de token
+são `bytes / 4`; percentuais são redução na saída bash, não na conta total.

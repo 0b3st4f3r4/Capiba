@@ -1,4 +1,4 @@
-"""Sanction screening by exact document match (battery D-06, O3).
+"""Sanction screening by exact document match (battery D-06).
 
 Responsibility: emit the ``sanctioned_supplier`` signal for suppliers of
 silver contracts whose CNPJ/CPF matches a silver ``sanctions`` record

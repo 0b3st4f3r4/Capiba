@@ -214,7 +214,7 @@ def _reviewer_of(user: dict[str, Any] | None, form_reviewer: str) -> str:
 async def triage_page(
     request: Request, status: TriageStatus = TriageStatus.PENDING_REVIEW
 ) -> Response:
-    """Editorial triage queue (O10): signals under review + precision report.
+    """Editorial triage queue: signals under review + precision report.
 
     Degrades gracefully: with ArangoDB down the page renders with an
     "indisponível" notice instead of failing.

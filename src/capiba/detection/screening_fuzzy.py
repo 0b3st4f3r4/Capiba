@@ -1,4 +1,4 @@
-"""Fuzzy sanction screening by name + masked document (battery D-06b, O3).
+"""Fuzzy sanction screening by name + masked document (battery D-06b).
 
 Responsibility: emit the ``sanctioned_name_match`` signal for suppliers of
 silver contracts whose **name** matches a silver ``sanctions`` record
@@ -18,8 +18,8 @@ vigent at the contract's signature date, under the semantics declared in
   signal for that same sanction.
 
 Unlike the factual signal, the fuzzy match is a computed hypothesis (the
-score is the similarity, not binary) and always goes through human triage
-(O10). Weights and thresholds live in the battery config
+score is the similarity, not binary) and always goes through human triage.
+Weights and thresholds live in the battery config
 (``experiments/detect/D-06b.json``), never only in code.
 
 Dependencies: capiba.detection.entities, capiba.detection.signals

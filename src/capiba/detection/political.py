@@ -1,6 +1,6 @@
 """Political connection signal: campaign donors x suppliers of the supported entity.
 
-Responsibility: emit the ``political_connection`` signal (O8) when a
+Responsibility: emit the ``political_connection`` signal when a
 campaign donor of an elected mayor becomes a supplier of that mayor's
 municipality, under the five gates pre-registered in
 ``docs/preregistrations/PR-D-08.md`` (section 3):

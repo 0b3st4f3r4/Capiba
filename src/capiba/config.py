@@ -96,6 +96,22 @@ TRINO_USER = os.getenv("TRINO_USER", "capiba")
 TRINO_PASSWORD = os.getenv("TRINO_PASSWORD", "capiba-trino")
 
 # =============================================================================
+# Public export
+# =============================================================================
+
+# MinIO bucket that receives the public batch export of the LGPD-cleared
+# gold marts (CSV/Parquet, versioned marts/<mart>/dt=<YYYY-MM-DD>/). The
+# public-read bucket policy is a deploy decision (charts/values) — the
+# export never touches buckets outside this one.
+PUBLIC_EXPORT_BUCKET = os.getenv("PUBLIC_EXPORT_BUCKET", "capiba-public")
+
+# Expiry (in seconds) of the presigned download URLs issued by the public
+# API (GET /v1/public/marts/{name}/{csv|parquet}).
+PUBLIC_EXPORT_PRESIGN_EXPIRY_S = int(
+    os.getenv("PUBLIC_EXPORT_PRESIGN_EXPIRY_S", "3600")
+)
+
+# =============================================================================
 # Public APIs
 # =============================================================================
 
@@ -226,12 +242,12 @@ DETECTION_COLLUSION_MIN_WINS = int(os.getenv("DETECTION_COLLUSION_MIN_WINS", "3"
 DETECTION_COLLUSION_MIN_BUYERS = int(os.getenv("DETECTION_COLLUSION_MIN_BUYERS", "1"))
 
 # Merge threshold for the same_as edges written by the entity resolution
-# (O5) after the CNPJ graph load. Calibrated by batteries D-07/D-07b
+# after the CNPJ graph load. Calibrated by batteries D-07/D-07b
 # (PR-D-07/PR-D-07b); lowering or raising it requires a new pre-registration
 # (monotonicity invariant, PR-D-07 section 6).
 DETECTION_ENTITY_THRESHOLD = float(os.getenv("DETECTION_ENTITY_THRESHOLD", "0.85"))
 
-# Gates of the political_connection signal (O8): minimum total donated to the
+# Gates of the political_connection signal: minimum total donated to the
 # elected candidate's campaign, minimum share of the donor-supplier in the
 # buyer's contracted value within the mandate window, and the share that
 # saturates the score (min(1.0, share / reference)). Pre-registered
@@ -244,6 +260,18 @@ DETECTION_POLITICAL_MIN_SHARE = float(
 )
 DETECTION_POLITICAL_SCORE_REFERENCE = float(
     os.getenv("DETECTION_POLITICAL_SCORE_REFERENCE", "0.25")
+)
+
+# Gates of the anomalous_geography signal: strict distance gate (km)
+# between the supplier's and the buyer's municipality seats, and the
+# distance that saturates the score (min(1.0, distance / reference)).
+# Pre-registered calibration placeholders (PR-D-09); changing them
+# requires PR-D-09b.
+DETECTION_GEOGRAPHY_MAX_DISTANCE_KM = float(
+    os.getenv("DETECTION_GEOGRAPHY_MAX_DISTANCE_KM", "100")
+)
+DETECTION_GEOGRAPHY_SCORE_REFERENCE = float(
+    os.getenv("DETECTION_GEOGRAPHY_SCORE_REFERENCE", "1000")
 )
 
 # =============================================================================
@@ -284,6 +312,14 @@ KEYCLOAK_PUBLIC_ISSUER = os.getenv(
 )
 KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "")
 KEYCLOAK_CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
+
+# =============================================================================
+# Municipal alert subscriptions
+# =============================================================================
+
+# Public base URL of the API, used to build the confirmation, unsubscribe
+# and evidence links embedded in the subscription e-mails.
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", f"https://api.{PORTAL_DOMAIN}:8443")
 
 # =============================================================================
 # Logging

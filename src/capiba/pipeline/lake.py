@@ -293,8 +293,8 @@ CANDIDACIES_PARTITION_SPEC = PartitionSpec(
 # Iceberg schema of the silver ``rfb_municipalities`` table: the TOM code
 # -> municipality name reference shipped with the CNPJ dump
 # (``Municipios.zip``), the missing link between
-# ``establishments.municipio`` (a TOM code) and the geographic reference
-# (O6, slice 1). Partitioned by the ingestion date ``dt``.
+# ``establishments.municipio`` (a TOM code) and the geographic reference.
+# Partitioned by the ingestion date ``dt``.
 RFB_MUNICIPALITIES_SCHEMA = Schema(
     NestedField(1, "tom_code", StringType(), required=True),
     NestedField(2, "name", StringType(), required=False),

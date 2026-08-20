@@ -27,6 +27,8 @@ from capiba.config import (
     DETECTION_COLLUSION_MIN_BUYERS,
     DETECTION_COLLUSION_MIN_WINS,
     DETECTION_ENTITY_THRESHOLD,
+    DETECTION_GEOGRAPHY_MAX_DISTANCE_KM,
+    DETECTION_GEOGRAPHY_SCORE_REFERENCE,
     DETECTION_POLITICAL_MIN_DONATION,
     DETECTION_POLITICAL_MIN_SHARE,
     DETECTION_POLITICAL_SCORE_REFERENCE,
@@ -35,6 +37,7 @@ from capiba.config import (
 from capiba.db.arangodb import get_capiba_db
 from capiba.db.triage import register_signals
 from capiba.detection.entities import resolve_entities
+from capiba.detection.geography import anomalous_geography_signals
 from capiba.detection.graphs import collusion_eligibility, pair_buyers_from_eligibility
 from capiba.detection.political import political_connection_signals
 from capiba.detection.screening import sanctioned_supplier_signals
@@ -269,7 +272,7 @@ def persist_cnpj_entities(execution_date: str | None = None) -> dict[str, Any]:
     Reads the silver ``companies``/``partners`` tables batch by batch and
     bulk-upserts the FtM graph vertices (``companies``/``persons``) and
     ``ownership``/``directorship`` edges, so the large dump tables never
-    materialize in memory. After the load, entity resolution (O5) writes
+    materialize in memory. After the load, entity resolution writes
     ``same_as`` edges between person vertices at or above
     ``DETECTION_ENTITY_THRESHOLD`` — best-effort: a resolution failure is
     reported apart (``resolution_error``) and never fails the graph load.
@@ -454,7 +457,7 @@ def task_detect(**context: Any) -> dict[str, Any]:
 
     signals = detect_fraud_signals(contracts)
 
-    # Best-effort: sanction screening (O3) never fails the task (the silver
+    # Best-effort: sanction screening never fails the task (the silver
     # sanctions table may not exist yet).
     try:
         sanctions = [
@@ -465,7 +468,7 @@ def task_detect(**context: Any) -> dict[str, Any]:
     except Exception as e:
         logger.warning("Sanction screening unavailable (silver sanctions): %s", e)
 
-    # Best-effort: political connection screening (O8, PR-D-08) never fails
+    # Best-effort: political connection screening (PR-D-08) never fails
     # the task (the silver TSE tables may not exist yet). The mandate window
     # derives from the ingested election year.
     try:
@@ -492,6 +495,36 @@ def task_detect(**context: Any) -> dict[str, Any]:
     except Exception as e:
         logger.warning("Political connection detection unavailable (silver tse): %s", e)
 
+    # Best-effort: anomalous geography screening (PR-D-09) never fails
+    # the task (the silver RFB/reference tables may not exist yet). The
+    # municipality reference is loaded idempotently first, so a fresh
+    # cluster needs no extra DAG run.
+    try:
+        lake.load_municipalities(run_date=run_date)
+        establishments = [
+            row for batch in lake.read_silver_entities("establishments") for row in batch
+        ]
+        rfb_municipalities = [
+            row
+            for batch in lake.read_silver_entities("rfb_municipalities")
+            for row in batch
+        ]
+        municipalities = [
+            row for batch in lake.read_silver_entities("municipalities") for row in batch
+        ]
+        signals.extend(
+            anomalous_geography_signals(
+                contracts,
+                establishments,
+                rfb_municipalities,
+                municipalities,
+                max_distance_km=DETECTION_GEOGRAPHY_MAX_DISTANCE_KM,
+                score_distance_reference=DETECTION_GEOGRAPHY_SCORE_REFERENCE,
+            )
+        )
+    except Exception as e:
+        logger.warning("Geography detection unavailable (silver geo chain): %s", e)
+
     # Best-effort: graph signals never fail the task (ArangoDB may be down).
     graph_snapshot: dict[str, Any] | None = None
     try:
@@ -513,7 +546,7 @@ def task_detect(**context: Any) -> dict[str, Any]:
                 dict(pair_buyers),
             )
         )
-        # Editorial triage queue (O10): new signals enter as pending_review.
+        # Editorial triage queue: new signals enter as pending_review.
         register_signals(db, signals)
     except Exception as e:
         logger.warning("Collusion detection unavailable (ArangoDB): %s", e)
@@ -524,7 +557,7 @@ def task_detect(**context: Any) -> dict[str, Any]:
     except Exception as e:
         logger.warning("Failed to write fraud signals to the gold layer: %s", e)
 
-    # Best-effort: reproducible evidence packages (O9) never fail the task.
+    # Best-effort: reproducible evidence packages never fail the task.
     try:
         if signals:
             store_signal_packages(

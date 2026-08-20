@@ -1,4 +1,4 @@
-"""Reproducible evidence packages per detected signal (O9).
+"""Reproducible evidence packages per detected signal.
 
 Responsibility: build and store the evidence package of each fraud
 signal — operator, run window, code version and source rows with a
@@ -11,7 +11,7 @@ Two artifacts per detect run, stored via ``EvidenceStorage``:
   ``anomalous_duration`` operator pools IQR over the whole batch, so
   per-entity rows alone would not reproduce the score) plus the list of
   emitted signals;
-- one **manifest per signal**, keyed by the O10 triage key
+- one **manifest per signal**, keyed by the triage key
   (``{entity_type}:{entity_id}:{signal_type}``), referencing the batch
   by its content hash (``batch_sha256``).
 
@@ -160,7 +160,7 @@ def build_signal_manifest(
             stored (PR-D-03); makes the signal reproducible.
 
     Returns:
-        Signal manifest payload with the O10 triage ``signal_key``.
+        Signal manifest payload with the triage ``signal_key``.
     """
     key = signal_key(
         str(signal["entity_type"]),
@@ -302,7 +302,7 @@ def store_signal_packages(
 
 
 def _score(signals: list[dict[str, Any]], signal_key_: str) -> float | None:
-    """Score of the signal identified by the O10 key, None when absent."""
+    """Score of the signal identified by the triage key, None when absent."""
     for signal in signals:
         key = signal_key(
             str(signal["entity_type"]),
@@ -325,7 +325,7 @@ def reproduce_signal(
 
     Args:
         batch_package: Batch package payload (as stored).
-        signal_key_: O10 triage key of the signal to reproduce.
+        signal_key_: Triage key of the signal to reproduce.
 
     Returns:
         ``{"signal_key", "expected", "actual", "integrity", "match"}`` —

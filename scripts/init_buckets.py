@@ -12,6 +12,9 @@ Buckets (medallion layout plus infrastructure):
 - ``capiba-artifacts`` — code/DAG artifacts synced by Airflow
 - ``capiba-airflow-logs`` — Airflow remote task logs
 - ``capiba-backups`` — logical database backups (CronJob)
+- ``capiba-public`` — public batch export of the LGPD-cleared gold marts
+  (CSV/Parquet under marts/<mart>/dt=<date>/). The public-read bucket
+  policy is a deploy decision (charts/values), deliberately NOT set here.
 
 Iceberg warehouses (Lakekeeper REST catalog), one per medallion bucket:
 
@@ -50,6 +53,7 @@ BUCKETS = [
     "capiba-artifacts",
     "capiba-airflow-logs",
     "capiba-backups",
+    "capiba-public",
 ]
 
 # Iceberg warehouse name -> MinIO bucket backing it.

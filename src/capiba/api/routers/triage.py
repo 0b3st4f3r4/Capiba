@@ -25,6 +25,7 @@ from capiba.api.schemas import (
 )
 from capiba.db import triage
 from capiba.detection.signals import SignalType
+from capiba.notification import subscriptions as subscription_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,10 @@ async def review_signal(key: str, body: TriageRequest) -> SignalReview:
     except Exception as exc:
         logger.warning("Triage review failed: %s", exc)
         raise HTTPException(status_code=503, detail=_HTTP_503_DETAIL) from exc
+    if doc.get("status") == str(triage.TriageStatus.PUBLISHED):
+        # Notify the confirmed subscribers of the signal's municipality.
+        # Best-effort — never raises, never breaks the transition.
+        subscription_alerts.notify_published_signal(db, doc)
     return _public(doc)
 
 

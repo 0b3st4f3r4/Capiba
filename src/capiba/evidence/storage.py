@@ -125,7 +125,7 @@ class EvidenceStorage:
     def _validate_metadata(self, metadata: dict[str, Any]) -> None:
         """Validates presence of required metadata.
 
-        Signal evidence packages (O9) are keyed by ``signal_key`` instead
+        Signal evidence packages are keyed by ``signal_key`` instead
         of ``contract_id`` — the signal spans several contracts.
 
         Args:
@@ -270,7 +270,7 @@ class EvidenceStorage:
         return self._list_by_meta("x-amz-meta-contract-id", contract_id)
 
     def list_by_signal(self, signal_key: str) -> list[dict[str, Any]]:
-        """Lists all evidence packages linked to a signal (O9/O10 key).
+        """Lists all evidence packages linked to a signal (triage key).
 
         Args:
             signal_key: Triage key ``{entity_type}:{entity_id}:{signal_type}``.

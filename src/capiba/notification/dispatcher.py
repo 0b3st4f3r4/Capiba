@@ -126,6 +126,39 @@ class NotificationDispatcher:
 </html>
 """)
 
+        self._templates["subscription"] = Template("""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>{{ title }}</title></head>
+<body style="font-family: monospace; max-width: 600px; margin: 0 auto;">
+<h2 style="color: #1d4ed8;">[CAPIBA] {{ title }}</h2>
+<p>{{ message }}</p>
+{% if municipality %}
+<p><strong>Município:</strong> {{ municipality }}{% if uf %} — {{ uf }}{% endif %}</p>
+{% endif %}
+{% if signal_type %}
+<p><strong>Sinal publicado:</strong> {{ signal_type }} (score {{ score | default('—') }})</p>
+<p><strong>Entidade:</strong> {{ entity | default('—') }}</p>
+{% endif %}
+{% if evidence_url %}
+<p><strong>Pacote de evidências:</strong> <a href="{{ evidence_url }}">{{ evidence_url }}</a></p>
+{% endif %}
+{% if confirm_url %}
+<p><strong>Confirmar assinatura:</strong> <a href="{{ confirm_url }}">{{ confirm_url }}</a></p>
+{% endif %}
+{% if unsubscribe_url %}
+<p style="font-size: 12px;">Para cancelar esta assinatura:
+  <a href="{{ unsubscribe_url }}">{{ unsubscribe_url }}</a></p>
+{% endif %}
+<hr>
+<p style="font-size: 12px; color: #666;">
+  Capiba — Institutional farce capture engine<br>
+  This is an automated e-mail. Do not reply.
+</p>
+</body>
+</html>
+""")
+
     async def dispatch(self, alert: NotificationAlert) -> bool:
         """Send notification through the configured channel.
 
@@ -159,13 +192,16 @@ class NotificationDispatcher:
         try:
             # metadata is always a dict after __post_init__
             metadata = alert.metadata or {}
-            # Detection alerts carry signals; everything else (quality
-            # alerts, periodic reports) uses the quality template.
-            template_key = (
-                "detection_alert"
-                if "signals" in metadata or "detection" in alert.title.lower()
-                else "quality_alert"
-            )
+            # An explicit template in metadata wins; otherwise detection
+            # alerts carry signals and everything else (quality alerts,
+            # periodic reports) uses the quality template.
+            explicit = str(metadata.get("template") or "")
+            if explicit in self._templates:
+                template_key = explicit
+            elif "signals" in metadata or "detection" in alert.title.lower():
+                template_key = "detection_alert"
+            else:
+                template_key = "quality_alert"
             template = self._templates.get(template_key)
             context = {
                 "title": alert.title,

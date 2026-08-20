@@ -1,4 +1,4 @@
-"""Entity resolution matchers (O5).
+"""Entity resolution matchers.
 
 Chunk: detection
 Responsibility: Score whether two records refer to the same real-world

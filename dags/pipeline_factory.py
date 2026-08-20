@@ -80,16 +80,16 @@ SOURCE_INLETS = {
     "cnep": Asset(uri="capiba://source/cnep"),
     # Municipal official gazettes via the Querido Diário API (OKBR).
     "querido_diario": Asset(uri="capiba://source/querido_diario"),
-    # TSE campaign finance dump (prestação de contas eleitorais, O8).
+    # TSE campaign finance dump (prestação de contas eleitorais).
     "tse": Asset(uri="capiba://source/tse"),
 }
 
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
 # Silver sanctions table (entities_collect normalize).
 SILVER_SANCTIONS = Asset(uri="capiba://silver/sanctions")
-# Silver campaign donations table (TSE file_dump normalize, O8).
+# Silver campaign donations table (TSE file_dump normalize).
 SILVER_CAMPAIGN_DONATIONS = Asset(uri="capiba://silver/campaign_donations")
-# Silver candidacies table (TSE consulta_cand — the elected gate, O8).
+# Silver candidacies table (TSE consulta_cand — the elected gate).
 SILVER_CANDIDACIES = Asset(uri="capiba://silver/candidacies")
 # Silver CNPJ entity tables (file_dump normalize) and their graph load.
 SILVER_CNPJ_ENTITIES = [

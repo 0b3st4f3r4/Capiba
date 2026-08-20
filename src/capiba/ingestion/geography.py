@@ -1,4 +1,4 @@
-"""Brazilian municipality geographic reference (O6, slice 1).
+"""Brazilian municipality geographic reference.
 
 Responsibility: resolve Brazilian municipalities to their IBGE code and
 lat/long coordinates, feeding the geographic enrichment of the graph

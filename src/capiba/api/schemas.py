@@ -10,7 +10,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from capiba.db.triage import TriageStatus
 from capiba.detection.signals import SignalType
@@ -28,6 +28,8 @@ __all__ = [
     "SignalReview",
     "SignalType",
     "SignalsResponse",
+    "SubscriptionRequest",
+    "SubscriptionStatusResponse",
     "TriageMetrics",
     "TriageRequest",
     "TriageStatus",
@@ -163,3 +165,17 @@ class TriageMetrics(BaseModel):
     rejected: int
     published: int
     precision: float | None = None
+
+
+class SubscriptionRequest(BaseModel):
+    """Request of the POST /v1/subscriptions endpoint."""
+
+    email: EmailStr = Field(..., description="Subscriber e-mail (personal data, LGPD)")
+    ibge_code: str = Field(..., pattern=r"^\d{7}$", description="7-digit IBGE municipality code")
+
+
+class SubscriptionStatusResponse(BaseModel):
+    """Response of the /v1/subscriptions endpoints (never enumerates)."""
+
+    status: str
+    detail: str

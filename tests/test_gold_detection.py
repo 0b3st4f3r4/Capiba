@@ -39,15 +39,19 @@ def gold_detection():
 
 
 def test_dag_structure(gold_detection) -> None:
-    """The DAG chains dbt_run -> detect on the post-ingestion schedule."""
+    """The DAG chains dbt_run -> detect / export_public_marts (O11)."""
     dag = gold_detection.dag
 
     assert dag.dag_id == "gold_detection"
     assert dag.schedule == "0 8 * * *"
     assert dag.catchup is False
-    assert {t.task_id for t in dag.tasks} == {"dbt_run", "detect"}
-    assert dag.get_task("dbt_run").downstream_task_ids == {"detect"}
+    assert {t.task_id for t in dag.tasks} == {"dbt_run", "detect", "export_public_marts"}
+    assert dag.get_task("dbt_run").downstream_task_ids == {
+        "detect",
+        "export_public_marts",
+    }
     assert dag.get_task("detect").downstream_task_ids == set()
+    assert dag.get_task("export_public_marts").downstream_task_ids == set()
 
 
 def test_retry_and_timeout_defaults(gold_detection) -> None:
@@ -72,3 +76,7 @@ def test_openlineage_assets(gold_detection) -> None:
     detect = dag.get_task("detect")
     assert {a.uri for a in detect.outlets} == {"capiba://gold/fraud_signals"}
     assert {a.uri for a in detect.inlets} == {"capiba://silver/contracts"}
+
+    export = dag.get_task("export_public_marts")
+    assert {a.uri for a in export.outlets} == {"capiba://public/marts"}
+    assert "capiba://gold/contracts_daily" in {a.uri for a in export.inlets}

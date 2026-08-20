@@ -1,4 +1,4 @@
-"""Contract amendment red flags (battery D-05, O2).
+"""Contract amendment red flags (battery D-05).
 
 Responsibility: compute the amendment flags of one contract from its
 bronze observation sequence (payloads of ``/v1/contratos`` and

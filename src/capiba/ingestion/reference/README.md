@@ -8,7 +8,7 @@ Municípios brasileiros com código IBGE, latitude/longitude e código SIAFI.
   (`csv/municipios.csv`)
 - Licença: [MIT](https://github.com/kelvins/Municipios-Brasileiros/blob/master/LICENSE)
   (© kelvins e contribuidores)
-- Uso: referência geográfica do sinal `anomalous_geography` (O6) —
+- Uso: referência geográfica do sinal `anomalous_geography` —
   de-para (nome, UF) → (IBGE, lat/long, SIAFI) em
   `src/capiba/ingestion/geography.py` e carga da silver `municipalities`.
 - Nota: o diretório se chama `reference/` e não `data/` porque o

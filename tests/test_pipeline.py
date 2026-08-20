@@ -435,6 +435,84 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "political_connection" not in {s["signal_type"] for s in signals}
 
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_adds_anomalous_geography_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Geography screening (O6, PR-D-09): a supplier whose municipality
+        seat is past the strict 100 km gate signals via the silver chain."""
+        contract = _silver_contract("C001", supplier_cnpj="11111111000111")
+        contract["buyer"] = {"siafi_code": "2051", "city": "JOAO PESSOA", "uf": "PB"}
+        mock_lake.read_silver_contracts.return_value = [contract]
+        batches = {
+            "sanctions": [],
+            "campaign_donations": [],
+            "candidacies": [],
+            "establishments": [
+                [
+                    {
+                        "cnpj": "11111111000111",
+                        "municipio": "2531",
+                        "uf": "PE",
+                        "is_matriz": True,
+                    }
+                ]
+            ],
+            "rfb_municipalities": [[{"tom_code": "2531", "name": "RECIFE"}]],
+            "municipalities": [
+                [
+                    {"name": "Recife", "uf": "PE", "ibge_code": "2611606",
+                     "latitude": -8.0476, "longitude": -34.8770},
+                    {"name": "João Pessoa", "uf": "PB", "ibge_code": "2507507",
+                     "latitude": -7.1195, "longitude": -34.8450},
+                ]
+            ],
+        }
+        mock_lake.read_silver_entities.side_effect = lambda entity: iter(
+            batches[entity]
+        )
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        mock_lake.load_municipalities.assert_called_once()
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        geo = [s for s in signals if s["signal_type"] == "anomalous_geography"]
+        assert len(geo) == 1
+        assert geo[0]["entity_type"] == "supplier"
+        assert geo[0]["entity_id"] == "11111111000111"
+        assert geo[0]["score"] == 0.1033  # Recife x João Pessoa anchor
+        assert summary["signals"] == len(signals)
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_geography_failure_keeps_other_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """A failure in the geo silver chain must not abort the detection."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        batches = {"sanctions": [], "campaign_donations": [], "candidacies": []}
+
+        def _read(entity: str) -> Any:
+            if entity not in batches:
+                raise FileNotFoundError("no table")
+            return iter(batches[entity])
+
+        mock_lake.read_silver_entities.side_effect = _read
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert "anomalous_geography" not in {s["signal_type"] for s in signals}
+
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_arango_failure_keeps_statistical_signals(

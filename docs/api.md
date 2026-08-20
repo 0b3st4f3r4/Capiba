@@ -261,7 +261,7 @@ portal abre sem login. As rotas do portal e do fluxo de autenticação:
 | `GET /auth/login` | Inicia o fluxo OIDC (redirect para o Keycloak); com SSO desabilitado, redireciona de volta para `/` |
 | `GET /auth/callback` | Callback do fluxo OIDC: valida o token (issuer público), grava o `userinfo` na sessão e redireciona para `/` |
 | `GET /auth/logout` | Limpa a sessão e redireciona para `/` |
-| `GET /triage` | Página de triagem editorial (O10): fila de sinais por estado (`?status=`), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
+| `GET /triage` | Página de triagem editorial: fila de sinais por estado (`?status=`), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
 | `POST /triage/review` | Aplica a transição editorial vinda do formulário da página (revisor do campo ou da sessão SSO); erros de validação voltam como banner na fila (redirect 303), nunca como página 4xx |
 
 ## Evidências
@@ -346,8 +346,8 @@ Baixa o conteúdo de uma evidência pelo hash SHA-256
 
 ### GET /v1/signals/{key}/evidence
 
-Lista os pacotes de evidência reproduzíveis (O9) de um sinal, onde `key` é
-a chave de triagem `{entity_type}:{entity_id}:{signal_type}` (O10). O
+Lista os pacotes de evidência reproduzíveis de um sinal, onde `key` é
+a chave de triagem `{entity_type}:{entity_id}:{signal_type}`. O
 `task_detect` grava, a cada run, um pacote de lote (linhas silver da run +
 `source_rows_sha256` + janela + versão do código) e um manifesto por sinal
 referenciando o lote via `batch_sha256` — o download do conteúdo segue pelo
@@ -366,7 +366,7 @@ substitui o `contract_id` obrigatório. Sinais derivados de grafo
 
 ## Triagem editorial
 
-A triagem é a fila editorial dos sinais detectados (O10): o `task_detect`
+A triagem é a fila editorial dos sinais detectados: o `task_detect`
 registra cada sinal na coleção ArangoDB `signal_reviews` com estado
 `pending_review`, sob a chave estável `{entity_type}:{entity_id}:{signal_type}`;
 assim a triagem sobrevive à recomputação diária, que apenas atualiza score
@@ -414,3 +414,36 @@ revisor/motivo ausente), `503` (ArangoDB indisponível).
 Relatório de precisão por operador derivado dos rótulos humanos:
 contagens por status e `precision = confirmed / (confirmed + rejected)`
 (`null` sem rótulos).
+
+## Saída pública
+
+Rotas abertas (sem autenticação) de acesso ao export batch dos marts gold:
+o post step `export_public_marts` da DAG `gold_detection` publica os marts
+da allowlist LGPD (`capiba.pipeline.public_export.PUBLIC_MARTS`,
+fail-closed — mart sem classificação nunca é exportado nem servido) no
+bucket MinIO `capiba-public`, em CSV e Parquet versionados por data da run
+(`marts/<mart>/dt=<AAAA-MM-DD>/`, com `manifest.json` por export).
+
+### GET /v1/public/marts
+
+Lista os marts exportados, as datas disponíveis por mart e a justificativa
+da classificação LGPD.
+
+**Erros:** `503` (MinIO indisponível).
+
+### GET /v1/public/marts/{name}/{csv|parquet}
+
+Redireciona (302) para uma URL presignada do MinIO do export mais recente
+do mart; `?dt=AAAA-MM-DD` pina uma data específica. A presign expira em
+`PUBLIC_EXPORT_PRESIGN_EXPIRY_S` segundos (default 3600).
+
+**Erros:** `404` (mart fora da allowlist pública, ou data/formato sem
+export), `503` (MinIO indisponível).
+
+### GET /v1/public/methodology
+
+Documento de metodologia gerado automaticamente: descrição dos marts (do
+schema dbt), pipelines de ingestão (das specs YAML) e a classificação LGPD
+que rege o export (marts exportados e excluídos, com justificativa).
+Degrada graciosamente quando `dags/` e `dbt/` não estão na imagem da API
+(seções vazias).

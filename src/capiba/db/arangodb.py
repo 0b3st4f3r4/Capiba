@@ -38,7 +38,7 @@ VERTEX_COLLECTIONS = [
 ]
 EDGE_COLLECTIONS = ["participates", "won", "ownership", "directorship", "same_as"]
 
-# FtM vocabulary (O4): companies/persons are the FtM Company/Person
+# FtM vocabulary: companies/persons are the FtM Company/Person
 # vertices; ownership ({persons,companies} -> companies) and directorship
 # (persons -> companies) are the FtM Ownership/Directorship edges. The
 # legacy ``partners``/``partner_of``/``owns`` collections were renamed away
@@ -65,7 +65,7 @@ EDGE_DEFINITIONS: list[dict[str, Any]] = [
         "to_vertex_collections": ["companies"],
     },
     {
-        # Entity resolution (O5): computed hypothesis of identity between
+        # Entity resolution: computed hypothesis of identity between
         # person vertices, only above the pre-registered threshold.
         "edge_collection": "same_as",
         "from_vertex_collections": ["persons"],

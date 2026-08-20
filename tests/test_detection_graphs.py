@@ -1,8 +1,10 @@
 """Unit tests for the graph detection operators.
 
-Responsibility: Validate collusion, ownership and geography operators
+Responsibility: Validate collusion and ownership operators
 with a mocked ArangoDB (no live infrastructure). Collusion/ownership
-follow the adapted semantics of PR-D-02, section 3.
+follow the adapted semantics of PR-D-02, section 3. (The legacy
+``anomalous_geography`` AQL operator was removed — PR-D-09, Revisões
+2026-08-20; the signal lives in ``capiba.detection.geography``.)
 """
 
 from __future__ import annotations
@@ -10,7 +12,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from capiba.detection.graphs import (
-    anomalous_geography,
     collusion_eligibility,
     detect_collusion,
     pair_buyers_from_eligibility,
@@ -323,32 +324,3 @@ class TestPartnersOfBuyer:
         assert "INBOUND" in query
         assert "ownership, directorship" in query
         assert 'CONCAT("companies/", LEFT(supplierCnpj, 8))' in query
-
-
-class TestAnomalousGeography:
-    """Tests for anomalous_geography."""
-
-    def test_returns_anomalies(self, monkeypatch) -> None:
-        """Anomaly documents must be returned as-is."""
-        db = _fake_db()
-        anomalies = [{"supplier": "F1", "bid": "L1", "distance_km": 250.0}]
-        execute = MagicMock(return_value=anomalies)
-        monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
-
-        result = anomalous_geography(db=db, max_distance_km=50.0)
-
-        assert result == anomalies
-        bind_vars = execute.call_args.args[2]
-        assert bind_vars == {"graphName": "capiba_graph", "maxDistance": 50.0}
-
-    def test_creates_default_connection(self, monkeypatch) -> None:
-        """When db is None, get_capiba_db must provide the connection."""
-        db = _fake_db()
-        get_db = MagicMock(return_value=db)
-        monkeypatch.setattr("capiba.detection.graphs.get_capiba_db", get_db)
-        monkeypatch.setattr(
-            "capiba.detection.graphs.execute_aql", MagicMock(return_value=[])
-        )
-
-        assert anomalous_geography() == []
-        get_db.assert_called_once_with()

@@ -169,7 +169,7 @@ def fetch_contract_updates(
     agency_cnpj: str | None = None,
     page_size: int = 500,
 ) -> list[dict[str, Any]]:
-    """Fetches contracts from PNCP by *update* date (PR-D-05, O2).
+    """Fetches contracts from PNCP by *update* date (PR-D-05).
 
     Same payload as ``/v1/contratos`` (valorInicial, valorAcumulado,
     numeroRetificacao, vigências), keyed by the date of the last update —

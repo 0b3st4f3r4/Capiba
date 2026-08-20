@@ -84,7 +84,7 @@ async def get_partners_of_buyer(
 ) -> PartnersResponse:
     """Lists the partners (sócios) of the suppliers of a buying agency.
 
-    O4 acceptance criterion: answered by a graph traversal (contracts of
+    Answered by a graph traversal (contracts of
     the buyer → supplier CNPJ → FtM company → inbound
     ownership/directorship).
 

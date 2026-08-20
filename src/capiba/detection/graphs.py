@@ -1,8 +1,14 @@
 """Network analysis for coordinated fraud detection.
 
-Chunks: collusion_network, ownership_chain, anomalous_geography
+Chunks: collusion_network, ownership_chain
 Responsibility: Model buyer-supplier relationships via graphs
 in ArangoDB to detect collusion, shell companies and anomalous patterns.
+
+The legacy ``anomalous_geography`` AQL operator was removed (PR-D-09,
+Revisões 2026-08-20): it filtered ``bid`` vertices the graph never
+creates and approximated distance with a planar euclidean shortcut — the
+signal now lives in ``capiba.detection.geography`` as a pure function over
+the silver tables.
 
 Dependencies: python-arango
 """
@@ -149,7 +155,7 @@ def trace_ownership(
     Adapted semantics (PR-D-02, section 3): simple paths (no repeated
     vertex, cycles blocked via ``uniqueVertices: "path"``) OUTBOUND from
     ``companies/<cnpj_basico>`` over the FtM ``ownership`` edge collection
-    (O4 — fed with real corporate partners since then), depth
+    (fed with real corporate partners since then), depth
     1..``max_depth``. A 14-digit CNPJ is normalized to its ``cnpj_basico``
     (the vertex key).
 
@@ -189,7 +195,6 @@ def partners_of_buyer(
 ) -> list[dict[str, Any]]:
     """Lists the partners (sócios) of the suppliers of a buyer.
 
-    O4 acceptance criterion ("sócios de fornecedores de um órgão"):
     contracts of the buyer → supplier CNPJ (14d) → FtM ``companies``
     vertex (``cnpj_basico``) → INBOUND ``ownership``/``directorship``
     → persons/companies.
@@ -227,47 +232,3 @@ def partners_of_buyer(
     rows.sort(key=lambda r: (r["supplier_cnpj"], r["partner_key"], r["edge"]))
     logger.info("Partners of buyer %s: %d", siafi_code, len(rows))
     return rows
-
-
-def anomalous_geography(
-    db: StandardDatabase | None = None,
-    max_distance_km: float = 100.0,
-) -> list[dict[str, Any]]:
-    """Detects dispersed suppliers with concentrated wins.
-
-    Args:
-        db: ArangoDB connection. If None, creates a new one.
-        max_distance_km: Maximum distance considered anomalous.
-
-    Returns:
-        List of supplier/bid pairs with distance above the limit.
-    """
-    if db is None:
-        db = get_capiba_db()
-
-    query = """
-        FOR f IN suppliers
-            FILTER f.latitude != null AND f.longitude != null
-            FOR v IN OUTBOUND f GRAPH @graphName
-                FILTER v.type == "bid"
-                FILTER v.latitude != null AND v.longitude != null
-                LET d = SQRT(
-                    POW(f.latitude - v.latitude, 2) +
-                    POW(f.longitude - v.longitude, 2)
-                ) * 111.0
-                FILTER d > @maxDistance
-                RETURN {
-                    supplier: f._key,
-                    bid: v._key,
-                    distance_km: d
-                }
-    """
-
-    bind_vars = {
-        "graphName": db.graph("capiba_graph").name,
-        "maxDistance": max_distance_km,
-    }
-
-    anomalies = execute_aql(db, query, bind_vars)
-    logger.info("Geographic anomalies found: %d", len(anomalies))
-    return anomalies

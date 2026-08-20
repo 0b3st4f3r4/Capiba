@@ -208,3 +208,32 @@ class TestTriageMetrics:
     def test_empty_report(self, client: TestClient, db: FakeDb) -> None:
         """Without entries the report is an empty list."""
         assert client.get("/v1/triage/metrics").json() == []
+
+
+class TestDatabaseFailures:
+    """A persistence-layer exception surfaces as 503 (never 500)."""
+
+    def test_list_failure_is_503(self, client: TestClient, db: FakeDb) -> None:
+        with patch.object(
+            triage, "list_reviews", side_effect=RuntimeError("arango down")
+        ):
+            response = client.get("/v1/triage/signals")
+        assert response.status_code == 503
+        assert response.json()["detail"] == "ArangoDB database unavailable"
+
+    def test_review_failure_is_503(self, client: TestClient, db: FakeDb) -> None:
+        with patch.object(
+            triage, "apply_review", side_effect=RuntimeError("arango down")
+        ):
+            response = client.post(
+                f"/v1/triage/signals/{KEY}/review",
+                json={"status": "confirmed", "reviewer": "ana"},
+            )
+        assert response.status_code == 503
+
+    def test_metrics_failure_is_503(self, client: TestClient, db: FakeDb) -> None:
+        with patch.object(
+            triage, "precision_report", side_effect=RuntimeError("arango down")
+        ):
+            response = client.get("/v1/triage/metrics")
+        assert response.status_code == 503

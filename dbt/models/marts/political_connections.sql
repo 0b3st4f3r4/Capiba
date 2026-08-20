@@ -1,6 +1,6 @@
 {{ config(materialized='table') }}
 
--- Publishable view of the political_connection signals (O8, PR-D-08):
+-- Publishable view of the political_connection signals (PR-D-08):
 -- campaign donors of elected mayors who became suppliers of the
 -- municipality inside the mandate window, enriched with the silver TSE
 -- tables and the UE <-> SIAFI crosswalk seed.

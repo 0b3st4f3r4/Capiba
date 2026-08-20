@@ -309,7 +309,7 @@ section { margin-bottom: 3.5rem; }
   color: var(--muted);
 }
 
-/* Triagem editorial (O10) */
+/* Triagem editorial */
 .triage-nav {
   display: flex;
   gap: 0.5rem;

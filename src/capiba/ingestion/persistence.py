@@ -87,7 +87,7 @@ def upsert_contract(
 ) -> dict[str, Any]:
     """Persists a single contract and its relationships.
 
-    Geographic enrichment (O6, slice 1): the ``buyers`` vertex gains
+    Geographic enrichment: the ``buyers`` vertex gains
     ``ibge_code``/``latitude``/``longitude`` resolved from (city, UF)
     against the vendored municipality reference, and the ``suppliers``
     vertex gains ``latitude``/``longitude`` when the CNPJ resolves in
@@ -292,7 +292,7 @@ def bulk_upsert_cnpj(
 ) -> dict[str, Any]:
     """Persists CNPJ entities (silver rows) in the ArangoDB graph in bulk.
 
-    FollowTheMoney vocabulary (O4): companies are FtM ``Company`` vertices
+    FollowTheMoney vocabulary: companies are FtM ``Company`` vertices
     keyed by ``cnpj_basico``; individual partners (``identificador`` 2/3)
     are FtM ``Person`` vertices keyed by ``partner_id`` (hash of company +
     name + qualification — the masked ``cnpj_cpf_socio`` is never a key).

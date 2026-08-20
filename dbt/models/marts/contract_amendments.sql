@@ -1,6 +1,6 @@
 {{ config(materialized='table') }}
 
--- Amendment red flags per contract (PR-D-05, O2). Reference semantics:
+-- Amendment red flags per contract (PR-D-05). Reference semantics:
 -- src/capiba/detection/amendments.py — the bronze observation sequence
 -- (publication crawls + update crawls) is ordered by ingestion date, the
 -- LAST observation is sovereign, equality never fires and

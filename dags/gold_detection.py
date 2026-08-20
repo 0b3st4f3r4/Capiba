@@ -4,6 +4,9 @@ Runs after the per-source ingestion pipelines (``daily_pncp`` at 06:00,
 ``monthly_transparency`` on day 2): rebuilds every gold mart with dbt and
 recomputes the fraud signals over the *whole* accumulated silver contracts
 table — both steps are global reprocesses, not increments of the day.
+A final step exports the LGPD-cleared marts to the public bucket
+(``capiba-public``, CSV/Parquet versioned by run date — see
+``capiba.pipeline.public_export``).
 
 This is also the "final run" after a backfill: post steps are skipped on
 backfill runs (``task_post_step`` raises ``AirflowSkipException`` — see
@@ -24,6 +27,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk.definitions.asset import Asset
 
+from capiba.pipeline.public_export import task_export_public_marts
 from capiba.pipeline.tasks import task_dbt_run, task_detect
 
 # Lineage assets of the dbt marts and fraud signals — keep in sync with
@@ -50,6 +54,7 @@ DWH_SERVING_MARTS = [
     )
 ]
 GOLD_FRAUD_SIGNALS = Asset(uri="capiba://gold/fraud_signals")
+PUBLIC_MARTS_EXPORT = Asset(uri="capiba://public/marts")
 
 DEFAULT_ARGS = {
     "owner": "capiba",
@@ -82,4 +87,11 @@ with DAG(
         inlets=[SILVER_CONTRACTS],
         outlets=[GOLD_FRAUD_SIGNALS],
     )
+    export_public = PythonOperator(
+        task_id="export_public_marts",
+        python_callable=task_export_public_marts,
+        inlets=GOLD_MARTS,
+        outlets=[PUBLIC_MARTS_EXPORT],
+    )
     dbt_run >> detect
+    dbt_run >> export_public

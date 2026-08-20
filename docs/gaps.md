@@ -36,16 +36,20 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    coube no orçamento de triagem (próximo refinamento: PR-D-03c);
    best-effort, pois ArangoDB fora do ar não derruba a task) e a API expõe
    `GET /v1/graph/ownership/{cnpj}?max_depth=3` (router `api/routers/graph.py`,
-   503 com ArangoDB indisponível). `anomalous_geography` segue fora, mas a
-   infra de geografia (O6, fatia 1) está pronta: referência vendored de
-   municípios (`src/capiba/ingestion/geography.py` + CSV MIT em
-   `src/capiba/ingestion/reference/`), silvers de referência `municipalities`
-   (loader idempotente `lake.load_municipalities`) e `rfb_municipalities`
-   (TOM→nome, parse do `Municipios.zip` do dump RFB) e enriquecimento
-   best-effort dos vértices `buyers`/`suppliers` com lat/long na
-   persistência. Falta a fatia 2: adaptar o operador (que hoje espera
-   vértices `bids` inexistentes) e ativá-lo, o que depende de pré-registro
-   (PR-D-09).
+   503 com ArangoDB indisponível). `anomalous_geography` está **ativado**
+   (O6): a fatia 1 entregou a infra (referência vendored de municípios em
+   `src/capiba/ingestion/geography.py` + CSV MIT em
+   `src/capiba/ingestion/reference/`, silvers `municipalities` —
+   loader idempotente `lake.load_municipalities` — e `rfb_municipalities`,
+   e enriquecimento best-effort dos vértices `buyers`/`suppliers` na
+   persistência) e a fatia 2 entregou o sinal
+   (`src/capiba/detection/geography.py`, contrato PR-D-09 §3: haversine
+   R = 6371,0 km entre sedes municipais, gate estrito > 100 km, score
+   proporcional saturando em 1.000 km), validado no regime sintético pela
+   bateria D-09 (`docs/results/R-D-09.md`, 5/5) e emitido best-effort no
+   `task_detect`; o operador AQL legado (vértices `bids` inexistentes) foi
+   removido. P6/volume real pendente; calibração do limiar e exposição nos
+   marts exigem PR-D-09b.
 5. (aberto) **Conectar os operadores NLP.** `semantic_gap` e `detect_clone`
    (`src/capiba/detection/nlp_operators.py`), junto com `db/vectors.py` e
    `db/search.py`, seguem sem consumidor; `SignalType.SEMANTIC_GAP` não tem
@@ -230,11 +234,19 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    (`semantic_gap`, `detect_clone`) com o corpus.
 9. (aberto) **TSE: doações × contratos (O8).** Sinal `political_connection` com
    pré-registro e critério de refutação.
-10. (aberto) **Saída pública para a comunidade (O11).** Marts gold baixáveis
-    (CSV/Parquet) sem auth, com metodologia gerada do dbt docs; classificação
-    LGPD conferida.
-11. (aberto) **Alertas para jornalistas comunitários (O12).** Assinatura de
-    pautas por município ou órgão via `notification/` (depende de O9/O10).
+10. (implementado) **Saída pública para a comunidade (O11).** Marts gold
+    baixáveis (CSV/Parquet) sem auth: post step `export_public_marts` da
+    `gold_detection` exporta a allowlist LGPD (fail-closed) para o bucket
+    `capiba-public` versionado por data; API pública
+    (`/v1/public/marts`, download presignado 302, `/v1/public/methodology`
+    gerado do dbt + specs YAML). Pendente de deploy: política de leitura
+    pública do bucket (charts/values).
+11. (implementado) **Alertas para jornalistas comunitários (O12).** Assinatura
+    de pautas por código IBGE do município: coleção ArangoDB `subscriptions`
+    (token opaco, só hash persistido), rotas públicas
+    `/v1/subscriptions` (inscrição/confirmação/cancelamento) e disparo por
+    e-mail somente na transição de triagem para `published`, com link para o
+    pacote de evidências (O9).
 12. (aberto) **Modo leve de onboarding.** Execução local sem k3s (sqlite/duckdb)
     para o jornalista solo ou a redação comunitária.
 

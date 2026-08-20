@@ -166,7 +166,7 @@ CONTRACT_RULES = [
     ),
 ]
 
-# Pre-defined rules for official gazette records (Querido Diário, O7) —
+# Pre-defined rules for official gazette records (Querido Diário) —
 # applied over the raw gazette metadata of the documents_collect formula.
 
 GAZETTE_RULES = [

@@ -3,7 +3,7 @@
 Chunk: signals
 Responsibility: Serve risk score and detected signals
 for a specific CNPJ, and the reproducible evidence packages
-(O9) linked to a signal key.
+linked to a signal key.
 
 Dependencies: fastapi, capiba.api.services, capiba.evidence.storage
 """
@@ -54,10 +54,10 @@ async def list_signal_evidence(
     key: str,
     storage: Annotated[EvidenceStorage, Depends(get_storage)],
 ) -> list[EvidenceItem]:
-    """Lists the reproducible evidence packages (O9) of a signal.
+    """Lists the reproducible evidence packages of a signal.
 
-    ``key`` is the triage key ``{entity_type}:{entity_id}:{signal_type}``
-    (O10). Manifests reference the run batch package via
+    ``key`` is the triage key ``{entity_type}:{entity_id}:{signal_type}``.
+    Manifests reference the run batch package via
     ``batch_sha256``; the package content is downloaded via
     ``GET /v1/evidence/{sha256}``.
 

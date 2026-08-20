@@ -3,8 +3,8 @@
 - **Pré-registro**: bateria D-09
 - **Criado em**: 2026-08-20
 - **Última atualização**: 2026-08-20
-- **Status**: rascunho para revisão humana — nenhuma execução antes da
-  aprovação
+- **Status**: aprovado e executado — bateria D-09 **success** (P1–P5 nas
+  5 seeds), `docs/results/R-D-09.md`; P6/volume real pendentes
 - **Alvo**: sinal `anomalous_geography` (novo `SignalType`) — fornecedor
   cuja sede municipal dista mais que `max_distance_km` do município do
   ente comprador. Backlog O6 (`docs/gaps.md` item 4). O operador AQL
@@ -183,3 +183,14 @@ calibração do limiar em volume real e a exposição do sinal nos marts.
   referência de score de 1.000 km são placeholders de calibração
   pré-registrados, à espera de validação no regime sintético e, depois,
   de calibração em volume real.
+- 2026-08-20: execução da fatia 2 (após aprovação humana). Decisão de
+  implementação: o operador AQL legado `graphs.anomalous_geography` foi
+  **removido**, não reescrito — estava morto (filtra vértices `bid` que o
+  grafo nunca cria), usava aproximação planar euclidiana (× 111)
+  incompatível com a fórmula haversine pré-registrada e uma versão
+  reescrita sobre os vértices enriquecidos duplicaria a semântica sem
+  consumidor (o `task_detect` emite o sinal pela função pura sobre o
+  silver, padrão `political.py`). Predições intactas. Resultado: bateria
+  D-09 **success** — P1–P5 exatas nas 5 seeds (`docs/results/R-D-09.md`);
+  P6 (invariante no gold real) e o regime de volume real seguem pendentes
+  por desenho.

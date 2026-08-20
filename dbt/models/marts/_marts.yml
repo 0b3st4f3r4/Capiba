@@ -3,7 +3,7 @@ version: 2
 models:
   - name: contract_amendments
     description: >-
-      Per-contract amendment red flags (PR-D-05, O2): value amendment
+      Per-contract amendment red flags (PR-D-05): value amendment
       (valorAcumulado > valorInicial) and term extension (vigencia fim
       estendida), computed from the bronze observation sequence.
       Real-data invariants P6-P8 are enforced by the singular tests in
@@ -139,7 +139,7 @@ models:
 
   - name: political_connections
     description: >-
-      Publishable view of the political_connection signals (O8, PR-D-08):
+      Publishable view of the political_connection signals (PR-D-08):
       campaign donors of elected mayors who became suppliers of the
       municipality inside the mandate window. LGPD: donor CPFs are masked
       CEAF-style (donor_document_masked); the stable key is the SHA-256

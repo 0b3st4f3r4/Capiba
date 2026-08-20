@@ -1,4 +1,4 @@
-# Monthly TSE campaign finance dump (O8, PR-D-08): downloads the fixed
+# Monthly TSE campaign finance dump (PR-D-08): downloads the fixed
 # prestação de contas eleitorais snapshot of the configured election year
 # (default: 2024 municipal elections — the cycle that crosses with the
 # municipal suppliers of monthly_transparency), lands the ZIP under

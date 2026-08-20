@@ -273,7 +273,7 @@ class RfbMunicipality(BaseModel):
 
     Maps the RFB/TOM municipality code — the value stored in the silver
     ``establishments.municipio`` column — to the official municipality name,
-    the missing link of the supplier geo-enrichment chain (O6).
+    the missing link of the supplier geo-enrichment chain.
     """
 
     tom_code: str = Field(pattern=r"^\d{4}$")
