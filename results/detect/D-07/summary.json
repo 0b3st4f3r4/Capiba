@@ -1,0 +1,48 @@
+{
+  "battery": "D-07",
+  "predictions": {
+    "P1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P2": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P3": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P4": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P5": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P6": {
+      "verdict": "success",
+      "precision": 1.0
+    },
+    "P7": {
+      "verdict": "refuted",
+      "recall": 0.025
+    }
+  },
+  "verdict": "refuted",
+  "os_pairs": {
+    "tp": 25,
+    "fp": 0,
+    "fn": 975,
+    "tn": 1000,
+    "precision": 1.0,
+    "recall": 0.025,
+    "p6": {
+      "verdict": "success"
+    },
+    "p7": {
+      "verdict": "refuted"
+    }
+  }
+}

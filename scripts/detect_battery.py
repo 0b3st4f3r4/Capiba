@@ -22,6 +22,7 @@ from capiba.detection import (  # noqa: E402
     battery,
     battery_amendments,
     battery_collusion,
+    battery_entities,
     battery_flags,
     battery_graphs,
     battery_screening,
@@ -61,6 +62,8 @@ def main() -> int:
             runner = battery_amendments
         elif runner_name == "screening":
             runner = battery_screening
+        elif runner_name == "entities":
+            runner = battery_entities
         elif config.get("requires_infra") == "arangodb":
             runner = battery_graphs
         else:

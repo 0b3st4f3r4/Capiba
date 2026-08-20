@@ -1,0 +1,28 @@
+{
+  "id": "D-07",
+  "runner": "entities",
+  "description": "Entity resolution de fornecedores e sócios (O5): deduplicação de sócios PF entre empresas (nome normalizado + documento mascarado + faixa etária) e link determinístico supplier↔company, com benchmark real OpenSanctions Pairs (arquivo plano, snapshot 2025-12-09). Ver docs/preregistrations/PR-D-07.md (aprovado em 2026-08-20).",
+  "seeds": [19, 29, 39, 49, 59],
+  "weights": {
+    "name": 0.6,
+    "document": 0.3,
+    "age_range": 0.1
+  },
+  "threshold": 0.85,
+  "control_persons": 20,
+  "expected": {
+    "merge_cases": ["E1", "E2", "E6"],
+    "no_merge_cases": ["E3", "E4", "E5"],
+    "link_cases": ["E7"],
+    "no_link_cases": ["E8"]
+  },
+  "os_pairs": {
+    "url": "https://data.opensanctions.org/contrib/training/pairs-20251209.json.gz",
+    "snapshot": "2025-12-09",
+    "sample_positive": 1000,
+    "sample_negative": 1000,
+    "seed": 19,
+    "min_precision": 0.9,
+    "recall_band": [0.3, 0.7]
+  }
+}

@@ -189,9 +189,18 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    `GET /v1/graph/partners/{siafi}` e export FtM JSON básico em
    `GET /v1/graph/ftm/{cnpj}` (`db/ftm.py`). Merge
    suppliers↔companies fica para o O5 (entity resolution).
-7. (aberto) **Entity resolution (O5).** Deduplicação de fornecedores e sócios
-   entre bases; benchmark OpenSanctions Pairs; merges só acima de limiar
-   pré-registrado.
+7. (em andamento) **Entity resolution (O5).** Matcher validado
+   (`src/capiba/detection/entities.py`, bateria D-07 —
+   `docs/results/R-D-07.md`): dedupe conservador de sócios PF (nome
+   normalizado 0,6 + documento mascarado 0,3 + faixa etária 0,1, limiar
+   0,85 — nome sozinho nunca mergea) e link determinístico
+   supplier↔company (CNPJ 14d → `cnpj_basico`); aresta `same_as`
+   (persons↔persons) no grafo via `resolve_entities` (best-effort, sem
+   colapsar vértices). No benchmark real OpenSanctions Pairs: precisão
+   1,00, revocação 0,025 (banda refutada — causa estrutural: 4,8% dos
+   positivos com documento bilateral; recalibração em PR-D-07b).
+   Pendente: invariante P8 no grafo real, integração da resolução na
+   carga do grafo e screening fuzzy de sanções (PR-D-06b).
 8. (aberto) **Diários oficiais municipais via Querido Diário (O7).** Source
    `querido_diario` no registry; município-piloto persistindo no bronze.
 9. (aberto) **TSE: doações × contratos (O8).** Sinal `political_connection` com

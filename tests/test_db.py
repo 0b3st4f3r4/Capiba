@@ -132,6 +132,7 @@ class TestArangoDBConnector:
             "won",
             "ownership",
             "directorship",
+            "same_as",
         }
         assert result is mock_db.create_graph.return_value
 
