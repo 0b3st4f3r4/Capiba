@@ -54,7 +54,8 @@ class TestLoadSpec:
         assert spec.validation is not None
         assert spec.validation.ruleset == "contract_rules"
         assert [d.name for d in spec.destinations] == ["lake_bronze", "lake_silver"]
-        assert spec.post_steps == ["dbt_run", "detect"]
+        assert [s.name for s in spec.post_steps] == ["dbt_run", "detect"]
+        assert spec.post_steps[0].select == []
 
     def test_load_real_pipeline_yamls(self) -> None:
         """The shipped dags/pipelines specs must load cleanly."""
@@ -92,6 +93,10 @@ class TestLoadSpec:
         assert hourly.schedule == "7 * * * *"
         assert hourly.formula == "metrics_collect"
         assert [s.name for s in hourly.sources] == ["pod_usage"]
+        # The hourly dbt_run refreshes only the usage marts (full runs
+        # OOMKill Trino; contract marts belong to gold_detection).
+        assert [s.name for s in hourly.post_steps] == ["dbt_run"]
+        assert hourly.post_steps[0].select == ["pod_usage_hourly", "platform_cost_daily"]
         weekly = specs["weekly_sanctions"]
         assert weekly.schedule == "22 3 * * 2"
         assert weekly.formula == "entities_collect"
@@ -283,6 +288,44 @@ post_steps: [spark_submit]
         )
 
         with pytest.raises(SpecError, match="Invalid pipeline spec"):
+            load_spec(path)
+
+    def test_post_step_dbt_run_with_select(self, tmp_path: Path) -> None:
+        """dbt_run accepts a dbt model selection in the mapping form."""
+        path = _write(
+            tmp_path,
+            """\
+name: scoped_dbt
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [lake_silver]
+post_steps:
+  - name: dbt_run
+    select: [pod_usage_hourly, platform_cost_daily]
+""",
+        )
+
+        spec = load_spec(path)
+
+        assert [s.name for s in spec.post_steps] == ["dbt_run"]
+        assert spec.post_steps[0].select == ["pod_usage_hourly", "platform_cost_daily"]
+
+    def test_post_step_select_only_on_dbt_run(self, tmp_path: Path) -> None:
+        """A model selection on a non-dbt post step fails validation."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_select
+sources: [mock_pncp]
+formula: contracts_default
+destinations: [lake_silver]
+post_steps:
+  - name: detect
+    select: [pod_usage_hourly]
+""",
+        )
+
+        with pytest.raises(SpecError, match="does not support 'select'"):
             load_spec(path)
 
     def test_dump_formula_requires_dump_source(self, tmp_path: Path) -> None:

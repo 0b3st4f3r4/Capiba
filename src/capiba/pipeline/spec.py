@@ -39,6 +39,21 @@ class SpecError(ValueError):
     """Raised when a pipeline spec file is invalid."""
 
 
+class PostStepSpec(BaseModel):
+    """A post-step entry: registry name and optional parameters.
+
+    ``select`` restricts the dbt models built by ``dbt_run`` (passed to
+    ``dbt run --select``); empty means the whole project. Only ``dbt_run``
+    accepts options — a full run rebuilds every mart, so hourly pipelines
+    should select just the marts their fresh data feeds.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: PostStep
+    select: list[str] = Field(default_factory=list)
+
+
 class SourceSpec(BaseModel):
     """A source entry: registry name, optional window override and params.
 
@@ -108,9 +123,9 @@ class PipelineSpec(BaseModel):
     validation: ValidateSpec | None = Field(None, alias="validate")
     transformations: list[TransformationSpec] = Field(default_factory=list)
     destinations: Annotated[list[DestinationSpec], Field(min_length=1)]
-    post_steps: list[PostStep] = Field(default_factory=list)
+    post_steps: list[PostStepSpec] = Field(default_factory=list)
 
-    @field_validator("sources", "transformations", "destinations", mode="before")
+    @field_validator("sources", "transformations", "destinations", "post_steps", mode="before")
     @classmethod
     def _expand_shorthand(cls, value: Any) -> Any:
         return _expand_names(value)
@@ -182,6 +197,13 @@ def _cross_validate(spec: PipelineSpec, origin: str) -> None:
             errors.append(
                 f"unknown transformation '{transformation.name}'"
                 " (no registry entry and no capiba.transformations module)"
+            )
+
+    for step in spec.post_steps:
+        if step.name != "dbt_run" and step.select:
+            errors.append(
+                f"post step '{step.name}' does not support 'select'"
+                " (only dbt_run accepts a dbt model selection)"
             )
 
     if errors:

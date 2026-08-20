@@ -18,11 +18,13 @@ from capiba.config import DBT_PROJECT_DIR
 logger = logging.getLogger(__name__)
 
 
-def run_dbt(command: str = "run") -> None:
+def run_dbt(command: str = "run", select: list[str] | None = None) -> None:
     """Runs a dbt command against the lakehouse project.
 
     Args:
         command: dbt command to execute (``run``, ``test``, ``build``...).
+        select: Optional dbt model selection (``--select``); empty/None
+            builds the whole project.
 
     Raises:
         RuntimeError: If dbt finishes with a non-success result.
@@ -48,7 +50,9 @@ def run_dbt(command: str = "run") -> None:
         "--profiles-dir",
         DBT_PROJECT_DIR,
     ]
-    logger.info("Running dbt %s (project: %s)", command, DBT_PROJECT_DIR)
+    if select:
+        args.extend(["--select", *select])
+    logger.info("Running dbt %s (project: %s, select: %s)", command, DBT_PROJECT_DIR, select)
     result = dbtRunner().invoke(args)
     if not result.success:
         raise RuntimeError(f"dbt {command} failed: {result.exception or 'see logs'}")

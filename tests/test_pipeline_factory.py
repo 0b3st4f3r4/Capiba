@@ -316,6 +316,14 @@ class TestRealPipelines:
         assert "capiba://gold/pod_usage_hourly" in outlet_uris
         assert "capiba://gold/platform_cost_daily" in outlet_uris
 
+        # The dbt_run task is scoped to the usage marts (a full run rebuilds
+        # the contract marts hourly and OOMKilled Trino on 2026-08-19).
+        dbt_callable = dag.get_task("dbt_run").python_callable
+        assert dbt_callable.keywords["select"] == [
+            "pod_usage_hourly",
+            "platform_cost_daily",
+        ]
+
 ENTITIES_SPEC = """\
 name: factory_entities
 schedule: "22 3 * * 2"
@@ -379,6 +387,20 @@ class TestEntitiesCollectFactory:
         assert "capiba://silver/sanctions" in outlet_uris
         assert "capiba://silver/contracts" not in outlet_uris
         assert "capiba://gold/reports/factory_entities" in outlet_uris
+
+    def test_crawl_uses_checkpointed_entities_task(
+        self, factory, tmp_path: Path
+    ) -> None:
+        """entities_collect crawls run the per-page checkpointed task."""
+        from capiba.pipeline.entity_tasks import task_crawl_entities
+
+        (tmp_path / "entities.yaml").write_text(ENTITIES_SPEC, encoding="utf-8")
+
+        dag = factory.build_dags(tmp_path)["factory_entities"]
+
+        for task_id in ("crawl_ceis", "crawl_cnep"):
+            callable_ = dag.get_task(task_id).python_callable
+            assert callable_.func is task_crawl_entities
 
     def test_real_weekly_sanctions_dag(self, factory) -> None:
         """The shipped weekly_sanctions spec produces a granular DAG."""

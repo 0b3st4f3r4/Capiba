@@ -60,6 +60,17 @@ class TestRunDbt:
         assert args[0] == "run"
 
     @patch("dbt.cli.main.dbtRunner")
+    def test_run_dbt_with_select(self, mock_runner_cls: MagicMock) -> None:
+        """A model selection must be forwarded to ``--select``."""
+        result = MagicMock(success=True)
+        mock_runner_cls.return_value.invoke.return_value = result
+
+        run_dbt("run", select=["pod_usage_hourly", "platform_cost_daily"])
+
+        args = mock_runner_cls.return_value.invoke.call_args.args[0]
+        assert args[-3:] == ["--select", "pod_usage_hourly", "platform_cost_daily"]
+
+    @patch("dbt.cli.main.dbtRunner")
     def test_run_dbt_failure(self, mock_runner_cls: MagicMock) -> None:
         """A non-success dbt result must raise RuntimeError."""
         result = MagicMock(success=False)

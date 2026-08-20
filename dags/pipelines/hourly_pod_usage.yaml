@@ -13,6 +13,11 @@ formula: metrics_collect
 destinations:
   - lake_bronze # raw audit copy + raw_pod_usage Iceberg table
 post_steps:
-  # Refresh the pod_usage_hourly/platform_cost_daily marts right after each
-  # hourly snapshot (the factory generates a granular dbt_run task).
-  - dbt_run
+  # Refresh only the usage marts fed by the hourly snapshot; a full dbt run
+  # here rebuilds the contract marts over the whole bronze/silver history
+  # and OOMKilled Trino (contract_red_flags unnest, 2026-08-19). The
+  # contract marts are rebuilt daily by the gold_detection DAG.
+  - name: dbt_run
+    select:
+      - pod_usage_hourly
+      - platform_cost_daily

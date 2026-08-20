@@ -165,7 +165,17 @@ destinations:
 # post_steps:                  # opcional; as specs por fonte não declaram —
 #   - dbt_run                  # dbt/detect vivem na DAG gold_detection
 #   - detect
+# post_steps:                  # forma de mapping: dbt_run aceita `select`
+#   - name: dbt_run            # (seleção de modelos dbt; vazio = projeto todo)
+#     select: [pod_usage_hourly, platform_cost_daily]
 ```
+
+O `dbt_run` sem `select` reconstrói **todos** os marts sobre todo o
+histórico bronze/silver — adequado à `gold_detection` diária, mas pesado
+demais para pipelines frequentes: a run horária do `hourly_pod_usage`
+OOMKillava o Trino no unnest full do `contract_red_flags` (2026-08-19).
+Pipelines com post step `dbt_run` devem declarar `select` com apenas os
+marts alimentados pelo dado recém-coletado.
 
 O `task_detect` (hoje na DAG `gold_detection`) e a validação também disparam
 alertas best-effort por e-mail

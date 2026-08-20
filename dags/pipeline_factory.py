@@ -27,6 +27,7 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk.definitions.asset import Asset
 
 from capiba.pipeline.entity_tasks import (
+    task_crawl_entities,
     task_normalize_entities,
     task_silver_entities_summary,
 )
@@ -138,10 +139,10 @@ def _outlets(spec: PipelineSpec) -> list[Asset]:
             outlets.append(ARANGO_CONTRACTS)
     if "gold_report" in destination_names:
         outlets.append(Asset(uri=f"capiba://gold/reports/{spec.name}"))
-    if "dbt_run" in spec.post_steps:
+    if any(step.name == "dbt_run" for step in spec.post_steps):
         outlets.extend(GOLD_MARTS)
         outlets.extend(DWH_SERVING_MARTS)
-    if "detect" in spec.post_steps:
+    if any(step.name == "detect" for step in spec.post_steps):
         outlets.append(GOLD_FRAUD_SIGNALS)
     return outlets
 
@@ -188,6 +189,15 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                 task_id = _download_task_id(source.name)
                 python_callable = partial(
                     task_download_source,
+                    source_name=source.name,
+                    spec_path=str(spec_path),
+                )
+            elif spec.formula == "entities_collect":
+                # Entity crawls persist per-page bronze checkpoints so a
+                # retried task resumes the walk instead of restarting it.
+                task_id = _crawl_task_id(source.name)
+                python_callable = partial(
+                    task_crawl_entities,
                     source_name=source.name,
                     spec_path=str(spec_path),
                 )
@@ -315,11 +325,12 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
         for step in spec.post_steps:
             post_tasks.append(
                 PythonOperator(
-                    task_id=step,
+                    task_id=step.name,
                     python_callable=partial(
                         task_post_step,
-                        step_name=step,
+                        step_name=step.name,
                         spec_path=str(spec_path),
+                        select=step.select or None,
                     ),
                     outlets=shared_outlets,
                 )

@@ -821,7 +821,12 @@ def task_destination(
     return summary  # type: ignore[no-any-return]
 
 
-def task_post_step(step_name: str, spec_path: str, **context: Any) -> dict[str, Any]:
+def task_post_step(
+    step_name: str,
+    spec_path: str,
+    select: list[str] | None = None,
+    **context: Any,
+) -> dict[str, Any]:
     """Task: run a single post step declared in the pipeline spec.
 
     Post steps are skipped on backfill runs (``run_type == "backfill"``):
@@ -834,6 +839,8 @@ def task_post_step(step_name: str, spec_path: str, **context: Any) -> dict[str, 
     Args:
         step_name: Name of the post step (``dbt_run`` or ``detect``).
         spec_path: Path of the YAML pipeline spec.
+        select: Optional dbt model selection for ``dbt_run`` (ignored by
+            other post steps).
         context: Airflow context.
 
     Returns:
@@ -850,7 +857,7 @@ def task_post_step(step_name: str, spec_path: str, **context: Any) -> dict[str, 
 
         raise AirflowSkipException(f"Post step '{step_name}' skipped on backfill run")
     if step_name == "dbt_run":
-        return task_dbt_run(**context)
+        return task_dbt_run(select=select, **context)
     if step_name == "detect":
         return task_detect(**context)
     raise ValueError(f"Unknown post step '{step_name}'")
@@ -888,23 +895,25 @@ def task_gold_report(spec_path: str, **context: Any) -> dict[str, Any]:
     return {"key": key}
 
 
-def task_dbt_run(**context: Any) -> dict[str, Any]:
+def task_dbt_run(select: list[str] | None = None, **context: Any) -> dict[str, Any]:
     """Task: build the gold Iceberg marts with dbt.
 
     Reads the silver ``contracts`` table through the Iceberg REST catalog
     and materializes the analytical marts in the gold warehouse.
 
     Args:
+        select: Optional dbt model selection (``--select``); None builds
+            the whole project (used by ``gold_detection``).
         context: Airflow context.
 
     Returns:
-        Execution summary (command and project dir).
+        Execution summary (command, selection and project dir).
     """
     from capiba.pipeline.dbt_runner import run_dbt
 
-    logger.info("Building gold marts with dbt")
-    run_dbt("run")
-    return {"dbt": "run", "project_dir": DBT_PROJECT_DIR}
+    logger.info("Building gold marts with dbt (select: %s)", select or "all")
+    run_dbt("run", select=select)
+    return {"dbt": "run", "select": select or [], "project_dir": DBT_PROJECT_DIR}
 
 
 def task_run_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
@@ -935,9 +944,9 @@ def task_run_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
 
     post_results: dict[str, Any] = {}
     for step in spec.post_steps:
-        if step == "dbt_run":
-            post_results["dbt_run"] = task_dbt_run(**context)
-        elif step == "detect":
+        if step.name == "dbt_run":
+            post_results["dbt_run"] = task_dbt_run(select=step.select or None, **context)
+        elif step.name == "detect":
             post_results["detect"] = task_detect(**context)
 
     return {
