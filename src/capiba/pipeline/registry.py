@@ -131,6 +131,13 @@ def _fetch_cnep(
     return fetch_sanctions("cnep", **params)
 
 
+def _fetch_ceaf(
+    start: date | None, end: date | None, **params: Any
+) -> list[dict[str, Any]]:
+    """CEAF expulsion list: full snapshot; ignores the window."""
+    return fetch_sanctions("ceaf", **params)
+
+
 SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pncp": SourceDef(fetch=_fetch_pncp),
     "pncp_contract_updates": SourceDef(fetch=_fetch_pncp_contract_updates),
@@ -141,6 +148,7 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pod_usage": SourceDef(fetch=_fetch_pod_usage),
     "ceis": SourceDef(fetch=_fetch_ceis),
     "cnep": SourceDef(fetch=_fetch_cnep),
+    "ceaf": SourceDef(fetch=_fetch_ceaf),
 }
 
 # Normalizer per source: raw record -> unified Contract. Mock sources reuse
@@ -174,11 +182,12 @@ class EntityNormalizerDef:
     normalize: Callable[[dict[str, Any]], Any]
 
 
-# Entity normalizer per source (entities_collect formula): the CEIS/CNEP
-# sanction lists both land in the silver ``sanctions`` table.
+# Entity normalizer per source (entities_collect formula): the CEIS/CNEP/CEAF
+# sanction lists all land in the silver ``sanctions`` table.
 ENTITY_NORMALIZER_REGISTRY: dict[str, EntityNormalizerDef] = {
     "ceis": EntityNormalizerDef(entity="sanctions", normalize=Sanction.from_ceis),
     "cnep": EntityNormalizerDef(entity="sanctions", normalize=Sanction.from_cnep),
+    "ceaf": EntityNormalizerDef(entity="sanctions", normalize=Sanction.from_ceaf),
 }
 
 # Streaming parser per dump source: parse(zip_path, chunk_size) yields

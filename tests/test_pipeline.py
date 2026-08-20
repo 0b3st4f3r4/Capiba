@@ -296,6 +296,47 @@ class TestTaskDetect:
     @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_adds_sanctioned_name_match_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Fuzzy screening (PR-D-06b): masked-document name matches signal."""
+        contract = _silver_contract("C001", supplier_cnpj="")
+        contract["signature_date"] = "2026-06-15"
+        contract["supplier"] = {
+            "legal_name": "MARIA DE FATIMA PEREIRA",
+            "cpf": "12343515100",
+        }
+        mock_lake.read_silver_contracts.return_value = [contract]
+        mock_lake.read_silver_entities.return_value = iter(
+            [
+                [
+                    {
+                        "id": "ceaf-1",
+                        "list_name": "ceaf",
+                        "cnpj": None,
+                        "cpf": None,
+                        "masked_document": "***435151**",
+                        "sanctioned_name": "MARIA DE FATIMA PEREIRA",
+                        "start_date": "2026-01-01",
+                        "end_date": None,
+                    }
+                ]
+            ]
+        )
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        fuzzy = [s for s in signals if s["signal_type"] == "sanctioned_name_match"]
+        assert len(fuzzy) == 1
+        assert fuzzy[0]["entity_id"] == "12343515100"
+        assert fuzzy[0]["score"] == 1.0
+        assert summary["signals"] == len(signals)
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_sanctions_failure_keeps_other_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:

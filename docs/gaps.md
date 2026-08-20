@@ -175,9 +175,15 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    CNPJ/CPF contra CEIS/CNEP validado (PR-D-06/R-D-06, 5/5): sinal
    `sanctioned_supplier` (`detection/screening.py`, score binário, vigência
    inclusiva na `signature_date`) integrado ao `task_detect` (best-effort
-   sobre o silver `sanctions`). CEAF fora do escopo (CPF mascarado na fonte,
-   confirmado ao vivo); PEPs/OpenSanctions (`yente` self-hosted) e fuzzy por
-   nome ficam para PRs próprios.
+   sobre o silver `sanctions`). Match fuzzy por nome + documento mascarado
+   validado (PR-D-06b/R-D-06b, 7/7): sinal separado `sanctioned_name_match`
+   (`detection/screening_fuzzy.py` — veto documental, regime doc-assistido
+   0,6/0,4 a 0,85, nome-only a 0,95; precisão 0,925 no OS Pairs nome-only),
+   com a fonte **CEAF** (CPF mascarado na origem → coluna `masked_document`
+   na silver `sanctions`) no pipeline `weekly_sanctions`. P8 do PR-D-06b
+   (invariante no gold real) pendente da run com a feature. PEPs/
+   OpenSanctions (`yente` self-hosted) e CEAF no grafo (sancionado como
+   sócio de fornecedor, via O5) ficam para PRs próprios.
 6. (feito) **Esquema FollowTheMoney no grafo (O4).** Vocabulário FtM:
    vértices `companies` (Company) e `persons` (Person), arestas
    `ownership` ({persons,companies}→companies) e `directorship`

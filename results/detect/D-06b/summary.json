@@ -1,0 +1,48 @@
+{
+  "battery": "D-06b",
+  "predictions": {
+    "P1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P2": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P3": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P4": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P5": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P6": {
+      "verdict": "success",
+      "precision": 0.925
+    },
+    "P7": {
+      "verdict": "success",
+      "recall": 0.296
+    }
+  },
+  "verdict": "success",
+  "os_pairs": {
+    "tp": 296,
+    "fp": 24,
+    "fn": 704,
+    "tn": 976,
+    "precision": 0.925,
+    "recall": 0.296,
+    "p6": {
+      "verdict": "success"
+    },
+    "p7": {
+      "verdict": "success"
+    }
+  }
+}

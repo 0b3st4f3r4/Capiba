@@ -1,0 +1,3 @@
+{"entity_type": "supplier", "entity_id": "08183658492", "signal_type": "sanctioned_name_match", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"ceaf\"], \"match\": \"fuzzy\", \"sanctions\": [\"ceaf-F1\"]}"}
+{"entity_type": "supplier", "entity_id": "41465415409", "signal_type": "sanctioned_name_match", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"ceaf\"], \"match\": \"fuzzy\", \"sanctions\": [\"ceaf-F2\"]}"}
+{"entity_type": "supplier", "entity_id": "FERNANDA LIMA ROCHA", "signal_type": "sanctioned_name_match", "score": 1.0, "details": "{\"contracts\": 1, \"lists\": [\"ceaf\"], \"match\": \"fuzzy\", \"sanctions\": [\"ceaf-F5\"]}"}

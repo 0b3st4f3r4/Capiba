@@ -202,8 +202,10 @@ PARTNERS_PARTITION_SPEC = PartitionSpec(
     PartitionField(source_id=8, field_id=1000, transform=IdentityTransform(), name="dt")
 )
 
-# Iceberg schema of the silver ``sanctions`` table (CEIS/CNEP lists of the
-# Portal da Transparência), partitioned by the ingestion date ``dt``.
+# Iceberg schema of the silver ``sanctions`` table (CEIS/CNEP/CEAF lists of
+# the Portal da Transparência), partitioned by the ingestion date ``dt``.
+# ``masked_document`` carries the CEAF masked CPF (``***435151**``); the
+# CEIS/CNEP lists keep full documents in ``cnpj``/``cpf``.
 SANCTIONS_SCHEMA = Schema(
     NestedField(1, "id", StringType(), required=True),
     NestedField(2, "list_name", StringType(), required=True),
@@ -221,6 +223,7 @@ SANCTIONS_SCHEMA = Schema(
     NestedField(14, "fine_amount", DecimalType(38, 2), required=False),
     NestedField(15, "dt", DateType(), required=False),
     NestedField(16, "ingested_at", TimestamptzType(), required=False),
+    NestedField(17, "masked_document", StringType(), required=False),
 )
 
 SANCTIONS_PARTITION_SPEC = PartitionSpec(
@@ -357,13 +360,26 @@ def get_catalog(warehouse: str) -> Catalog:
 def _ensure_table(
     warehouse: str, table_name: str, schema: Schema, spec: PartitionSpec
 ) -> Table:
-    """Creates the namespace/table if needed and returns the table handle."""
+    """Creates the namespace/table if needed and returns the table handle.
+
+    Existing tables gain any declared columns they lack (nullable schema
+    evolution — e.g. ``sanctions.masked_document`` for the CEAF list), so
+    appends with the new fields never fail on a table created by an older
+    version of the code.
+    """
     catalog = get_catalog(warehouse)
     with contextlib.suppress(NamespaceAlreadyExistsError):
         catalog.create_namespace(ICEBERG_NAMESPACE)
-    return catalog.create_table_if_not_exists(
+    table = catalog.create_table_if_not_exists(
         f"{ICEBERG_NAMESPACE}.{table_name}", schema=schema, partition_spec=spec
     )
+    existing = {field.name for field in table.schema().fields}
+    missing = [field for field in schema.fields if field.name not in existing]
+    if missing:
+        with table.update_schema() as update:
+            for field in missing:
+                update.add_column(field.name, field.field_type)
+    return table
 
 
 def _arrow_schema(table: Table) -> pa.Schema:

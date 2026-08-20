@@ -123,11 +123,18 @@ append-por-chunk no silver; antes de parsear ele DELETA a partição
 um retry reprocessa o dump do zero sem duplicar linhas (o loop de
 OOMKill de 2026-08-20 duplicava a partição a cada restart do pod).
 A fórmula `entities_collect` cobre listas de entidades snapshot (fontes
-`ceis`/`cnep` do Portal da Transparência — crawler `fetch_sanctions`,
-modelo `Sanction` em `src/capiba/ingestion/sanctions.py`): etapa
+`ceis`/`cnep`/`ceaf` do Portal da Transparência — crawler `fetch_sanctions`,
+modelo `Sanction` em `src/capiba/ingestion/sanctions.py`; o CEAF traz
+documento mascarado em `masked_document`): etapa
 `normalize_<fonte>` por fonte escreve na tabela silver da entidade
 registrada no `ENTITY_NORMALIZER_REGISTRY` (hoje `sanctions`); os wrappers
 Airflow dessa fórmula vivem em `src/capiba/pipeline/entity_tasks.py`.
+A tabela silver `sanctions` alimenta no `task_detect` (best-effort) os sinais
+`sanctioned_supplier` (match exato por documento) e `sanctioned_name_match`
+(screening fuzzy, `src/capiba/detection/screening_fuzzy.py` — validado pela
+bateria D-06b, `docs/results/R-D-06b.md`: veto por documento divergente,
+score doc-assistido 0,6 nome + 0,4 documento com limiar 0,85 e nome-only
+com limiar 0,95).
 O crawl (`task_crawl_entities`) persiste **checkpoint por página** no
 bronze (`<fonte>/pages/dt=<data>/page-NNNNN.json.gz`,
 `lake.write_bronze_page`/`list_bronze_pages`/`read_bronze_page`): um retry

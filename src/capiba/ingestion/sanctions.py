@@ -27,16 +27,19 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-SanctionList = Literal["ceis", "cnep"]
+SanctionList = Literal["ceis", "cnep", "ceaf"]
+
+_NO_INFO = {"sem informação", "sem informacao"}
 
 
 class Sanction(BaseModel):
-    """A sanction record of the CEIS/CNEP lists (silver ``sanctions`` table)."""
+    """A sanction record of the CEIS/CNEP/CEAF lists (silver ``sanctions`` table)."""
 
     id: str
     list_name: SanctionList
     cnpj: str | None = None
     cpf: str | None = None
+    masked_document: str | None = None
     sanctioned_name: str | None = None
     uf: str | None = None
     sanctioning_body: str | None = None
@@ -57,6 +60,55 @@ class Sanction(BaseModel):
     def from_cnep(cls, raw: dict[str, Any]) -> Sanction:
         """Normalizes a raw CNEP (empresas punidas) record."""
         return cls.from_transparency(raw, list_name="cnep")
+
+    @classmethod
+    def from_ceaf(cls, raw: dict[str, Any]) -> Sanction:
+        """Normalizes a raw CEAF (expulsões da administração federal) record.
+
+        The CEAF payload carries a **masked** CPF (``***.435.151-**``) and
+        no explicit vigence: ``start_date`` is the publication date and the
+        record is open-ended (PR-D-06b § 2). The masked digits land in
+        ``masked_document`` (asterisks + visible digits only); ``cpf`` stays
+        None — an exact document match is impossible by construction.
+        """
+        punicao = raw.get("punicao") or {}
+        pessoa = raw.get("pessoa") or {}
+        orgao = raw.get("orgaoLotacao") or {}
+        uf_lotacao = (raw.get("ufLotacaoPessoa") or {}).get("uf") or {}
+        tipo = raw.get("tipoPunicao") or {}
+        fundamentacao = raw.get("fundamentacao") or []
+
+        legal_basis = "; ".join(
+            str(item["descricao"])
+            for item in fundamentacao
+            if isinstance(item, dict) and item.get("descricao")
+        )
+        publication = _parse_api_date(raw.get("dataPublicacao"))
+
+        api_id = raw.get("id")
+        name = punicao.get("nomePunido") or pessoa.get("nome")
+        record_id = (
+            f"ceaf-{api_id}"
+            if api_id is not None
+            else f"ceaf-{name or 'unknown'}"
+        )
+
+        return cls(
+            id=record_id,
+            list_name="ceaf",
+            masked_document=_masked_document(
+                punicao.get("cpfPunidoFormatado") or pessoa.get("cpfFormatado")
+            ),
+            sanctioned_name=name,
+            uf=_clean_no_info(uf_lotacao.get("sigla")),
+            sanctioning_body=_clean_no_info(orgao.get("nome")),
+            sanction_type=tipo.get("descricao"),
+            legal_basis=legal_basis or None,
+            process_number=punicao.get("processo"),
+            start_date=publication,
+            end_date=None,
+            publication_date=publication,
+        )
 
     @classmethod
     def from_transparency(
@@ -116,6 +168,24 @@ class Sanction(BaseModel):
             publication_date=_parse_api_date(raw.get("dataPublicacaoSancao")),
             fine_amount=_parse_brazilian_decimal(raw.get("valorMulta")),
         )
+
+
+def _masked_document(value: Any) -> str | None:
+    """Normalizes a masked document (``***.435.151-**``) to asterisks+digits."""
+    if value is None:
+        return None
+    masked = re.sub(r"[^0-9*]", "", str(value))
+    if not any(ch.isdigit() for ch in masked):
+        return None
+    return masked
+
+
+def _clean_no_info(value: Any) -> str | None:
+    """Maps the API's "Sem informação" sentinel to None."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if text.lower() in _NO_INFO or not text else text
 
 
 def _parse_api_date(value: Any) -> date | None:

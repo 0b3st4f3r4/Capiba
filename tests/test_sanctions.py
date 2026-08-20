@@ -127,6 +127,17 @@ class TestFetchSanctions:
     def test_unknown_list(self) -> None:
         """Unknown list names are rejected before any HTTP call."""
         with pytest.raises(ValueError, match="Unknown sanction list"):
+            fetch_sanctions("tse")
+
+    def test_ceaf_is_a_known_list(self) -> None:
+        """CEAF joined the sanction lists (PR-D-06b)."""
+        with (
+            patch(
+                "capiba.ingestion.crawler_transparency.TRANSPARENCY_API_KEY",
+                "",
+            ),
+            pytest.raises(RuntimeError, match="TRANSPARENCY_API_KEY"),
+        ):
             fetch_sanctions("ceaf")
 
     @patch("capiba.ingestion._http.requests.get")
@@ -292,6 +303,98 @@ class TestSanctionNormalizer:
         revalidated = Sanction.model_validate(sanction.model_dump(mode="json"))
 
         assert revalidated == sanction
+
+
+def _ceaf_payload() -> dict[str, Any]:
+    """A realistic CEAF record (live payload shape of 2026-08-20, PR-D-06b)."""
+    return {
+        "id": 141911,
+        "dataPublicacao": "21/07/2021",
+        "dataReferencia": "20/08/2026",
+        "punicao": {
+            "cpfPunidoFormatado": "***.435.151-**",
+            "nomePunido": "MARIA DE FATIMA PEREIRA",
+            "portaria": "270",
+            "processo": "08620.153919/2015-02",
+        },
+        "tipoPunicao": {"descricao": "Demissão"},
+        "pessoa": {
+            "id": 5709897,
+            "cpfFormatado": "***.435.151-**",
+            "nome": "MARIA DE FATIMA PEREIRA",
+            "tipo": "Pessoa Física",
+        },
+        "orgaoLotacao": {"sigla": "MJSP", "nome": "MINISTERIO DA JUSTICA"},
+        "ufLotacaoPessoa": {"uf": {"sigla": "Sem informação"}},
+        "fundamentacao": [
+            {"codigo": "1", "descricao": "ESTATUTO DOS SERVIDORES - ART. 132"}
+        ],
+    }
+
+
+class TestCeafNormalizer:
+    """Tests for the CEAF normalization (masked CPF, no explicit vigence)."""
+
+    def test_from_ceaf_full_payload(self) -> None:
+        """A full CEAF payload maps to the unified Sanction."""
+        sanction = Sanction.from_ceaf(_ceaf_payload())
+
+        assert sanction.id == "ceaf-141911"
+        assert sanction.list_name == "ceaf"
+        assert sanction.cpf is None
+        assert sanction.cnpj is None
+        assert sanction.masked_document == "***435151**"
+        assert sanction.sanctioned_name == "MARIA DE FATIMA PEREIRA"
+        assert sanction.sanctioning_body == "MINISTERIO DA JUSTICA"
+        assert sanction.sanction_type == "Demissão"
+        assert sanction.legal_basis == "ESTATUTO DOS SERVIDORES - ART. 132"
+        assert sanction.process_number == "08620.153919/2015-02"
+        # Declared vigence (PR-D-06b § 2): publication date, open-ended.
+        assert sanction.start_date == date(2021, 7, 21)
+        assert sanction.end_date is None
+        assert sanction.publication_date == date(2021, 7, 21)
+
+    def test_no_info_sentinel_degrades_to_none(self) -> None:
+        """The API's "Sem informação" sentinel maps to None."""
+        sanction = Sanction.from_ceaf(_ceaf_payload())
+
+        assert sanction.uf is None
+
+    def test_missing_nested_payloads(self) -> None:
+        """Missing nested blocks degrade to None instead of raising."""
+        sanction = Sanction.from_ceaf({"id": 9})
+
+        assert sanction.id == "ceaf-9"
+        assert sanction.masked_document is None
+        assert sanction.sanctioned_name is None
+        assert sanction.start_date is None
+
+    def test_masked_document_without_digits_becomes_none(self) -> None:
+        """A fully masked document (no visible digits) is not computable."""
+        raw = _ceaf_payload()
+        raw["punicao"]["cpfPunidoFormatado"] = "***.***.***-**"
+        raw["pessoa"]["cpfFormatado"] = "***.***.***-**"
+
+        assert Sanction.from_ceaf(raw).masked_document is None
+
+    def test_silver_roundtrip_keeps_masked_document(
+        self, local_catalog: Path
+    ) -> None:
+        """The silver sanctions table persists the masked document column."""
+        sanction = Sanction.from_ceaf(_ceaf_payload())
+        lake.write_silver_entities(
+            "sanctions", [sanction.model_dump(mode="json")], run_date=date(2026, 8, 20)
+        )
+
+        rows = [
+            row
+            for batch in lake.read_silver_entities("sanctions")
+            for row in batch
+        ]
+
+        assert len(rows) == 1
+        assert rows[0]["masked_document"] == "***435151**"
+        assert rows[0]["cpf"] is None
 
 
 def _spec_file(tmp_path: Path) -> Path:

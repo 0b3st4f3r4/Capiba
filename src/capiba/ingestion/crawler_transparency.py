@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = 15_000  # documented maximum
 
 # Sanction lists exposed by the API (GET /ceis and GET /cnep).
-SANCTION_LISTS: tuple[str, ...] = ("ceis", "cnep")
+SANCTION_LISTS: tuple[str, ...] = ("ceis", "cnep", "ceaf")
 
 
 def _headers() -> dict[str, str]:
@@ -177,7 +177,7 @@ def fetch_sanctions(
     endpoints of this crawler.
 
     Args:
-        list_name: Which list to fetch (``ceis`` or ``cnep``).
+        list_name: Which list to fetch (``ceis``, ``cnep`` or ``ceaf``).
         cnpj: Optional ``cnpjSancionado`` filter.
         max_pages: Optional cap on the number of pages (tests/backfills).
         start_page: First page to fetch (1-based).

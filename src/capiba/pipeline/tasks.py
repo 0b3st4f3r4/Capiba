@@ -33,6 +33,7 @@ from capiba.db.triage import register_signals
 from capiba.detection.entities import resolve_entities
 from capiba.detection.graphs import collusion_eligibility, pair_buyers_from_eligibility
 from capiba.detection.screening import sanctioned_supplier_signals
+from capiba.detection.screening_fuzzy import sanctioned_name_match_signals
 from capiba.detection.signals import (
     SignalType,
     anomalous_price,
@@ -354,6 +355,7 @@ def task_detect(**context: Any) -> dict[str, Any]:
             row for batch in lake.read_silver_entities("sanctions") for row in batch
         ]
         signals.extend(sanctioned_supplier_signals(contracts, sanctions))
+        signals.extend(sanctioned_name_match_signals(contracts, sanctions))
     except Exception as e:
         logger.warning("Sanction screening unavailable (silver sanctions): %s", e)
 

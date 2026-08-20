@@ -38,6 +38,7 @@ class SignalType(StrEnum):
     SEMANTIC_GAP = "semantic_gap"
     ANOMALOUS_DURATION = "anomalous_duration"
     SANCTIONED_SUPPLIER = "sanctioned_supplier"
+    SANCTIONED_NAME_MATCH = "sanctioned_name_match"
 
 
 def is_non_competitive(modality: Any) -> bool:

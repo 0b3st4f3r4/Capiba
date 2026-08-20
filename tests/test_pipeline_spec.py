@@ -100,7 +100,7 @@ class TestLoadSpec:
         weekly = specs["weekly_sanctions"]
         assert weekly.schedule == "22 3 * * 2"
         assert weekly.formula == "entities_collect"
-        assert [s.name for s in weekly.sources] == ["ceis", "cnep"]
+        assert [s.name for s in weekly.sources] == ["ceis", "cnep", "ceaf"]
 
     def test_string_shorthand(self, tmp_path: Path) -> None:
         """Plain strings are accepted as shorthand for name-only entries."""

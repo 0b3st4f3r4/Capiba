@@ -413,8 +413,10 @@ class TestEntitiesCollectFactory:
         assert {t.task_id for t in dag.tasks} == {
             "crawl_ceis",
             "crawl_cnep",
+            "crawl_ceaf",
             "normalize_ceis",
             "normalize_cnep",
+            "normalize_ceaf",
             "destination_lake_bronze",
             "destination_lake_silver",
             "destination_gold_report",
