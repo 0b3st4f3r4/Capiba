@@ -71,7 +71,7 @@ def _fetch_page(
             delay=delay,
             empty_statuses=(204,),
             rate_limit_status=429,
-            retry_statuses=(502, 503, 504),
+            retry_statuses=(500, 502, 503, 504),
         ),
     )
 

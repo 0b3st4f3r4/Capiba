@@ -66,7 +66,7 @@ def _fetch_page(
     retries: int = MAX_RETRIES,
     delay: float = BASE_DELAY,
     fatal_statuses: tuple[int, ...] = (400, 401, 403, 422),
-    retry_statuses: tuple[int, ...] = (502, 503, 504),
+    retry_statuses: tuple[int, ...] = (500, 502, 503, 504),
 ) -> list[dict[str, Any]]:
     """Fetches a page from the API with retry and backoff.
 
@@ -211,7 +211,7 @@ def fetch_sanctions(
             url,
             params,
             fatal_statuses=(401, 403, 422),
-            retry_statuses=(400, 502, 503, 504),
+            retry_statuses=(400, 500, 502, 503, 504),
         )
         if not records:
             break
