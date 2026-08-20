@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,8 @@ def download_cnpj_dump(
     reference_month: str,
     base_url: str = FEDERAL_REVENUE_BASE_URL,
     files: list[str] | None = None,
+    skip: set[str] | None = None,
+    on_file: Callable[[Path], None] | None = None,
 ) -> list[Path]:
     """Downloads the monthly CNPJ dump from the Federal Revenue Service.
 
@@ -137,15 +140,24 @@ def download_cnpj_dump(
         reference_month: Month in YYYY-MM format (typical SERPRO+ directory).
         base_url: Base URL of the file share.
         files: List of files to download. Default: FEDERAL_REVENUE_DEFAULT_FILES.
+        skip: File names to skip (e.g. already uploaded to the bronze layer
+            by a previous attempt — multi-GB dumps killed mid-download used
+            to restart from scratch).
+        on_file: Optional callback invoked with each downloaded path right
+            after it lands (lets the caller upload/remove it immediately).
 
     Returns:
-        List of paths of the downloaded ZIP files.
+        List of paths of the downloaded ZIP files (excluding skipped ones).
     """
     destination.mkdir(parents=True, exist_ok=True)
     files = files if files is not None else FEDERAL_REVENUE_DEFAULT_FILES
+    skip = skip or set()
     downloaded: list[Path] = []
 
     for name in files:
+        if name in skip:
+            logger.info("Skipping %s (already uploaded to the bronze layer)", name)
+            continue
         url = _build_download_url(base_url, f"/{reference_month}/", name)
         file_path = destination / name
 
@@ -172,6 +184,8 @@ def download_cnpj_dump(
             logger.info(
                 "Download finished: %s (%d bytes)", file_path, file_path.stat().st_size
             )
+            if on_file is not None:
+                on_file(file_path)
         except requests.RequestException as exc:
             logger.warning("Failed to download %s: %s", name, exc)
 

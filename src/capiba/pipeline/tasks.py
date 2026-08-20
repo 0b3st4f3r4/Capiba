@@ -416,7 +416,11 @@ def task_download_source(
 ) -> dict[str, Any]:
     """Task: download a dump source declared in the pipeline spec.
 
-    The manifest is pushed to XCom under ``manifest_<source_name>``.
+    Each downloaded file is uploaded to the bronze layer immediately
+    (and removed from the tempdir); on a retry, files already present in
+    the bronze layer for the run date are skipped and re-entered into the
+    manifest, so a pod restart no longer restarts a multi-GB dump from
+    scratch. The manifest is pushed to XCom under ``manifest_<source_name>``.
 
     Args:
         source_name: Name of the dump source to download.
@@ -446,15 +450,46 @@ def task_download_source(
         raise ValueError(f"Source '{source_name}' has no dump downloader")
 
     logger.info("Downloading source '%s' for %s", source_name, reference_month)
-    manifest: list[dict[str, Any]] = []
+
+    # Resume support: files already uploaded to the bronze layer by a
+    # previous attempt are skipped and re-entered into the manifest (the
+    # download tempdir does not survive a pod restart).
+    existing: dict[str, str] = {}
+    try:
+        existing = {
+            key.rsplit("/", 1)[-1]: key
+            for key in lake.list_bronze_files(source_name, run_date)
+        }
+    except Exception as exc:
+        logger.warning(
+            "Failed to list %s bronze files; downloading everything: %s",
+            source_name,
+            exc,
+        )
+
+    manifest: list[dict[str, Any]] = [
+        {"file": name, "bytes": None, "sha256": None, "lake_key": key}
+        for name, key in sorted(existing.items())
+    ]
+    if existing:
+        logger.info(
+            "Resuming source '%s': %d files already in the bronze layer",
+            source_name,
+            len(existing),
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
-        params = {"files": source.params.get("files"), **source.params}
-        downloaded = download(Path(tmp), reference_month, **params)
-        for path in downloaded:
+        def _upload(path: Path) -> None:
             data = path.read_bytes()
-            key = lake.write_bronze_file(
-                source_name, path.name, data, run_date=run_date
-            )
+            try:
+                key = lake.write_bronze_file(
+                    source_name, path.name, data, run_date=run_date
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to upload %s to the bronze layer: %s", path.name, exc
+                )
+                return
             manifest.append(
                 {
                     "file": path.name,
@@ -463,6 +498,16 @@ def task_download_source(
                     "lake_key": key,
                 }
             )
+            path.unlink()
+
+        params = {"files": source.params.get("files"), **source.params}
+        download(
+            Path(tmp),
+            reference_month,
+            skip=set(existing),
+            on_file=_upload,
+            **params,
+        )
 
     if not manifest:
         raise RuntimeError(

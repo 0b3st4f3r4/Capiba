@@ -97,7 +97,12 @@ streaming: parse chunked dos ZIPs Empresas/Estabelecimentos/Socios para as
 tabelas silver Iceberg `companies`/`establishments`/`partners`
 (opt-in via `FEDERAL_REVENUE_FILES`), e o destino `arangodb_graph` carrega
 os vértices `companies`/`partners` e arestas `partner_of` no grafo
-(`bulk_upsert_cnpj`, em lote, a partir do silver).
+(`bulk_upsert_cnpj`, em lote, a partir do silver). O download da fórmula
+(`task_download_source`) sobe cada arquivo ao bronze assim que termina e o
+remove do tempdir; num retry, os arquivos já presentes no bronze
+(`lake.list_bronze_files`) são pulados (`skip`/`on_file` em
+`download_cnpj_dump`) e reentram no manifesto — um restart de pod não
+recomeça um dump multi-GB do zero.
 A fórmula `entities_collect` cobre listas de entidades snapshot (fontes
 `ceis`/`cnep` do Portal da Transparência — crawler `fetch_sanctions`,
 modelo `Sanction` em `src/capiba/ingestion/sanctions.py`): etapa

@@ -322,6 +322,28 @@ class TestCrawlerFederalRevenue:
         assert files[0].name == "Cnaes.zip"
 
     @patch("capiba.ingestion.crawler_federal_revenue.requests.get")
+    def test_download_skips_bronze_uploaded_files(
+        self, mock_get: MagicMock, tmp_path: Path
+    ) -> None:
+        """Files in the skip set are not downloaded; on_file fires per file."""
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"PK"]
+        mock_get.return_value.__enter__.return_value = mock_response
+        seen: list[str] = []
+
+        files = download_cnpj_dump(
+            destination=tmp_path / "cnpj",
+            reference_month="2025-01",
+            files=["Cnaes.zip", "Paises.zip"],
+            skip={"Paises.zip"},
+            on_file=lambda p: seen.append(p.name),
+        )
+
+        assert [f.name for f in files] == ["Cnaes.zip"]
+        assert seen == ["Cnaes.zip"]
+        mock_get.assert_called_once()
+
+    @patch("capiba.ingestion.crawler_federal_revenue.requests.get")
     def test_download_rejects_invalid_zip(
         self, mock_get: MagicMock, tmp_path: Path
     ) -> None:
