@@ -141,6 +141,12 @@ TSE_BASE_URL = os.getenv(
     "TSE_BASE_URL",
     "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas",
 )
+# The candidates dump (consulta_cand — who was elected) lives in a sibling
+# directory of the CDN.
+TSE_CANDIDATES_BASE_URL = os.getenv(
+    "TSE_CANDIDATES_BASE_URL",
+    "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand",
+)
 # Election year of the fixed prestação de contas snapshot (2024 municipal
 # elections); the dump is not month-indexed, so the pipeline's
 # reference_month does not apply (see dags/pipelines/monthly_tse.yaml).
@@ -224,6 +230,21 @@ DETECTION_COLLUSION_MIN_BUYERS = int(os.getenv("DETECTION_COLLUSION_MIN_BUYERS",
 # (PR-D-07/PR-D-07b); lowering or raising it requires a new pre-registration
 # (monotonicity invariant, PR-D-07 section 6).
 DETECTION_ENTITY_THRESHOLD = float(os.getenv("DETECTION_ENTITY_THRESHOLD", "0.85"))
+
+# Gates of the political_connection signal (O8): minimum total donated to the
+# elected candidate's campaign, minimum share of the donor-supplier in the
+# buyer's contracted value within the mandate window, and the share that
+# saturates the score (min(1.0, share / reference)). Pre-registered
+# calibration placeholders (PR-D-08); changing them requires PR-D-08b.
+DETECTION_POLITICAL_MIN_DONATION = float(
+    os.getenv("DETECTION_POLITICAL_MIN_DONATION", "1000")
+)
+DETECTION_POLITICAL_MIN_SHARE = float(
+    os.getenv("DETECTION_POLITICAL_MIN_SHARE", "0.05")
+)
+DETECTION_POLITICAL_SCORE_REFERENCE = float(
+    os.getenv("DETECTION_POLITICAL_SCORE_REFERENCE", "0.25")
+)
 
 # =============================================================================
 # Notification (SMTP)

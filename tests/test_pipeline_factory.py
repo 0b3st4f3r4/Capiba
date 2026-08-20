@@ -236,6 +236,7 @@ class TestBuildDags:
         outlet_uris = {a.uri for a in download.outlets}
         assert "capiba://bronze/raw_tse" in outlet_uris
         assert "capiba://silver/campaign_donations" in outlet_uris
+        assert "capiba://silver/candidacies" in outlet_uris
         # The CNPJ entity assets belong to the federal_revenue dump only.
         assert "capiba://silver/companies" not in outlet_uris
         assert "capiba://silver/contracts" not in outlet_uris

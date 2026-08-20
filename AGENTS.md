@@ -95,8 +95,12 @@ Diário/OKBR) e
 de aditivo do PR-D-05 leem as observações bronze; o silver não é tocado) e
 `monthly_tse` a partir de `monthly_tse.yaml` (O8 — snapshot fixo da
 prestação de contas eleitorais do TSE, ano via `params.year`/`TSE_ELECTION_YEAR`;
-o `reference_month` não se aplica; o normalize streaming grava a silver
-`campaign_donations` a partir do `receitas_candidatos_<ano>_BRASIL.csv` —
+o `reference_month` não se aplica; o download cobre dois dumps — prestação
+de contas e `consulta_cand_<ano>.zip` (diretório `TSE_CANDIDATES_BASE_URL`,
+gate do eleito); o normalize streaming grava as silvers
+`campaign_donations` a partir do `receitas_candidatos_<ano>_BRASIL.csv` e
+`candidacies` a partir do `consulta_cand_<ano>_BRASIL.csv` (coluna
+`DS_SITUACAO_TOTALIZACAO_TURNO`) —
 parser `src/capiba/ingestion/tse.py`; documentos completos no silver para o
 match do sinal `political_connection`, mascaramento é preocupação do mart
 gold, PR-D-08 §2).
@@ -144,7 +148,17 @@ A tabela silver `sanctions` alimenta no `task_detect` (best-effort) os sinais
 (screening fuzzy, `src/capiba/detection/screening_fuzzy.py` — validado pela
 bateria D-06b, `docs/results/R-D-06b.md`: veto por documento divergente,
 score doc-assistido 0,6 nome + 0,4 documento com limiar 0,85 e nome-only
-com limiar 0,95).
+com limiar 0,95). As silvers TSE (`campaign_donations` + `candidacies`)
+alimentam, também no `task_detect` (best-effort), o sinal
+`political_connection` (`src/capiba/detection/political.py`, contrato
+PR-D-08 §3): doador de campanha de prefeito eleito (match exato por
+documento, originário prioritário — nome nunca é evidência) que vira
+fornecedor do município na janela do mandato (posse + 4 anos, derivada de
+`TSE_ELECTION_YEAR`), com piso de doação `DETECTION_POLITICAL_MIN_DONATION`
+(default R$ 1.000), concentração `DETECTION_POLITICAL_MIN_SHARE` (default
+0,05) e score `min(1.0, share / DETECTION_POLITICAL_SCORE_REFERENCE)`
+(default 0,25) — placeholders pré-registrados (mudança exige PR-D-08b);
+município da urna casado com o comprador por (cidade, UF) normalizados.
 A fórmula `documents_collect` cobre fontes de documentos datados com janela
 (fonte `querido_diario` — crawler `fetch_gazettes` em
 `src/capiba/ingestion/crawler_querido_diario.py`): etapa `crawl_<fonte>`

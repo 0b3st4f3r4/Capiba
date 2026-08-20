@@ -18,9 +18,14 @@ from typing import Any
 
 import pytest
 
-from capiba.ingestion.crawler_tse import download_tse_dump, tse_dump_filename
+from capiba.ingestion.crawler_tse import (
+    download_tse_dump,
+    tse_candidates_filename,
+    tse_dump_filename,
+)
 from capiba.ingestion.tse import (
     CampaignDonation,
+    Candidacy,
     donation_id,
     entity_for_dump,
     parse_tse_zip,
@@ -59,12 +64,25 @@ SPECIAL_DOC_ROW = (
 )
 
 
-def _write_zip(path: Path, members: dict[str, list[str]]) -> Path:
+CAND_HEADER = (
+    "SQ_CANDIDATO;NM_CANDIDATO;SG_PARTIDO;DS_CARGO;CD_UE;NM_UE;SG_UF;"
+    "DS_SITUACAO_TOTALIZACAO_TURNO"
+)
+ELECTED_MAYOR_ROW = "9001;JOANA CANDIDATA;XX;Prefeito;25313;RECIFE;PE;Eleito"
+DEFEATED_MAYOR_ROW = "9002;ZE DERROTADO;YY;Prefeito;25313;RECIFE;PE;Não eleito"
+ELECTED_COUNCILLOR_ROW = (
+    "9003;MARIA VEREADORA;XX;Vereador;25313;RECIFE;PE;Eleito por QP"
+)
+
+
+def _write_zip(
+    path: Path, members: dict[str, list[str]], header: str = HEADER
+) -> Path:
     """Writes a fixture TSE dump ZIP (latin1, header row per member)."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
         for member, rows in members.items():
-            zf.writestr(member, "\n".join([HEADER, *rows]).encode("latin1"))
+            zf.writestr(member, "\n".join([header, *rows]).encode("latin1"))
     path.write_bytes(buffer.getvalue())
     return path
 
@@ -82,7 +100,7 @@ class TestEntityForDump:
             ("prestacao_de_contas_eleitorais_candidatos_2024.zip", "campaign_donations"),
             ("prestacao_de_contas_eleitorais_candidatos_2022.zip", "campaign_donations"),
             ("prestacao_de_contas_eleitorais_orgaos_partidarios_2024.zip", None),
-            ("consulta_cand_2024.zip", None),
+            ("consulta_cand_2024.zip", "candidacies"),
             ("Empresas0.zip", None),
         ],
     )
@@ -236,6 +254,92 @@ class TestParseTseZip:
             list(parse_tse_zip(zip_path))
 
 
+class TestCandidacyModel:
+    """Tests for the Candidacy pydantic model (consulta_cand dump)."""
+
+    def _parse_row(self, row: str) -> Candidacy:
+        columns = CAND_HEADER.split(";")
+        values = row.split(";")
+        assert len(columns) == len(values)
+        return Candidacy.model_validate(
+            {**dict(zip(columns, values, strict=True)), "election_year": 2024}
+        )
+
+    def test_elected_mayor_row(self) -> None:
+        candidacy = self._parse_row(ELECTED_MAYOR_ROW)
+
+        assert candidacy.candidate_sequential == "9001"
+        assert candidacy.candidate_name == "JOANA CANDIDATA"
+        assert candidacy.party == "XX"
+        assert candidacy.office == "Prefeito"
+        assert candidacy.ue_code == "25313"
+        assert candidacy.ue_name == "RECIFE"
+        assert candidacy.uf == "PE"
+        assert candidacy.totalization_status == "Eleito"
+        assert len(candidacy.id) == 32
+
+    def test_id_is_stable_per_year_and_sequential(self) -> None:
+        first = self._parse_row(ELECTED_MAYOR_ROW)
+        second = self._parse_row(ELECTED_MAYOR_ROW)
+        other_sequential = self._parse_row(DEFEATED_MAYOR_ROW)
+
+        assert first.id == second.id
+        assert other_sequential.id != first.id
+
+    def test_silver_shape_row_passes_through(self) -> None:
+        row = self._parse_row(DEFEATED_MAYOR_ROW).model_dump()
+
+        assert Candidacy.model_validate(row) == Candidacy(**row)
+
+
+class TestParseCandidaciesZip:
+    """Tests for the consulta_cand ZIP parsing."""
+
+    def _cand_zip(self, path: Path, members: dict[str, list[str]]) -> Path:
+        return _write_zip(path, members, header=CAND_HEADER)
+
+    def test_parses_brasil_member(self, tmp_path: Path) -> None:
+        zip_path = self._cand_zip(
+            tmp_path / "consulta_cand_2024.zip",
+            {"consulta_cand_2024_BRASIL.csv": [ELECTED_MAYOR_ROW, DEFEATED_MAYOR_ROW]},
+        )
+
+        chunks = list(parse_tse_zip(zip_path))
+
+        entity, records, _invalid = chunks[0]
+        assert entity == "candidacies"
+        assert len(chunks) == 1
+        assert [r["totalization_status"] for r in records] == ["Eleito", "Não eleito"]
+        assert all(r["election_year"] == 2024 for r in records)
+
+    def test_brasil_member_wins_over_per_uf(self, tmp_path: Path) -> None:
+        """The consolidated member is parsed; per-UF files are a fallback."""
+        zip_path = self._cand_zip(
+            tmp_path / "consulta_cand_2024.zip",
+            {
+                "consulta_cand_2024_BRASIL.csv": [ELECTED_MAYOR_ROW],
+                "consulta_cand_2024_PE.csv": [ELECTED_MAYOR_ROW, DEFEATED_MAYOR_ROW],
+            },
+        )
+
+        chunks = list(parse_tse_zip(zip_path))
+
+        assert sum(len(records) for _, records, _ in chunks) == 1
+
+    def test_per_uf_members_are_the_fallback(self, tmp_path: Path) -> None:
+        zip_path = self._cand_zip(
+            tmp_path / "consulta_cand_2024.zip",
+            {
+                "consulta_cand_2024_PE.csv": [ELECTED_MAYOR_ROW],
+                "consulta_cand_2024_SP.csv": [DEFEATED_MAYOR_ROW],
+            },
+        )
+
+        chunks = list(parse_tse_zip(zip_path))
+
+        assert sum(len(records) for _, records, _ in chunks) == 2
+
+
 class _FakeResponse:
     """Minimal requests.Response stand-in for streaming downloads."""
 
@@ -285,11 +389,14 @@ class TestDownloadTseDump:
         downloaded = download_tse_dump(tmp_path, "2026-07", year=2024)
 
         assert [p.name for p in downloaded] == [
-            "prestacao_de_contas_eleitorais_candidatos_2024.zip"
+            "prestacao_de_contas_eleitorais_candidatos_2024.zip",
+            "consulta_cand_2024.zip",
         ]
         assert seen_urls == [
             "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas/"
-            "prestacao_de_contas_eleitorais_candidatos_2024.zip"
+            "prestacao_de_contas_eleitorais_candidatos_2024.zip",
+            "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/"
+            "consulta_cand_2024.zip",
         ]
 
     def test_reference_month_is_ignored(
@@ -381,3 +488,4 @@ class TestRegistry:
             tse_dump_filename(2024)
             == "prestacao_de_contas_eleitorais_candidatos_2024.zip"
         )
+        assert tse_candidates_filename(2024) == "consulta_cand_2024.zip"

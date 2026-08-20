@@ -27,11 +27,16 @@ from capiba.config import (
     DETECTION_COLLUSION_MIN_BUYERS,
     DETECTION_COLLUSION_MIN_WINS,
     DETECTION_ENTITY_THRESHOLD,
+    DETECTION_POLITICAL_MIN_DONATION,
+    DETECTION_POLITICAL_MIN_SHARE,
+    DETECTION_POLITICAL_SCORE_REFERENCE,
+    TSE_ELECTION_YEAR,
 )
 from capiba.db.arangodb import get_capiba_db
 from capiba.db.triage import register_signals
 from capiba.detection.entities import resolve_entities
 from capiba.detection.graphs import collusion_eligibility, pair_buyers_from_eligibility
+from capiba.detection.political import political_connection_signals
 from capiba.detection.screening import sanctioned_supplier_signals
 from capiba.detection.screening_fuzzy import sanctioned_name_match_signals
 from capiba.detection.signals import (
@@ -459,6 +464,33 @@ def task_detect(**context: Any) -> dict[str, Any]:
         signals.extend(sanctioned_name_match_signals(contracts, sanctions))
     except Exception as e:
         logger.warning("Sanction screening unavailable (silver sanctions): %s", e)
+
+    # Best-effort: political connection screening (O8, PR-D-08) never fails
+    # the task (the silver TSE tables may not exist yet). The mandate window
+    # derives from the ingested election year.
+    try:
+        donations = [
+            row
+            for batch in lake.read_silver_entities("campaign_donations")
+            for row in batch
+        ]
+        candidacies = [
+            row for batch in lake.read_silver_entities("candidacies") for row in batch
+        ]
+        signals.extend(
+            political_connection_signals(
+                donations,
+                contracts,
+                candidacies,
+                min_donation_brl=DETECTION_POLITICAL_MIN_DONATION,
+                min_supplier_share=DETECTION_POLITICAL_MIN_SHARE,
+                score_share_reference=DETECTION_POLITICAL_SCORE_REFERENCE,
+                mandate_start=date(TSE_ELECTION_YEAR + 1, 1, 1),
+                mandate_end=date(TSE_ELECTION_YEAR + 4, 12, 31),
+            )
+        )
+    except Exception as e:
+        logger.warning("Political connection detection unavailable (silver tse): %s", e)
 
     # Best-effort: graph signals never fail the task (ArangoDB may be down).
     graph_snapshot: dict[str, Any] | None = None

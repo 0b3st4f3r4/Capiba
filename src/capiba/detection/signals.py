@@ -39,6 +39,7 @@ class SignalType(StrEnum):
     ANOMALOUS_DURATION = "anomalous_duration"
     SANCTIONED_SUPPLIER = "sanctioned_supplier"
     SANCTIONED_NAME_MATCH = "sanctioned_name_match"
+    POLITICAL_CONNECTION = "political_connection"
 
 
 def is_non_competitive(modality: Any) -> bool:

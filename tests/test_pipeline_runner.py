@@ -497,6 +497,14 @@ TSE_BAD_ROW = (
 )
 
 
+TSE_CAND_HEADER = (
+    "SQ_CANDIDATO;NM_CANDIDATO;SG_PARTIDO;DS_CARGO;CD_UE;NM_UE;SG_UF;"
+    "DS_SITUACAO_TOTALIZACAO_TURNO"
+)
+TSE_CAND_ELECTED_ROW = "9001;JOANA CANDIDATA;XX;Prefeito;25313;RECIFE;PE;Eleito"
+TSE_CAND_DEFEATED_ROW = "9002;ZE DERROTADO;YY;Prefeito;25313;RECIFE;PE;Não eleito"
+
+
 def _tse_zip(path: Path, rows: list[str]) -> Path:
     """Writes a fixture TSE dump ZIP with one receitas member (latin1)."""
     buffer = io.BytesIO()
@@ -509,13 +517,29 @@ def _tse_zip(path: Path, rows: list[str]) -> Path:
     return path
 
 
+def _tse_cand_zip(path: Path, rows: list[str]) -> Path:
+    """Writes a fixture consulta_cand ZIP with one BRASIL member (latin1)."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(
+            "consulta_cand_2024_BRASIL.csv",
+            "\n".join([TSE_CAND_HEADER, *rows]).encode("latin1"),
+        )
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
 def _fake_tse_download(destination: Path, *_args: Any, **_kwargs: Any) -> list[Path]:
-    """Fake tse download with the candidates' prestação de contas ZIP."""
+    """Fake tse download: prestação de contas + consulta_cand ZIPs."""
     return [
         _tse_zip(
             destination / "prestacao_de_contas_eleitorais_candidatos_2024.zip",
             [TSE_PJ_ROW, TSE_BAD_ROW, TSE_PF_ROW],
-        )
+        ),
+        _tse_cand_zip(
+            destination / "consulta_cand_2024.zip",
+            [TSE_CAND_ELECTED_ROW, TSE_CAND_DEFEATED_ROW],
+        ),
     ]
 
 
@@ -729,7 +753,7 @@ class TestTseFileDumpNormalize:
             "destination_lake_silver",
         ]
         normalize = report.steps[1]
-        assert normalize.rows_out == 2
+        assert normalize.rows_out == 4
         assert normalize.errors == 1  # the unparseable date row
 
         # The TSE source derives its file list from params.year; the CNPJ
@@ -737,7 +761,18 @@ class TestTseFileDumpNormalize:
         assert download.call_args.kwargs["files"] is None
         assert download.call_args.kwargs["year"] == 2024
 
-        assert report.outputs["tse_entities"] == {"campaign_donations": 2}
+        assert report.outputs["tse_entities"] == {
+            "campaign_donations": 2,
+            "candidacies": 2,
+        }
+        candidacies = [
+            r for batch in lake.read_silver_entities("candidacies") for r in batch
+        ]
+        assert {r["totalization_status"] for r in candidacies} == {
+            "Eleito",
+            "Não eleito",
+        }
+        assert all(r["election_year"] == 2024 for r in candidacies)
         donations = [
             r for batch in lake.read_silver_entities("campaign_donations") for r in batch
         ]

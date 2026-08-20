@@ -285,7 +285,7 @@ class TestTaskDetect:
 
         summary = task_detect(ds="2026-01-01")
 
-        mock_lake.read_silver_entities.assert_called_once_with("sanctions")
+        mock_lake.read_silver_entities.assert_any_call("sanctions")
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         screened = [s for s in signals if s["signal_type"] == "sanctioned_supplier"]
         assert len(screened) == 1
@@ -353,6 +353,87 @@ class TestTaskDetect:
         assert summary["signals"] >= 1
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "sanctioned_supplier" not in {s["signal_type"] for s in signals}
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_adds_political_connection_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Political screening (O8, PR-D-08): donor of an elected mayor who
+        supplies the municipality signals via the silver TSE tables."""
+        contract = _silver_contract("C001", supplier_cnpj="11111111000111")
+        contract["signature_date"] = "2026-06-15"
+        contract["buyer"] = {"siafi_code": "2650", "city": "RECIFE", "uf": "PE"}
+        other = _silver_contract("C002", supplier_cnpj="22222222000122")
+        other["signature_date"] = "2026-06-15"
+        other["buyer"] = {"siafi_code": "2650", "city": "RECIFE", "uf": "PE"}
+        other["amount"] = 3000.0
+        mock_lake.read_silver_contracts.return_value = [contract, other]
+        batches = {
+            "sanctions": [],
+            "campaign_donations": [
+                [
+                    {
+                        "election_year": 2024,
+                        "candidate_sequential": "9001",
+                        "donor_document": "11111111000111",
+                        "donor_origin_document": None,
+                        "amount": 5000.0,
+                    }
+                ]
+            ],
+            "candidacies": [
+                [
+                    {
+                        "election_year": 2024,
+                        "candidate_sequential": "9001",
+                        "candidate_name": "JOANA CANDIDATA",
+                        "party": "XX",
+                        "office": "Prefeito",
+                        "ue_name": "RECIFE",
+                        "uf": "PE",
+                        "totalization_status": "Eleito",
+                    }
+                ]
+            ],
+        }
+        mock_lake.read_silver_entities.side_effect = lambda entity: iter(
+            batches[entity]
+        )
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        mock_lake.read_silver_entities.assert_any_call("campaign_donations")
+        mock_lake.read_silver_entities.assert_any_call("candidacies")
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        political = [s for s in signals if s["signal_type"] == "political_connection"]
+        assert len(political) == 1
+        assert political[0]["entity_type"] == "supplier"
+        assert political[0]["entity_id"] == "11111111000111"
+        assert political[0]["score"] == 1.0  # share 0.25 saturates at the cap
+        assert summary["signals"] == len(signals)
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_tse_failure_keeps_other_signals(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """Missing silver TSE tables must not abort the detection."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_lake.read_silver_entities.side_effect = FileNotFoundError("no table")
+        mock_collusion.return_value = []
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert "political_connection" not in {s["signal_type"] for s in signals}
 
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")

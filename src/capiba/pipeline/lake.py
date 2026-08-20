@@ -71,7 +71,7 @@ from capiba.config import (
 from capiba.ingestion.cnpj import Company, Establishment, Partner
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.sanctions import Sanction
-from capiba.ingestion.tse import CampaignDonation
+from capiba.ingestion.tse import CampaignDonation, Candidacy
 from capiba.pipeline import trino
 
 if TYPE_CHECKING:
@@ -264,6 +264,31 @@ CAMPAIGN_DONATIONS_PARTITION_SPEC = PartitionSpec(
     )
 )
 
+# Iceberg schema of the silver ``candidacies`` table (TSE consulta_cand —
+# who ran and who was elected), partitioned by the ingestion date ``dt``.
+# Feeds the elected-mayor gate of the ``political_connection`` signal
+# (PR-D-08 §3) via ``totalization_status``.
+CANDIDACIES_SCHEMA = Schema(
+    NestedField(1, "id", StringType(), required=True),
+    NestedField(2, "election_year", LongType(), required=False),
+    NestedField(3, "candidate_sequential", StringType(), required=False),
+    NestedField(4, "candidate_name", StringType(), required=False),
+    NestedField(5, "party", StringType(), required=False),
+    NestedField(6, "office", StringType(), required=False),
+    NestedField(7, "ue_code", StringType(), required=False),
+    NestedField(8, "ue_name", StringType(), required=False),
+    NestedField(9, "uf", StringType(), required=False),
+    NestedField(10, "totalization_status", StringType(), required=False),
+    NestedField(11, "dt", DateType(), required=False),
+    NestedField(12, "ingested_at", TimestamptzType(), required=False),
+)
+
+CANDIDACIES_PARTITION_SPEC = PartitionSpec(
+    PartitionField(
+        source_id=11, field_id=1000, transform=IdentityTransform(), name="dt"
+    )
+)
+
 # Silver entity tables: name -> (schema, partition spec, pydantic model).
 ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
     "companies": (COMPANIES_SCHEMA, COMPANIES_PARTITION_SPEC, Company),
@@ -275,6 +300,7 @@ ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
         CAMPAIGN_DONATIONS_PARTITION_SPEC,
         CampaignDonation,
     ),
+    "candidacies": (CANDIDACIES_SCHEMA, CANDIDACIES_PARTITION_SPEC, Candidacy),
 }
 
 # Iceberg schema of the bronze ``raw_<source>`` tables: the full payload kept

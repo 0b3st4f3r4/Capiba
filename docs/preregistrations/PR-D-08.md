@@ -250,3 +250,13 @@ fórmula `file_dump`; sanções = `entities_collect`):
   sondagem real adiada para a fase 2. Limiares (piso R$ 1.000, share 5%,
   saturação 25%) são placeholders de calibração pré-registrados, à espera
   de validação no regime sintético.
+- 2026-08-20: implementação do sinal (fatia 2), sem alterar predições.
+  Fonte do gate do eleito: dump `consulta_cand_2024.zip` (mesmo CDN,
+  diretório `consulta_cand`), coluna `DS_SITUACAO_TOTALIZACAO_TURNO` —
+  elegem os status com prefixo "Eleito" ("Eleito", "Eleito por QP",
+  "Eleito por média"); leiaute confirmado por terceiros, a confirmar na
+  sondagem real da fase 2. Nova entidade silver `candidacies`. O match
+  município da urna × ente comprador é feito no sinal pelo par
+  (cidade, UF) normalizado (maiúsculas, sem acentos); o de-para UE↔SIAFI
+  via seed dbt fica para o mart da fatia 3. A janela do mandato deriva de
+  `TSE_ELECTION_YEAR` (posse em 1º de janeiro do ano seguinte, 4 anos).
