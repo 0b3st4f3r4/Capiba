@@ -1,0 +1,93 @@
+{
+  "id": "D-09",
+  "runner": "geography",
+  "description": "Geografia anomala (O6): fornecedor PJ cuja sede municipal dista mais de 100 km (estrito) do municipio do ente comprador. Distancia haversine R=6371.0 km entre sedes municipais; score = round(min(1.0, distance_km / 1000.0), 4). Fornecedor PF, par sem coordenadas e distancia abaixo do limiar nunca sinalizam. Sem predicao dura no volume real (exploratorio declarado). Ver docs/preregistrations/PR-D-09.md (rascunho 2026-08-20).",
+  "seeds": [13, 29, 41, 59, 71],
+  "source": {
+    "reference": "kelvins/municipios-brasileiros (MIT): codigo_ibge, nome, uf, latitude, longitude, codigo_siafi",
+    "supplier_chain": "silver establishments.municipio (TOM) -> rfb_municipalities (TOM->nome) -> municipalities (nome+UF -> lat/long)",
+    "buyer_chain": "silver contracts buyer.city + buyer.uf -> municipalities (nome+UF -> lat/long)"
+  },
+  "thresholds": {
+    "max_distance_km": 100.0,
+    "score_distance_reference": 1000.0,
+    "earth_radius_km": 6371.0
+  },
+  "control_pairs": 20,
+  "expected": {
+    "signal_cases": ["G4", "G5", "G6", "G7"],
+    "no_signal_cases": ["G1", "G2", "G3", "G8", "G9", "G10"]
+  },
+  "cases": [
+    {
+      "id": "G1",
+      "description": "Fornecedor e comprador no mesmo municipio (0 km) -> sem sinal",
+      "supplier": {"doc_type": "cnpj", "lat": -8.0476, "lon": -34.8770},
+      "buyer": {"lat": -8.0476, "lon": -34.8770},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "G2",
+      "description": "Recife x Olinda (4.922050 km) -> sem sinal",
+      "supplier": {"doc_type": "cnpj", "lat": -8.0476, "lon": -34.8770},
+      "buyer": {"lat": -8.0089, "lon": -34.8553},
+      "expected": {"signal": false, "distance_km": 4.922050}
+    },
+    {
+      "id": "G3",
+      "description": "Par equatorial a 0.75 grau (83.396195 km < 100) -> sem sinal (bracket inferior)",
+      "supplier": {"doc_type": "cnpj", "lat": 0.0, "lon": 0.0},
+      "buyer": {"lat": 0.0, "lon": 0.75},
+      "expected": {"signal": false, "distance_km": 83.396195}
+    },
+    {
+      "id": "G4",
+      "description": "Recife x Joao Pessoa (103.260266 km) -> sinal, score 0.1033 (ancora; bracket superior)",
+      "supplier": {"doc_type": "cnpj", "lat": -8.0476, "lon": -34.8770},
+      "buyer": {"lat": -7.1195, "lon": -34.8450},
+      "expected": {"signal": true, "distance_km": 103.260266, "score": 0.1033}
+    },
+    {
+      "id": "G5",
+      "description": "Par equatorial a 1 grau (111.194927 km) -> sinal, score 0.1112 (ancora)",
+      "supplier": {"doc_type": "cnpj", "lat": 0.0, "lon": 0.0},
+      "buyer": {"lat": 0.0, "lon": 1.0},
+      "expected": {"signal": true, "distance_km": 111.194927, "score": 0.1112}
+    },
+    {
+      "id": "G6",
+      "description": "Par equatorial a 4.5 graus (500.377170 km) -> sinal, score 0.5004 (ancora de meio de escala)",
+      "supplier": {"doc_type": "cnpj", "lat": 0.0, "lon": 0.0},
+      "buyer": {"lat": 0.0, "lon": 4.5},
+      "expected": {"signal": true, "distance_km": 500.377170, "score": 0.5004}
+    },
+    {
+      "id": "G7",
+      "description": "Recife x Sao Paulo (2131.060660 km) -> sinal, score 1.0 (saturacao)",
+      "supplier": {"doc_type": "cnpj", "lat": -8.0476, "lon": -34.8770},
+      "buyer": {"lat": -23.5505, "lon": -46.6333},
+      "expected": {"signal": true, "distance_km": 2131.060660, "score": 1.0}
+    },
+    {
+      "id": "G8",
+      "description": "Fornecedor sem coordenadas (CNPJ sem estabelecimento ou TOM desconhecido) -> sem sinal",
+      "supplier": {"doc_type": "cnpj", "lat": null, "lon": null},
+      "buyer": {"lat": -23.5505, "lon": -46.6333},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "G9",
+      "description": "Comprador sem de-para (cidade fora da tabela) -> sem sinal",
+      "supplier": {"doc_type": "cnpj", "lat": -8.0476, "lon": -34.8770},
+      "buyer": {"lat": null, "lon": null},
+      "expected": {"signal": false}
+    },
+    {
+      "id": "G10",
+      "description": "Fornecedor PF (CPF, sem endereco no dump RFB) -> sem sinal (v1)",
+      "supplier": {"doc_type": "cpf", "lat": null, "lon": null},
+      "buyer": {"lat": -8.0476, "lon": -34.8770},
+      "expected": {"signal": false}
+    }
+  ]
+}
