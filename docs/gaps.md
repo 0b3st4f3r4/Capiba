@@ -1,7 +1,8 @@
 # Checklist de gaps
 
-Gerado na revisão de 2026-08-18, ordenado do mais crítico ao menos crítico,
-com os detalhes (caminhos, linhas, evidências) dentro de cada item.
+Gerado na revisão de 2026-08-18 e revalidado em 2026-08-20, ordenado do
+mais crítico ao menos crítico, com os detalhes (caminhos, linhas,
+evidências) dentro de cada item.
 
 ## Crítico: detecção não chega a produção
 
@@ -84,7 +85,10 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    configurado.
 4. (feito) **Marts de pod usage sem refresh.** `post_steps: [dbt_run]`
    adicionado a `dags/pipelines/hourly_pod_usage.yaml` (task granular
-   `dbt_run` após o destino bronze).
+   `dbt_run` após o destino bronze), com seleção de modelos
+   (`select: [pod_usage_hourly, platform_cost_daily]`) — o run completo
+   horário OOMKillava o Trino no mart `contract_red_flags`; o projeto
+   inteiro segue com a `gold_detection` diária.
 
 ## Médio: qualidade e observabilidade
 
@@ -103,8 +107,9 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
 3. (parcial) **Novos endpoints de fontes já analisados.** Na Transparência,
    `ceis` e `cnep` (sanções) estão feitos: pipeline semanal `weekly_sanctions`
    (fórmula `entities_collect`, bronze `raw_ceis`/`raw_cnep` e silver
-   `sanctions`, modelo `Sanction`); o sinal "fornecedor sancionado" depende de
-   pré-registro (PR-D-06, registrado e aprovado, não executado). No PNCP,
+   `sanctions`, modelo `Sanction`); o sinal "fornecedor sancionado" já foi
+   pré-registrado e validado (PR-D-06/R-D-06, 5/5; screening fuzzy em
+   PR-D-06b/R-D-06b — ver item editorial 5). No PNCP,
    `contratos/atualizacao` está feito: fonte `pncp_contract_updates`
    (`src/capiba/pipeline/registry.py`) e pipeline diário bronze-only
    `daily_pncp_updates` (ver item editorial 4). Seguem abertos `licitacoes` e
