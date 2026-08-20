@@ -8,7 +8,7 @@ iceberg-catalog,capiba-iceberg-catalog-%,50,134217728
 keycloak,capiba-keycloak-%,250,402653184
 grafana,capiba-grafana-%,100,201326592
 airflow,capiba-airflow-%,500,1073741824
-trino,capiba-trino-%,250,805306368
+trino,capiba-trino-%,250,2147483648
 marquez,capiba-marquez-%,100,402653184
 prometheus,capiba-prometheus-%,100,201326592
 kepler,capiba-kepler-%,25,67108864

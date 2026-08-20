@@ -7,23 +7,39 @@
 -- flags rounded to 4 decimals. The 7-day window threshold is the
 -- declared placeholder (calibration requires a PR-D-04b).
 
-with bronze_payloads as (
-    select
-        dt,
-        cast(json_parse(payload_json) as array(json)) as contracts
-    from {{ source('lake_bronze', 'raw_pncp') }}
-),
-
-bronze_contracts as (
+-- Parse each payload straight into a typed row with only the fields this
+-- model needs. Casting to array(json) and extracting per element
+-- materializes every full contract dict in memory, which blew past the
+-- Trino per-node memory limit (EXCEEDED_LOCAL_MEMORY_LIMIT, UnnestOperator
+-- >600MB over ~1.9GB of payloads); the typed cast keeps the unnested
+-- blocks small.
+with bronze_contracts as (
     select
         b.dt,
-        json_extract_scalar(c, '$.numeroControlePNCP') as pncp_id,
-        json_extract_scalar(c, '$.dataAberturaProposta') as proposal_opened_at,
-        json_extract_scalar(c, '$.dataEncerramentoProposta') as proposal_closed_at,
-        json_extract_scalar(c, '$.valorInicialCompra') as estimated_amount,
-        json_extract_scalar(c, '$.valorTotalHomologado') as homologated_amount
-    from bronze_payloads b
-    cross join unnest(b.contracts) as t(c)
+        t.pncp_id,
+        t.proposal_opened_at,
+        t.proposal_closed_at,
+        t.estimated_amount,
+        t.homologated_amount
+    from (
+        select
+            dt,
+            cast(json_parse(payload_json) as array(row(
+                numeroControlePNCP varchar,
+                dataAberturaProposta varchar,
+                dataEncerramentoProposta varchar,
+                valorInicialCompra varchar,
+                valorTotalHomologado varchar
+            ))) as contracts
+        from {{ source('lake_bronze', 'raw_pncp') }}
+    ) b
+    cross join unnest(b.contracts) as t(
+        pncp_id, proposal_opened_at, proposal_closed_at,
+        estimated_amount, homologated_amount
+    )
+    -- Only silver contracts need flags; skip the rest before the dedup
+    -- window (a plain left join would discard them anyway).
+    where t.pncp_id in (select id from {{ source('lake_silver', 'contracts') }})
 ),
 
 -- The same contract may arrive in overlapping crawl windows; keep one

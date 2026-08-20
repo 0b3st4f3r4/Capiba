@@ -466,10 +466,10 @@ trino:
   resources:
     requests:
       cpu: 250m
-      memory: 768Mi
+      memory: 2Gi
     limits:
       cpu: 1500m
-      memory: 1536Mi
+      memory: 3Gi
 
 # Periodic logical backups of the databases to MinIO (bucket capiba-backups)
 backup:

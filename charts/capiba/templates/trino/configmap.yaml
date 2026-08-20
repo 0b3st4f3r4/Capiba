@@ -45,7 +45,7 @@ data:
     file.password-file=/etc/trino/auth/password.db
   jvm.config: |
     -server
-    -Xmx768M
+    -Xmx2G
     -XX:+UseG1GC
     -XX:G1HeapRegionSize=32M
     -XX:+ExplicitGCInvokesConcurrent
