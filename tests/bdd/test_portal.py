@@ -68,6 +68,13 @@ def stats_down(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(lake, "count_silver_contracts", _raise)
     monkeypatch.setattr(lake, "count_fraud_signals", _raise)
+    monkeypatch.setattr(portal, "count_political_connections", _raise)
+    monkeypatch.setattr(portal, "count_high_cri_contracts", _raise)
+    monkeypatch.setattr(portal, "count_contracts_last_30d", _raise)
+    monkeypatch.setattr(portal, "latest_duplicate_ids", _raise)
+    monkeypatch.setattr(portal, "latest_cpu_idle_ratio", _raise)
+    monkeypatch.setattr(portal, "latest_memory_idle_ratio", _raise)
+    monkeypatch.setattr(portal, "energy_last_24h_wh", _raise)
 
 
 @when("o usuário acessa a página inicial do portal")

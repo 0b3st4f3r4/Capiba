@@ -4,3 +4,10 @@ version: "1.0.0"
 profile: capiba
 
 model-paths: ["models"]
+
+seeds:
+  capiba_lakehouse:
+    requests:
+      +column_types:
+        # 2Gi (trino) overflows INT32
+        request_memory_bytes: bigint

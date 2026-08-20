@@ -170,7 +170,21 @@ data:
             "https://trino.{{ .Values.ingress.domain }}:8443/oauth2/callback",
             "http://trino.{{ .Values.ingress.domain }}:8088/oauth2/callback"
           ],
-          "webOrigins": ["+"]
+          "webOrigins": ["+"],
+          "protocolMappers": [
+            {
+              "name": "audience-trino",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": "trino",
+                "id.token.claim": "false",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            }
+          ]
         }
       ]
     }

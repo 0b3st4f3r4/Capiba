@@ -10,6 +10,7 @@ capiba.pipeline.lake
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, cast
 from urllib.parse import quote
@@ -25,7 +26,7 @@ from capiba.api import services
 from capiba.db import triage as triage_db
 from capiba.db.arangodb import execute_aql
 from capiba.db.triage import TriageError, TriageStatus
-from capiba.pipeline import lake
+from capiba.pipeline import lake, trino
 
 logger = logging.getLogger(__name__)
 
@@ -143,23 +144,121 @@ def _count_fraud_signals() -> int:
     return int(cast(Any, rows[0]))
 
 
-def collect_stats() -> dict[str, int | None]:
-    """Cross-service lake statistics; failures degrade to None, never break.
+GOLD_MARTS = "gold.capiba"  # Trino catalog.schema of the dbt gold marts
 
-    Uses Trino counts (``lake.count_*``): scanning the full silver into
-    memory just to count rows OOMKilled the API pod on real volume.
+
+def _num(value: Any) -> int | float:
+    """Normalizes a numeric scalar: integral floats render without decimals."""
+    f = float(value)
+    return int(f) if f.is_integer() else f
+
+
+def _gold_scalar(sql: str, column: str = "n") -> int | float | None:
+    """Runs an aggregate query over a gold mart and returns the scalar.
+
+    Only aggregates — never full scans (the portal OOMKilled the API pod
+    materializing the silver just to count rows, 2026-08-20).
     """
+    rows = trino.run_query(sql)
+    if not rows or rows[0].get(column) is None:
+        return None
+    return _num(rows[0][column])
+
+
+def count_political_connections() -> int | float | None:
+    """Counts published political_connection signals (gold mart)."""
+    return _gold_scalar(f"SELECT count(*) AS n FROM {GOLD_MARTS}.political_connections")  # nosec: B608
+
+
+def count_high_cri_contracts() -> int | float | None:
+    """Counts contracts with CRI >= 0.5 (half or more red flags raised)."""
+    return _gold_scalar(
+        f"SELECT count(*) AS n FROM {GOLD_MARTS}.contract_red_flags WHERE cri >= 0.5"  # nosec: B608
+    )
+
+
+def count_contracts_last_30d() -> int | float | None:
+    """Sums the daily contract volumes of the last 30 days (gold mart)."""
+    return _gold_scalar(
+        f"SELECT coalesce(sum(contracts), 0) AS n FROM {GOLD_MARTS}.contracts_daily"  # nosec: B608
+        " WHERE dt >= current_date - interval '30' day"
+    )
+
+
+def latest_duplicate_ids() -> int | float | None:
+    """Duplicate contract ids of the latest ingestion day (quality mart)."""
+    return _gold_scalar(
+        f"SELECT duplicate_ids AS n FROM {GOLD_MARTS}.data_quality_daily"  # nosec: B608
+        " ORDER BY dt DESC LIMIT 1"
+    )
+
+
+def latest_cpu_idle_ratio() -> int | float | None:
+    """Mean CPU idleness (% of requests unused) of the latest day."""
+    return _gold_scalar(
+        f"SELECT round(avg(cpu_idle_ratio) * 100, 1) AS n FROM {GOLD_MARTS}.platform_cost_daily"  # nosec: B608
+        f" WHERE dt = (SELECT max(dt) FROM {GOLD_MARTS}.platform_cost_daily)"
+    )
+
+
+def latest_memory_idle_ratio() -> int | float | None:
+    """Mean memory idleness (% of requests unused) of the latest day."""
+    return _gold_scalar(
+        f"SELECT round(avg(memory_idle_ratio) * 100, 1) AS n FROM {GOLD_MARTS}.platform_cost_daily"  # nosec: B608
+        f" WHERE dt = (SELECT max(dt) FROM {GOLD_MARTS}.platform_cost_daily)"
+    )
+
+
+def energy_last_24h_wh() -> int | float | None:
+    """Energy of the capiba namespace in the last 24h (Kepler via Prometheus)."""
+    resp = httpx.get(
+        f"{config.PROMETHEUS_URL}/api/v1/query",
+        params={
+            "query": 'sum(increase(kepler_pod_cpu_joules_total{pod_namespace="capiba"}[24h])) / 3600'
+        },
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    result = resp.json().get("data", {}).get("result", [])
+    if not result:
+        return None
+    return _num(round(float(result[0]["value"][1]), 1))
+
+
+def _safe(label: str, fn: Callable[[], Any]) -> Any:
+    """Runs a stats collector; failures degrade to None, never break."""
     try:
-        contracts: int | None = lake.count_silver_contracts()
+        return fn()
     except Exception as exc:
-        logger.warning("Silver contracts stat unavailable: %s", exc)
-        contracts = None
-    try:
-        fraud_signals: int | None = lake.count_fraud_signals()
-    except Exception as exc:
-        logger.warning("Fraud signals stat unavailable: %s", exc)
-        fraud_signals = None
-    return {"contracts": contracts, "fraud_signals": fraud_signals}
+        logger.warning("%s unavailable: %s", label, exc)
+        return None
+
+
+def collect_stats() -> dict[str, dict[str, Any]]:
+    """Cross-service statistics for the portal, grouped by concern.
+
+    Every collector is best-effort (``_safe``) and aggregate-only — a slow
+    or down backend degrades its own card to "indisponível".
+    """
+    return {
+        "detection": {
+            "fraud_signals": _safe("Fraud signals stat", lake.count_fraud_signals),
+            "political_connections": _safe(
+                "Political connections stat", count_political_connections
+            ),
+            "high_cri_contracts": _safe("High-CRI contracts stat", count_high_cri_contracts),
+        },
+        "ingestion": {
+            "contracts": _safe("Silver contracts stat", lake.count_silver_contracts),
+            "contracts_30d": _safe("Contracts 30d stat", count_contracts_last_30d),
+            "duplicate_ids": _safe("Duplicate ids stat", latest_duplicate_ids),
+        },
+        "platform": {
+            "cpu_idle": _safe("CPU idle stat", latest_cpu_idle_ratio),
+            "memory_idle": _safe("Memory idle stat", latest_memory_idle_ratio),
+            "energy_wh": _safe("Energy stat", energy_last_24h_wh),
+        },
+    }
 
 
 @router.get("/")

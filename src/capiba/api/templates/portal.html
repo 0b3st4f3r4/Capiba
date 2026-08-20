@@ -112,7 +112,7 @@
              aria-label="{{ service.name }} — {{ service.description }}">
             <circle class="arc" cx="210" cy="210" r="118" pathLength="360"
                     stroke-dasharray="38.5 321.5"
-                    stroke-dashoffset="{{ 270.75 + loop.index0 * 40 }}"/>
+                    stroke-dashoffset="{{ (89.25 - loop.index0 * 40) % 360 }}"/>
             <g transform="rotate({{ mid }} 210 210)">
               <g transform="translate(328 210)">
                 <g transform="rotate({{ -mid }})">
@@ -136,24 +136,37 @@
     </section>
 
     <section>
-      <h2>Estatísticas do lake</h2>
+      <h2>Estatísticas</h2>
+      {% macro stat_card(value, label, suffix="") %}
+      <div class="stat">
+        {% if value is not none %}
+        <div class="value">{{ value }}{{ suffix }}</div>
+        {% else %}
+        <div class="value unavailable">indisponível</div>
+        {% endif %}
+        <div class="label">{{ label }}</div>
+      </div>
+      {% endmacro %}
+
+      <h3 class="stats-group">Detecção</h3>
       <div class="stats">
-        <div class="stat">
-          {% if stats.contracts is not none %}
-          <div class="value">{{ stats.contracts }}</div>
-          {% else %}
-          <div class="value unavailable">indisponível</div>
-          {% endif %}
-          <div class="label">Contratos (silver)</div>
-        </div>
-        <div class="stat">
-          {% if stats.fraud_signals is not none %}
-          <div class="value">{{ stats.fraud_signals }}</div>
-          {% else %}
-          <div class="value unavailable">indisponível</div>
-          {% endif %}
-          <div class="label">Sinais de fraude detectados</div>
-        </div>
+        {{ stat_card(stats.detection.fraud_signals, "Sinais de fraude detectados") }}
+        {{ stat_card(stats.detection.political_connections, "Conexões políticas") }}
+        {{ stat_card(stats.detection.high_cri_contracts, "Contratos com CRI ≥ 0,5") }}
+      </div>
+
+      <h3 class="stats-group">Ingestão</h3>
+      <div class="stats">
+        {{ stat_card(stats.ingestion.contracts, "Contratos (silver)") }}
+        {{ stat_card(stats.ingestion.contracts_30d, "Contratos (últimos 30 dias)") }}
+        {{ stat_card(stats.ingestion.duplicate_ids, "IDs duplicados (última carga)") }}
+      </div>
+
+      <h3 class="stats-group">Plataforma</h3>
+      <div class="stats">
+        {{ stat_card(stats.platform.cpu_idle, "CPU ociosa média (último dia)", "%") }}
+        {{ stat_card(stats.platform.memory_idle, "Memória ociosa média (último dia)", "%") }}
+        {{ stat_card(stats.platform.energy_wh, "Energia do cluster (24h)", " Wh") }}
       </div>
     </section>
 

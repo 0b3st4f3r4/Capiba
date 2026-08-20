@@ -331,7 +331,11 @@ SSO: Keycloak é o IdP OIDC de todas as UIs — portal capiba-dashboard na
 API (`/`, `api/portal.py`), Grafana, Airflow (FAB OAuth), MinIO Console,
 Lakekeeper UI e Headlamp. Usuário dev: `capiba`/`capiba-sso`
 (`keycloak.devUser`), ressincronizado a cada `make helm-upgrade` pelo
-hook `templates/keycloak/job-sync-user.yaml`. O issuer é HTTPS em
+hook `templates/keycloak/job-sync-user.yaml`, que também lhe concede
+`realm-management/realm-admin` — o console do realm
+(`https://keycloak.capiba.local:8443/admin/capiba/console`) abre com ele;
+o console master (`/admin/master/console`) continua restrito ao admin
+bootstrap (`keycloak.admin`). O issuer é HTTPS em
 `https://keycloak.capiba.local:8443` (pods confiam no cert via CA
 `capiba-tls` como `SSL_CERT_FILE`); um rewrite de CoreDNS
 (`scripts/cluster.sh`, passo 4) resolve esse host para o ClusterIP do

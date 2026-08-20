@@ -178,6 +178,18 @@ h2 {
 
 section { margin-bottom: 3.5rem; }
 
+/* Sub-grupos de estatísticas (Detecção / Ingestão / Plataforma). */
+.stats-group {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+  text-align: center;
+  opacity: 0.8;
+}
+
 /* Círculo de serviços: um segmento de 40° por serviço, nas nove cores. */
 .services-circle-wrap {
   display: flex;
@@ -279,7 +291,8 @@ section { margin-bottom: 3.5rem; }
   box-shadow: 0 4px 20px var(--shadow);
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
-.stat:nth-child(2) { --r: var(--c5); }
+.stat:nth-child(3n+2) { --r: var(--c5); }
+.stat:nth-child(3n) { --r: var(--c4); }
 .stat:hover {
   transform: translateY(-4px);
   background: var(--hover-bg);

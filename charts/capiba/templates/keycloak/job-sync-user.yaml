@@ -3,6 +3,8 @@
 # keycloak.devUser (from .env via scripts/helm-upgrade.sh) on every release.
 # --import-realm only applies on first boot (IGNORE_EXISTING), so without
 # this job credential changes in .env never reach the already-imported realm.
+# The dev user is also granted realm-management/realm-admin so it can open
+# the realm admin console (/admin/<realm>/console) without the master admin.
 # Uses kcadm.sh from the Keycloak image itself, authenticated with the master
 # realm bootstrap admin (keycloak-secrets).
 apiVersion: batch/v1
@@ -90,6 +92,19 @@ spec:
                 sed -n "s/.*\"$1\" *: *\"\([^\"]*\)\".*/\1/p" | head -n 1
               }
 
+              # Trino Web UI: the OAuth2 filter only trusts access tokens whose
+              # `aud` contains the client id, but Keycloak issues aud=account by
+              # default — the login dies at the callback with "JWT aud claim
+              # rejected". Ensure the audience mapper on the `trino` client
+              # (also declared in realm-configmap.yaml for fresh imports).
+              TRINO_CLIENT_UUID="$("$KCADM" get clients -r "$REALM" -q clientId=trino | user_field id)"
+              if [ -n "${TRINO_CLIENT_UUID}" ] && \
+                 ! "$KCADM" get "clients/${TRINO_CLIENT_UUID}/protocol-mappers/models" -r "$REALM" | grep -q '"audience-trino"'; then
+                echo "Adding audience-trino protocol mapper to the trino client"
+                printf '%s' '{"name":"audience-trino","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","consentRequired":false,"config":{"included.client.audience":"trino","id.token.claim":"false","access.token.claim":"true","userinfo.token.claim":"false"}}' > /tmp/audience-trino.json
+                "$KCADM" create "clients/${TRINO_CLIENT_UUID}/protocol-mappers/models" -r "$REALM" -f /tmp/audience-trino.json
+              fi
+
               BY_USERNAME="$("$KCADM" get users -r "$REALM" -q exact=true -q "username=${DEV_USERNAME}")"
               USER_ID="$(printf '%s' "${BY_USERNAME}" | user_field id)"
 
@@ -119,11 +134,22 @@ spec:
 
               "$KCADM" set-password -r "$REALM" --userid "${USER_ID}" --new-password "${DEV_PASSWORD}"
 
+              # Dev console access (/admin/<realm>/console): grant
+              # realm-management/realm-admin to the dev user. Idempotent —
+              # re-adding an already-mapped role is a no-op.
+              "$KCADM" add-roles -r "$REALM" --uusername "${DEV_USERNAME}" \
+                --cclientid realm-management --rolename realm-admin
+
               # kcadm exits 0 even when the server silently drops the unmanaged
               # `policy` attribute — fail loudly so the upgrade does not
               # proceed with a dev user unable to admin the MinIO Console.
               if ! "$KCADM" get "users/${USER_ID}" -r "$REALM" | grep -q '"policy"'; then
                 echo "ERROR: policy attribute missing after sync of '${DEV_USERNAME}'" >&2
+                exit 1
+              fi
+              if ! "$KCADM" get-roles -r "$REALM" --uusername "${DEV_USERNAME}" \
+                     --cclientid realm-management | grep -q '"realm-admin"'; then
+                echo "ERROR: realm-admin role missing after sync of '${DEV_USERNAME}'" >&2
                 exit 1
               fi
               echo "Dev user '${DEV_USERNAME}' synced."

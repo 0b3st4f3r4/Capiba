@@ -95,6 +95,10 @@ TRINO_URL = os.getenv("TRINO_URL", "http://localhost:8081")
 TRINO_USER = os.getenv("TRINO_USER", "capiba")
 TRINO_PASSWORD = os.getenv("TRINO_PASSWORD", "capiba-trino")
 
+# Prometheus HTTP API (portal platform stats — Kepler energy metrics live
+# only in Prometheus, not in the lake; port-forwarded outside the cluster).
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+
 # =============================================================================
 # Public export
 # =============================================================================

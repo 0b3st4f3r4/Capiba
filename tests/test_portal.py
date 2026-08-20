@@ -77,11 +77,23 @@ def keycloak_token(keycloak_metadata: None, monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
+def _mock_stats_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mocks every portal stats collector with deterministic values."""
+    monkeypatch.setattr(lake, "count_silver_contracts", lambda: 3)
+    monkeypatch.setattr(lake, "count_fraud_signals", lambda: 7)
+    monkeypatch.setattr(portal, "count_political_connections", lambda: 2)
+    monkeypatch.setattr(portal, "count_high_cri_contracts", lambda: 1)
+    monkeypatch.setattr(portal, "count_contracts_last_30d", lambda: 30)
+    monkeypatch.setattr(portal, "latest_duplicate_ids", lambda: 0)
+    monkeypatch.setattr(portal, "latest_cpu_idle_ratio", lambda: 55.5)
+    monkeypatch.setattr(portal, "latest_memory_idle_ratio", lambda: 62.3)
+    monkeypatch.setattr(portal, "energy_last_24h_wh", lambda: 120.5)
+
+
 @pytest.fixture
 def stats_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fixture: lake stats available with deterministic counts."""
-    monkeypatch.setattr(lake, "count_silver_contracts", lambda: 3)
-    monkeypatch.setattr(lake, "count_fraud_signals", lambda: 7)
+    _mock_stats_ok(monkeypatch)
 
 
 @pytest.fixture
@@ -93,6 +105,13 @@ def stats_down(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(lake, "count_silver_contracts", _raise)
     monkeypatch.setattr(lake, "count_fraud_signals", _raise)
+    monkeypatch.setattr(portal, "count_political_connections", _raise)
+    monkeypatch.setattr(portal, "count_high_cri_contracts", _raise)
+    monkeypatch.setattr(portal, "count_contracts_last_30d", _raise)
+    monkeypatch.setattr(portal, "latest_duplicate_ids", _raise)
+    monkeypatch.setattr(portal, "latest_cpu_idle_ratio", _raise)
+    monkeypatch.setattr(portal, "latest_memory_idle_ratio", _raise)
+    monkeypatch.setattr(portal, "energy_last_24h_wh", _raise)
 
 
 @pytest.mark.usefixtures("stats_ok")
@@ -110,6 +129,10 @@ class TestPortalWithoutSso:
             assert service["url"] in body
         assert ">3<" in body
         assert ">7<" in body
+        for group in ("Detecção", "Ingestão", "Plataforma"):
+            assert group in body
+        assert ">120.5 Wh<" in body
+        assert ">55.5%<" in body
 
     def test_login_redirects_home_when_sso_disabled(self, client: TestClient) -> None:
         """/auth/login is a no-op redirect when SSO is disabled."""
@@ -179,6 +202,62 @@ class TestStatsHelpers:
         monkeypatch.setattr(portal, "execute_aql", lambda db, query, b=None: [42])
         assert portal._count_fraud_signals() == 42
 
+    def test_gold_scalar_returns_int_for_counts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gold scalars normalize integral floats to ints (display)."""
+        monkeypatch.setattr(portal.trino, "run_query", lambda sql: [{"n": 42.0}])
+        assert portal.count_political_connections() == 42
+
+    def test_gold_scalar_none_on_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty result set degrades the metric to None."""
+        monkeypatch.setattr(portal.trino, "run_query", lambda sql: [])
+        assert portal.count_high_cri_contracts() is None
+
+    def test_latest_duplicate_ids_queries_latest_day(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The quality metric reads only the latest partition."""
+        captured: dict[str, str] = {}
+
+        def _run_query(sql: str) -> list[dict[str, Any]]:
+            captured["sql"] = sql
+            return [{"n": 3}]
+
+        monkeypatch.setattr(portal.trino, "run_query", _run_query)
+        assert portal.latest_duplicate_ids() == 3
+        assert "ORDER BY dt DESC LIMIT 1" in captured["sql"]
+
+    def test_energy_last_24h_wh_parses_prometheus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The energy card parses the instant-vector Prometheus response."""
+
+        class _Resp:
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict[str, Any]:
+                return {"data": {"result": [{"value": [0, "432.87"]}]}}
+
+        monkeypatch.setattr(portal.httpx, "get", lambda *a, **k: _Resp())
+        assert portal.energy_last_24h_wh() == 432.9
+
+    def test_energy_last_24h_wh_none_on_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No Kepler series degrades the energy card to None."""
+
+        class _Resp:
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict[str, Any]:
+                return {"data": {"result": []}}
+
+        monkeypatch.setattr(portal.httpx, "get", lambda *a, **k: _Resp())
+        assert portal.energy_last_24h_wh() is None
+
     def test_collect_stats_partial_failure(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -187,9 +266,14 @@ class TestStatsHelpers:
         def _raise() -> Any:
             raise ConnectionError("down")
 
+        _mock_stats_ok(monkeypatch)
         monkeypatch.setattr(lake, "count_silver_contracts", _raise)
         monkeypatch.setattr(lake, "count_fraud_signals", lambda: 5)
-        assert portal.collect_stats() == {"contracts": None, "fraud_signals": 5}
+
+        stats = portal.collect_stats()
+        assert stats["ingestion"]["contracts"] is None
+        assert stats["detection"]["fraud_signals"] == 5
+        assert stats["platform"]["energy_wh"] == 120.5
 
     def test_register_keycloak_idempotent(
         self, keycloak_metadata: None, monkeypatch: pytest.MonkeyPatch

@@ -52,6 +52,9 @@ data:
   TRINO_PORT: {{ .Values.trino.service.port | quote }}
   TRINO_USER: "capiba"
 
+  # Prometheus (portal platform stats; Kepler energy lives only here)
+  PROMETHEUS_URL: "http://{{ include "capiba.fullname" . }}-prometheus:{{ .Values.prometheus.service.port }}"
+
   # ArangoDB
   ARANGODB_HOST: {{ include "capiba.arangodb.fullname" . | quote }}
   ARANGODB_PORT: {{ .Values.arangodb.service.port | quote }}
