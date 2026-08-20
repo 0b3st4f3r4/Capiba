@@ -24,7 +24,7 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 13) else 1)';
 fi
 
 # Create venv and install dependencies via Makefile (pip install -e ".[dev]")
-echo "[1/6] Installing dependencies (make install-dev)..."
+echo "[1/7] Installing dependencies (make install-dev)..."
 make install-dev
 
 # Cluster tooling: docker, kubectl and helm are required by make cluster-start.
@@ -32,7 +32,7 @@ make install-dev
 # user is outside the docker group, the user is added to it (active after
 # re-login). Until then the Makefile and scripts/cluster.sh fall back to
 # 'sudo docker' automatically.
-echo "[2/6] Checking cluster tooling (docker, kubectl, helm)..."
+echo "[2/7] Checking cluster tooling (docker, kubectl, helm)..."
 if ! command -v docker >/dev/null 2>&1; then
     echo "      WARNING: docker not found."
     echo "         Install: https://docs.docker.com/engine/install/ubuntu/ (or: sudo apt install docker.io)"
@@ -64,8 +64,8 @@ done
 
 # Check RTK
 if command -v rtk >/dev/null 2>&1; then
-    echo "[3/6] RTK detected: $(rtk --version)"
-    echo "[4/6] Initializing RTK for Kimi AI..."
+    echo "[3/7] RTK detected: $(rtk --version)"
+    echo "[4/7] Initializing RTK for Kimi AI..."
     # Known upstream bug: current rtk versions reject '--agent kimi'
     # (possible values: claude, cursor, ...). Non-blocking by design: the
     # RTK section of AGENTS.md is already committed, so the error is
@@ -76,7 +76,7 @@ if command -v rtk >/dev/null 2>&1; then
         echo "      WARNING: 'rtk init --agent kimi' failed (known RTK bug); continuing."
     fi
 else
-    echo "[3/6] WARNING: RTK not found."
+    echo "[3/7] WARNING: RTK not found."
     echo "         Install: brew install rtk"
     echo "         Or: curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"
 fi
@@ -85,9 +85,9 @@ fi
 # so host-side lake clients reach MinIO through the port-forward (make port-forward).
 HOSTS_LINE="127.0.0.1 capiba-minio capiba-iceberg-catalog"
 if grep -qE '\bcapiba-minio\b' /etc/hosts 2>/dev/null; then
-    echo "[5/6] /etc/hosts already maps capiba-minio."
+    echo "[5/7] /etc/hosts already maps capiba-minio."
 else
-    echo "[5/6] Adding capiba-minio/capiba-iceberg-catalog to /etc/hosts (may ask for sudo)..."
+    echo "[5/7] Adding capiba-minio/capiba-iceberg-catalog to /etc/hosts (may ask for sudo)..."
     if echo "$HOSTS_LINE" | sudo tee -a /etc/hosts >/dev/null 2>&1; then
         echo "      Added: $HOSTS_LINE"
     else
@@ -103,9 +103,9 @@ fi
 # port-forwards (port 80 belongs to the host's Apache).
 INGRESS_HOSTS="api.capiba.local grafana.capiba.local marquez.capiba.local iceberg.capiba.local minio.capiba.local s3.capiba.local trino.capiba.local airflow.capiba.local keycloak.capiba.local"
 if grep -qE '\bapi\.capiba\.local\b' /etc/hosts 2>/dev/null; then
-    echo "[5/6] /etc/hosts already maps the *.capiba.local ingress hosts."
+    echo "[5/7] /etc/hosts already maps the *.capiba.local ingress hosts."
 else
-    echo "[5/6] Adding the *.capiba.local ingress hosts to /etc/hosts (may ask for sudo)..."
+    echo "[5/7] Adding the *.capiba.local ingress hosts to /etc/hosts (may ask for sudo)..."
     if echo "127.0.0.1 $INGRESS_HOSTS" | sudo tee -a /etc/hosts >/dev/null 2>&1; then
         echo "      Added: 127.0.0.1 $INGRESS_HOSTS"
     else
@@ -116,10 +116,27 @@ fi
 
 # Check Kimi Code CLI
 if command -v kimi >/dev/null 2>&1; then
-    echo "[6/6] Kimi Code CLI detected: $(kimi --version 2>/dev/null || echo 'unknown version')"
+    echo "[6/7] Kimi Code CLI detected: $(kimi --version 2>/dev/null || echo 'unknown version')"
 else
-    echo "[6/6] WARNING: Kimi Code CLI not found."
+    echo "[6/7] WARNING: Kimi Code CLI not found."
     echo "         Install: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"
+fi
+
+# Check DeepSeek Harness (dsh) — experimental agent harness (veredito do
+# spike de avaliação na seção "DeepSeek Harness" do AGENTS.md). Developer
+# preview: the version is pinned on purpose; bump it deliberately, never
+# via a floating 'latest'.
+DSH_VERSION="0.1.0-rc.7"
+if command -v dsh >/dev/null 2>&1; then
+    echo "[7/7] DeepSeek Harness detected: $(dsh --version 2>/dev/null || echo 'unknown version') (pinned: $DSH_VERSION)"
+else
+    echo "[7/7] WARNING: DeepSeek Harness (dsh) not found (optional, experimental)."
+    if command -v node >/dev/null 2>&1; then
+        echo "         Install: npm install -g @deepseek-ai/dsh@$DSH_VERSION"
+    else
+        echo "         Requires Node.js: https://nodejs.org/en/download"
+        echo "         Then: npm install -g @deepseek-ai/dsh@$DSH_VERSION"
+    fi
 fi
 
 echo ""

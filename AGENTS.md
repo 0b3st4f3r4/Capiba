@@ -477,3 +477,28 @@ aggressive` = só assinaturas), `rtk smart <file>`, `rtk grep <pat> <path>`,
 `~/.config/rtk/config.toml` (`[hooks] exclude_commands`, `[tee] enabled,
 mode = "failures"`). Notas: RTK só intercepta bash; estimativas de token
 são `bytes / 4`; percentuais são redução na saída bash, não na conta total.
+
+## DeepSeek Harness (dsh) — ferramenta experimental
+
+O dsh (harness agêntico open source da DeepSeek, "tudo é plugin" sobre o
+framework Cordis) está disponível como ferramenta de desenvolvimento
+**opcional e experimental** — não é componente do produto e não substitui
+o Kimi Code CLI como driver. `scripts/setup.sh` verifica sua presença;
+instalação pinada: `npm install -g @deepseek-ai/dsh@0.1.0-rc.7`
+(developer preview com breaking changes anunciados — bump de versão
+sempre deliberado, nunca `latest`).
+
+Spike de avaliação (2026-08-20, scratch isolado): as duas promessas de
+diferencial se confirmaram — profiles versionáveis (um diretório com
+`package.json` + `cordis.patch.yml` reproduz a config byte-idêntica num
+home limpo, auditável via `dsh --profile <nome> --dump-config`) e session
+log append-only como fonte da verdade (a requisição ao modelo, incluindo
+tentativas fracassadas, é 100% reconstruível do JSONL persistido). Hooks,
+compaction e sandbox/approval são paridade com o Kimi CLI, não
+diferencial. Veredito: não adotar como driver principal; usos futuros
+pontuais possíveis (runner headless em CI, ambiente agêntico auditável).
+
+**Atenção — telemetria**: o pacote `session-telemetry-otel` vem montado
+em modo `DISABLED` (opt-in via `DSH_TELEMETRY_MODE`); habilitado, exporta
+logs de sessão sem redação para endpoint da DeepSeek. Não habilitar —
+incompatível com a governança do projeto.
