@@ -174,10 +174,14 @@ def persist_cnpj_entities(execution_date: str | None = None) -> dict[str, Any]:
         db = get_capiba_db()
         for entity in ("companies", "partners"):
             for batch in lake.read_silver_entities(entity):
+                # Small import batches throttle the write rate: sustained
+                # 1000-doc imports (~20k docs/s) OOMKilled the ArangoDB pod
+                # on the first full graph load (2026-08-20).
                 summary = bulk_upsert_cnpj(
                     db,
                     companies=batch if entity == "companies" else [],
                     partners=batch if entity == "partners" else [],
+                    batch_size=250,
                 )
                 for key in totals:
                     totals[key] += summary[key]

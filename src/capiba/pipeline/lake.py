@@ -758,9 +758,11 @@ def write_silver_entities(
 def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
     """Reads the silver table of an entity in batches.
 
-    Batched so graph loads over the large CNPJ tables do not exhaust
-    memory. A missing table yields nothing (logged), like the other
-    silver/gold readers.
+    Streams Arrow record batches (``to_arrow_batch_reader``) so graph loads
+    over the large CNPJ tables do not exhaust memory — ``to_arrow()``
+    materialized the whole table first and OOMKilled the Airflow pod on
+    the first full ``companies`` load (2026-08-20). A missing table yields
+    nothing (logged), like the other silver/gold readers.
 
     Args:
         entity: Entity name (``companies``/``establishments``/``partners``/
@@ -777,7 +779,7 @@ def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
     except NoSuchTableError:
         logger.info("Silver %s table not found; nothing to read", entity)
         return
-    for batch in table.scan().to_arrow().to_batches():
+    for batch in table.scan().to_arrow_batch_reader():
         yield batch.to_pylist()
 
 

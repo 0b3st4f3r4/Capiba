@@ -130,7 +130,7 @@ arangodb:
       memory: 1Gi
     limits:
       cpu: 1000m
-      memory: 4Gi
+      memory: 6Gi
 
 # Redis (cache for the quality monitor baselines and the API hot paths —
 # risk signals and municipal ranking). Everything degrades gracefully
