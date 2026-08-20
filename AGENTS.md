@@ -103,8 +103,8 @@ Company e alimenta o `trace_ownership` com dados reais) e `directorship`
 (persons→companies), classificadas pela qualificação RFB
 (`cnpj.edge_kind_for_qualificacao`), via `bulk_upsert_cnpj` em lote a
 partir do silver. A resolução de entidades (O5,
-`src/capiba/detection/entities.py` — matcher conservador validado pela
-bateria D-07: nome 0,6 + documento mascarado 0,3 + faixa etária 0,1,
+`src/capiba/detection/entities.py` — matcher conservador validado pelas
+baterias D-07/D-07b: nome 0,6 + documento mascarado 0,3 + faixa etária 0,1,
 limiar 0,85; link supplier↔company determinístico por CNPJ) grava arestas
 `same_as` (persons↔persons) com score + details via
 `resolve_entities(db, threshold)` — best-effort, sem colapsar vértices.

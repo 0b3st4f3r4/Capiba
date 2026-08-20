@@ -4,7 +4,8 @@
   refutação de P7 — ver `docs/results/R-D-07.md`, seção 2)
 - **Criado em**: 2026-08-20
 - **Última atualização**: 2026-08-20
-- **Status**: registrado, aprovado em 2026-08-20, não executado
+- **Status**: executado em 2026-08-20 — veredito **success** (7/7
+  predições; ver `docs/results/R-D-07b.md`)
 - **Alvo**: o mesmo matcher de `src/capiba/detection/entities.py`
   (**sem mudança de semântica, pesos ou limiar**); muda apenas a
   expectativa declarada sobre a revocação no benchmark OpenSanctions

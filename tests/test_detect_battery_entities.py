@@ -110,6 +110,32 @@ def test_battery_writes_raw_outputs(
     assert summary["os_pairs"]["tp"] == 1
     assert summary["os_pairs"]["fp"] == 0
     assert summary["os_pairs"]["precision"] == 1.0
+    # The fixture's only positive carries identifiers on both sides.
+    assert summary["os_pairs"]["bilateral_doc_positive_rate"] == 1.0
+
+
+def test_battery_multi_sample_os_pairs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multi-sample configs (D-07b) score one cached sample per seed."""
+    config: dict[str, Any] = json.loads(
+        (REPO_ROOT / "experiments" / "detect" / "D-07b.json").read_text()
+    )
+    monkeypatch.setattr(
+        battery_entities, "_stream_pairs", lambda url: iter(_PAIRS_FIXTURE)
+    )
+    battery_entities.run_battery(config, tmp_path)
+    for seed in config["os_pairs"]["sample_seeds"]:
+        assert (tmp_path / f"pairs_sample_{seed}.jsonl").exists()
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    samples = summary["os_pairs"]["samples"]
+    assert set(samples) == {"23", "37", "41"}
+    for metrics in samples.values():
+        assert metrics["tp"] == 1
+        assert metrics["fp"] == 0
+    # Recall 1.0 per sample sits outside the recalibrated band [0.0, 0.1].
+    assert summary["predictions"]["P7"]["verdict"] == "refuted"
+    assert summary["predictions"]["P6"]["verdict"] == "success"
 
 
 def test_evaluate_detects_refutation() -> None:

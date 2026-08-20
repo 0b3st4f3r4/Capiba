@@ -198,7 +198,9 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    (persons↔persons) no grafo via `resolve_entities` (best-effort, sem
    colapsar vértices). No benchmark real OpenSanctions Pairs: precisão
    1,00, revocação 0,025 (banda refutada — causa estrutural: 4,8% dos
-   positivos com documento bilateral; recalibração em PR-D-07b).
+   positivos com documento bilateral; recalibração confirmada em D-07b —
+   `docs/results/R-D-07b.md`: banda [0,00–0,10] satisfeita em 3 amostras
+   novas, precisão 1,00).
    Pendente: invariante P8 no grafo real, integração da resolução na
    carga do grafo e screening fuzzy de sanções (PR-D-06b).
 8. (aberto) **Diários oficiais municipais via Querido Diário (O7).** Source

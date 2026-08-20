@@ -1,0 +1,87 @@
+{
+  "battery": "D-07b",
+  "predictions": {
+    "P1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P2": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P3": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P4": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P5": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P6": {
+      "verdict": "success",
+      "precision": 1.0
+    },
+    "P7": {
+      "verdict": "success",
+      "recall": {
+        "23": 0.024,
+        "37": 0.025,
+        "41": 0.034
+      }
+    }
+  },
+  "verdict": "success",
+  "os_pairs": {
+    "samples": {
+      "23": {
+        "tp": 24,
+        "fp": 0,
+        "fn": 976,
+        "tn": 1000,
+        "precision": 1.0,
+        "recall": 0.024,
+        "bilateral_doc_positive_rate": 0.045,
+        "p6": {
+          "verdict": "success"
+        },
+        "p7": {
+          "verdict": "success"
+        }
+      },
+      "37": {
+        "tp": 25,
+        "fp": 0,
+        "fn": 975,
+        "tn": 1000,
+        "precision": 1.0,
+        "recall": 0.025,
+        "bilateral_doc_positive_rate": 0.047,
+        "p6": {
+          "verdict": "success"
+        },
+        "p7": {
+          "verdict": "success"
+        }
+      },
+      "41": {
+        "tp": 34,
+        "fp": 0,
+        "fn": 966,
+        "tn": 1000,
+        "precision": 1.0,
+        "recall": 0.034,
+        "bilateral_doc_positive_rate": 0.052,
+        "p6": {
+          "verdict": "success"
+        },
+        "p7": {
+          "verdict": "success"
+        }
+      }
+    }
+  }
+}

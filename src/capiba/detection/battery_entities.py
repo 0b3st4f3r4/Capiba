@@ -212,7 +212,9 @@ def _stream_pairs(url: str) -> Any:
                 yield json.loads(text)
 
 
-def sample_os_pairs(config: dict[str, Any], cache_path: Path) -> list[dict[str, Any]]:
+def sample_os_pairs(
+    config: dict[str, Any], cache_path: Path, seed: int
+) -> list[dict[str, Any]]:
     """Deterministic stratified reservoir sample of the OS Pairs file.
 
     The sample is cached next to the raw battery outputs and reused on
@@ -225,9 +227,7 @@ def sample_os_pairs(config: dict[str, Any], cache_path: Path) -> list[dict[str, 
         return [json.loads(line) for line in cache_path.read_text().splitlines()]
 
     spec = config["os_pairs"]
-    rng = random.Random(
-        spec["seed"]
-    )  # deterministic sampling, not cryptographic  # nosec B311
+    rng = random.Random(seed)  # deterministic sampling, not cryptographic  # nosec B311
     reservoirs: dict[str, list[dict[str, Any]]] = {"positive": [], "negative": []}
     targets = {
         "positive": spec["sample_positive"],
@@ -255,6 +255,14 @@ def sample_os_pairs(config: dict[str, Any], cache_path: Path) -> list[dict[str, 
     return sample
 
 
+def _os_has_id(entity: dict[str, Any]) -> bool:
+    """Whether the OS Pairs entity carries any identifier property."""
+    properties = entity.get("properties", {})
+    return any(
+        properties.get(key) for key in ("idNumber", "registrationNumber", "taxNumber")
+    )
+
+
 def evaluate_os_pairs(
     config: dict[str, Any], sample: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -262,6 +270,7 @@ def evaluate_os_pairs(
     weights = config["weights"]
     threshold = config["threshold"]
     tp = fp = fn = tn = 0
+    bilateral_positive = 0
     for row in sample:
         score = score_person_pair(
             _os_entity(row["left"]),
@@ -272,6 +281,8 @@ def evaluate_os_pairs(
         )
         predicted = is_merge(score, threshold)
         positive = row["judgement"] == "positive"
+        if positive and _os_has_id(row["left"]) and _os_has_id(row["right"]):
+            bilateral_positive += 1
         if predicted and positive:
             tp += 1
         elif predicted:
@@ -282,6 +293,7 @@ def evaluate_os_pairs(
             tn += 1
     precision = tp / (tp + fp) if tp + fp else 1.0
     recall = tp / (tp + fn) if tp + fn else 0.0
+    n_positive = tp + fn
     spec = config["os_pairs"]
     low, high = spec["recall_band"]
     return {
@@ -291,6 +303,9 @@ def evaluate_os_pairs(
         "tn": tn,
         "precision": round(precision, 4),
         "recall": round(recall, 4),
+        "bilateral_doc_positive_rate": (
+            round(bilateral_positive / n_positive, 4) if n_positive else None
+        ),
         "p6": {
             "verdict": "success" if precision >= spec["min_precision"] else "refuted"
         },
@@ -367,7 +382,8 @@ def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
     Args:
         config: Battery configuration.
         out_dir: Directory for the raw per-seed outputs (``seed_<n>.jsonl``),
-            the cached ``pairs_sample.jsonl`` and ``summary.json``.
+            the cached OS Pairs sample(s) (``pairs_sample[_<seed>].jsonl``)
+            and ``summary.json``.
 
     Returns:
         The per-seed records (merges, links, repeat divergences).
@@ -382,17 +398,39 @@ def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
         records.append(record)
 
     summary = evaluate(config, records)
-    os_metrics = evaluate_os_pairs(
-        config, sample_os_pairs(config, out_dir / "pairs_sample.jsonl")
-    )
-    summary["os_pairs"] = os_metrics
+    spec = config["os_pairs"]
+    sample_seeds: list[int] = spec.get("sample_seeds") or [spec.get("seed")]
+    samples: dict[int, dict[str, Any]] = {}
+    for sample_seed in sample_seeds:
+        cache_name = (
+            "pairs_sample.jsonl"
+            if len(sample_seeds) == 1
+            else f"pairs_sample_{sample_seed}.jsonl"
+        )
+        samples[sample_seed] = evaluate_os_pairs(
+            config, sample_os_pairs(config, out_dir / cache_name, sample_seed)
+        )
+    os_summary: dict[str, Any] = {
+        "samples": {str(seed): metrics for seed, metrics in samples.items()}
+    }
+    if len(samples) == 1:  # single-sample configs keep the flat shape
+        os_summary.update(next(iter(samples.values())))
+    summary["os_pairs"] = os_summary
     summary["predictions"]["P6"] = {
-        "verdict": os_metrics["p6"]["verdict"],
-        "precision": os_metrics["precision"],
+        "verdict": (
+            "success"
+            if all(m["p6"]["verdict"] == "success" for m in samples.values())
+            else "refuted"
+        ),
+        "precision": min(m["precision"] for m in samples.values()),
     }
     summary["predictions"]["P7"] = {
-        "verdict": os_metrics["p7"]["verdict"],
-        "recall": os_metrics["recall"],
+        "verdict": (
+            "success"
+            if all(m["p7"]["verdict"] == "success" for m in samples.values())
+            else "refuted"
+        ),
+        "recall": {str(seed): m["recall"] for seed, m in samples.items()},
     }
     if summary["predictions"]["P6"]["verdict"] != "success" or (
         summary["predictions"]["P7"]["verdict"] != "success"
