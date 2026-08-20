@@ -195,14 +195,15 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    normalizado 0,6 + documento mascarado 0,3 + faixa etária 0,1, limiar
    0,85 — nome sozinho nunca mergea) e link determinístico
    supplier↔company (CNPJ 14d → `cnpj_basico`); aresta `same_as`
-   (persons↔persons) no grafo via `resolve_entities` (best-effort, sem
-   colapsar vértices). No benchmark real OpenSanctions Pairs: precisão
-   1,00, revocação 0,025 (banda refutada — causa estrutural: 4,8% dos
-   positivos com documento bilateral; recalibração confirmada em D-07b —
-   `docs/results/R-D-07b.md`: banda [0,00–0,10] satisfeita em 3 amostras
-   novas, precisão 1,00).
-   Pendente: invariante P8 no grafo real, integração da resolução na
-   carga do grafo e screening fuzzy de sanções (PR-D-06b).
+   (persons↔persons) no grafo via `resolve_entities` — integrada à carga
+   do grafo (`persist_cnpj_entities`, limiar `DETECTION_ENTITY_THRESHOLD`,
+   best-effort, sem colapsar vértices). No benchmark real OpenSanctions
+   Pairs: precisão 1,00, revocação 0,025 (banda refutada — causa
+   estrutural: 4,8% dos positivos com documento bilateral; recalibração
+   confirmada em D-07b — `docs/results/R-D-07b.md`: banda [0,00–0,10]
+   satisfeita em 3 amostras novas, precisão 1,00).
+   Pendente: invariante P8 no grafo real (após o reload pós-backfill) e
+   screening fuzzy de sanções (PR-D-06b).
 8. (aberto) **Diários oficiais municipais via Querido Diário (O7).** Source
    `querido_diario` no registry; município-piloto persistindo no bronze.
 9. (aberto) **TSE: doações × contratos (O8).** Sinal `political_connection` com

@@ -563,7 +563,13 @@ class TestFileDumpNormalize:
 
         assert report.success is True
         graph = report.outputs["destination_arangodb_graph"]
-        assert graph == {"companies": 2, "persons": 1, "edges": 1, "errors": 0}
+        assert graph == {
+            "companies": 2,
+            "persons": 1,
+            "edges": 1,
+            "errors": 0,
+            "same_as": 0,
+        }
         collections: dict[str, MagicMock] = db._capiba_collections
         company_docs = collections["companies"].import_bulk.call_args.args[0]
         assert {d["_key"] for d in company_docs} == {"12345678", "87654321"}

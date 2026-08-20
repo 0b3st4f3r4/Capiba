@@ -204,6 +204,12 @@ DETECTION_COLLUSION_MIN_WINS = int(os.getenv("DETECTION_COLLUSION_MIN_WINS", "3"
 # volume and a human decision promotes the calibrated values.
 DETECTION_COLLUSION_MIN_BUYERS = int(os.getenv("DETECTION_COLLUSION_MIN_BUYERS", "1"))
 
+# Merge threshold for the same_as edges written by the entity resolution
+# (O5) after the CNPJ graph load. Calibrated by batteries D-07/D-07b
+# (PR-D-07/PR-D-07b); lowering or raising it requires a new pre-registration
+# (monotonicity invariant, PR-D-07 section 6).
+DETECTION_ENTITY_THRESHOLD = float(os.getenv("DETECTION_ENTITY_THRESHOLD", "0.85"))
+
 # =============================================================================
 # Notification (SMTP)
 # =============================================================================

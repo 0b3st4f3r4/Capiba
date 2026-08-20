@@ -11,8 +11,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from capiba.config import DETECTION_ENTITY_THRESHOLD
 from capiba.pipeline.tasks import (
     _lake_run_date,
+    persist_cnpj_entities,
     persist_contracts,
     task_dbt_run,
     task_detect,
@@ -114,6 +116,84 @@ class TestPersistContracts:
         summary = persist_contracts([{"id": "C001"}])
 
         assert summary == {"error": "arango down"}
+
+
+class TestPersistCnpjEntities:
+    """Entity resolution runs best-effort after the CNPJ graph load (O5)."""
+
+    @patch("capiba.pipeline.tasks.resolve_entities")
+    @patch("capiba.pipeline.tasks.bulk_upsert_cnpj")
+    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    def test_resolution_summary_after_load(
+        self,
+        mock_get_db: MagicMock,
+        mock_lake: MagicMock,
+        mock_upsert: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """same_as edges are resolved over the loaded persons, on the
+        pre-registered threshold."""
+        mock_lake.read_silver_entities.side_effect = lambda entity: iter([[]])
+        mock_upsert.return_value = {
+            "companies": 1,
+            "persons": 2,
+            "edges": 2,
+            "errors": 0,
+        }
+        mock_resolve.return_value = {
+            "persons": 2,
+            "candidate_pairs": 1,
+            "same_as": 1,
+            "threshold": 0.85,
+        }
+
+        summary = persist_cnpj_entities(execution_date="2026-08-20")
+
+        assert summary["same_as"] == 1
+        assert "error" not in summary
+        mock_resolve.assert_called_once_with(
+            mock_get_db.return_value, threshold=DETECTION_ENTITY_THRESHOLD
+        )
+
+    @patch("capiba.pipeline.tasks.resolve_entities")
+    @patch("capiba.pipeline.tasks.bulk_upsert_cnpj")
+    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    def test_resolution_failure_never_fails_the_load(
+        self,
+        mock_get_db: MagicMock,
+        mock_lake: MagicMock,
+        mock_upsert: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """A resolution error is reported apart; the graph load stands."""
+        mock_lake.read_silver_entities.side_effect = lambda entity: iter([[]])
+        mock_upsert.return_value = {
+            "companies": 1,
+            "persons": 0,
+            "edges": 0,
+            "errors": 0,
+        }
+        mock_resolve.side_effect = RuntimeError("aql boom")
+
+        summary = persist_cnpj_entities(execution_date="2026-08-20")
+
+        assert summary["companies"] == 2  # one batch per entity table
+        assert summary["resolution_error"] == "aql boom"
+        assert "error" not in summary
+
+    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    def test_load_failure_skips_resolution(
+        self, mock_get_db: MagicMock, mock_lake: MagicMock
+    ) -> None:
+        """A failed load reports the error and never reaches resolution."""
+        mock_lake.read_silver_entities.side_effect = ConnectionError("lake down")
+
+        summary = persist_cnpj_entities(execution_date="2026-08-20")
+
+        assert summary["error"] == "lake down"
 
 
 class TestTaskDetect:

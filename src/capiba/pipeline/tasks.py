@@ -26,9 +26,11 @@ from capiba.config import (
     DBT_PROJECT_DIR,
     DETECTION_COLLUSION_MIN_BUYERS,
     DETECTION_COLLUSION_MIN_WINS,
+    DETECTION_ENTITY_THRESHOLD,
 )
 from capiba.db.arangodb import get_capiba_db
 from capiba.db.triage import register_signals
+from capiba.detection.entities import resolve_entities
 from capiba.detection.graphs import collusion_eligibility, pair_buyers_from_eligibility
 from capiba.detection.screening import sanctioned_supplier_signals
 from capiba.detection.signals import (
@@ -160,16 +162,20 @@ def persist_cnpj_entities(execution_date: str | None = None) -> dict[str, Any]:
     Reads the silver ``companies``/``partners`` tables batch by batch and
     bulk-upserts the FtM graph vertices (``companies``/``persons``) and
     ``ownership``/``directorship`` edges, so the large dump tables never
-    materialize in memory.
+    materialize in memory. After the load, entity resolution (O5) writes
+    ``same_as`` edges between person vertices at or above
+    ``DETECTION_ENTITY_THRESHOLD`` — best-effort: a resolution failure is
+    reported apart (``resolution_error``) and never fails the graph load.
 
     Args:
         execution_date: Execution date (metadata only).
 
     Returns:
-        Persistence summary ``{companies, persons, edges, errors}``
-        (or ``{"error": ...}`` on failure).
+        Persistence summary ``{companies, persons, edges, errors}`` plus
+        ``same_as`` (or ``resolution_error``) — or ``{"error": ...}`` when
+        the load itself fails.
     """
-    totals = {"companies": 0, "persons": 0, "edges": 0, "errors": 0}
+    totals: dict[str, Any] = {"companies": 0, "persons": 0, "edges": 0, "errors": 0}
     try:
         db = get_capiba_db()
         for entity in ("companies", "partners"):
@@ -188,6 +194,13 @@ def persist_cnpj_entities(execution_date: str | None = None) -> dict[str, Any]:
     except Exception as e:
         logger.error("CNPJ persistence failed: %s", e)
         return {"error": str(e), **totals}
+
+    try:
+        resolution = resolve_entities(db, threshold=DETECTION_ENTITY_THRESHOLD)
+        totals["same_as"] = resolution["same_as"]
+    except Exception as e:
+        logger.error("Entity resolution failed: %s", e)
+        totals["resolution_error"] = str(e)
 
     logger.info("CNPJ graph load finished: %s", totals)
     return totals
@@ -436,7 +449,9 @@ def task_crawl_source(
         lake.write_bronze(source_name, records, run_date=run_date)
         lake.write_bronze_table(source_name, records, run_date=run_date)
     except Exception as e:
-        logger.warning("Failed to write %s payload to the bronze layer: %s", source_name, e)
+        logger.warning(
+            "Failed to write %s payload to the bronze layer: %s", source_name, e
+        )
 
     context["ti"].xcom_push(key=f"raw_{source_name}", value=records)
     return records
@@ -510,6 +525,7 @@ def task_download_source(
         )
 
     with tempfile.TemporaryDirectory() as tmp:
+
         def _upload(path: Path) -> None:
             data = path.read_bytes()
             try:
@@ -558,7 +574,9 @@ def task_download_source(
     return payload
 
 
-def task_normalize_dump(source_name: str, spec_path: str, **context: Any) -> dict[str, Any]:
+def task_normalize_dump(
+    source_name: str, spec_path: str, **context: Any
+) -> dict[str, Any]:
     """Task: parse a dump source's bronze files into the silver entity tables.
 
     Streaming counterpart of the runner's ``normalize_<source>`` step of the
@@ -591,7 +609,11 @@ def task_normalize_dump(source_name: str, spec_path: str, **context: Any) -> dic
     parser = DUMP_PARSER_REGISTRY.get(source_name)
     destination_names = {d.name for d in spec.destinations}
     if parser is None or not destination_names & {"lake_silver", "arangodb_graph"}:
-        summary: dict[str, Any] = {"source": source_name, "entities": {}, "skipped": True}
+        summary: dict[str, Any] = {
+            "source": source_name,
+            "entities": {},
+            "skipped": True,
+        }
         ti.xcom_push(key=f"entities_{source_name}", value=summary)
         return summary
 
@@ -667,7 +689,10 @@ def task_normalize_pipeline(spec_path: str, **context: Any) -> list[dict[str, An
     contracts: list[dict[str, Any]] = []
     errors = 0
     for source in spec.sources:
-        raw_records = ti.xcom_pull(task_ids=f"crawl_{source.name}", key=f"raw_{source.name}") or []
+        raw_records = (
+            ti.xcom_pull(task_ids=f"crawl_{source.name}", key=f"raw_{source.name}")
+            or []
+        )
         normalizer = NORMALIZER_REGISTRY.get(source.name)
         if normalizer is None:
             raise ValueError(f"Source '{source.name}' has no registered normalizer")
@@ -730,7 +755,9 @@ def _record_quality_batch(
             },
         )
     except Exception as exc:
-        logger.warning("Failed to record quality metrics for %s: %s", pipeline_name, exc)
+        logger.warning(
+            "Failed to record quality metrics for %s: %s", pipeline_name, exc
+        )
 
 
 def task_validate_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
@@ -747,7 +774,9 @@ def task_validate_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
     spec = _load_spec(spec_path)
 
     contracts = ti.xcom_pull(task_ids="normalize", key="normalized_contracts") or []
-    normalization_errors = ti.xcom_pull(task_ids="normalize", key="normalization_errors") or 0
+    normalization_errors = (
+        ti.xcom_pull(task_ids="normalize", key="normalization_errors") or 0
+    )
 
     report = validate_contracts(contracts, normalization_errors=normalization_errors)
 
@@ -811,9 +840,13 @@ def task_destination(
     for source in spec.sources:
         if destination_name == "lake_bronze":
             if spec.formula == "file_dump":
-                value = ti.xcom_pull(task_ids=f"download_{source.name}", key=f"manifest_{source.name}")
+                value = ti.xcom_pull(
+                    task_ids=f"download_{source.name}", key=f"manifest_{source.name}"
+                )
             else:
-                value = ti.xcom_pull(task_ids=f"crawl_{source.name}", key=f"raw_{source.name}")
+                value = ti.xcom_pull(
+                    task_ids=f"crawl_{source.name}", key=f"raw_{source.name}"
+                )
             if value is not None:
                 raw[source.name] = value
 
@@ -950,7 +983,9 @@ def task_run_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:
     post_results: dict[str, Any] = {}
     for step in spec.post_steps:
         if step.name == "dbt_run":
-            post_results["dbt_run"] = task_dbt_run(select=step.select or None, **context)
+            post_results["dbt_run"] = task_dbt_run(
+                select=step.select or None, **context
+            )
         elif step.name == "detect":
             post_results["detect"] = task_detect(**context)
 
