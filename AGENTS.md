@@ -151,8 +151,13 @@ no-op quando `NOTIFICATION_RECIPIENTS` está vazio, nunca derrubam a task.
 O `task_detect` também emite o sinal de grafo `collusion_network`
 (`detect_collusion` sobre o ArangoDB, best-effort) com limiar
 `DETECTION_COLLUSION_MIN_WINS` (default 3, placeholder de calibração validado
-pela bateria D-02; PR-D-03, registrado em 2026-08-19 e pendente de aprovação,
-calibrará em volume real) e score binário 1.0;
+pela bateria D-02; a calibração em volume real (bateria D-03,
+`docs/results/R-D-03.md`) foi **inconclusiva** — a semântica de pares
+explode no regime real (627 mil pares em w=3); o refinamento por
+co-ocorrência entre compradores (PR-D-03b, executado em
+`docs/results/R-D-03b.md`) também foi **inconclusivo** — redução ~28×,
+mas o menor backlog da grade {3,4,5} × {2,3} (1.397 pares em (5,3)) segue
+acima do orçamento de 500; próximo refinamento em PR-D-03c) e score binário 1.0;
 a cadeia de titularidade é exposta na API em `GET /v1/graph/ownership/{cnpj}`.
 O `task_validate_pipeline` também alimenta o `QualityMonitor`
 (`record_batch`, best-effort) e o `NotificationScheduler` (relatórios

@@ -150,18 +150,26 @@ def anomalous_price(
 def collusion_signals(
     pairs: list[set[str]],
     min_wins: int,
+    min_buyers: int = 1,
+    buyers_by_pair: dict[tuple[str, str], list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Converts collusion pairs (``detect_collusion``) into signal rows.
 
     Binary score (1.0) — a calibration placeholder validated by battery D-02;
-    PR-D-03 will calibrate the score semantics on real volume. One signal per
-    pair, addressed to the supplier pair itself: ``entity_id`` is the two
+    battery D-03 measured the real-volume semantics and D-03b refined the
+    pair by co-occurrence across distinct buyers (``min_buyers``). One signal
+    per pair, addressed to the supplier pair itself: ``entity_id`` is the two
     CNPJs sorted and joined by ``+`` (deterministic), and the raw pair is
-    preserved in ``details``.
+    preserved in ``details`` together with the calibration thresholds and,
+    when provided, the sorted list of buyers where the pair co-occurs.
 
     Args:
         pairs: Supplier pairs (sets of two CNPJs) from ``detect_collusion``.
         min_wins: Eligibility threshold used to produce the pairs (metadata).
+        min_buyers: Minimum distinct buyers per pair (metadata; 1 = the
+            single-buyer semantics of D-03).
+        buyers_by_pair: Optional mapping of sorted pair tuple to the sorted
+            buyer ids where the pair co-occurs (PR-D-03b annotation).
 
     Returns:
         Signal rows (entity_type, entity_id, signal_type, score, details).
@@ -169,13 +177,20 @@ def collusion_signals(
     signals: list[dict[str, Any]] = []
     for pair in pairs:
         suppliers = sorted(pair)
+        details: dict[str, Any] = {
+            "min_wins": min_wins,
+            "min_buyers": min_buyers,
+            "suppliers": suppliers,
+        }
+        if buyers_by_pair is not None:
+            details["buyers"] = buyers_by_pair.get((suppliers[0], suppliers[1]), [])
         signals.append(
             {
                 "entity_type": "supplier",
                 "entity_id": "+".join(suppliers),
                 "signal_type": SignalType.COLLUSION_NETWORK,
                 "score": 1.0,
-                "details": json.dumps({"min_wins": min_wins, "suppliers": suppliers}),
+                "details": json.dumps(details),
             }
         )
     return signals

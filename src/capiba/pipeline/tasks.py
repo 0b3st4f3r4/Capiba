@@ -22,10 +22,14 @@ from typing import Any
 
 import pandas as pd
 
-from capiba.config import DBT_PROJECT_DIR, DETECTION_COLLUSION_MIN_WINS
+from capiba.config import (
+    DBT_PROJECT_DIR,
+    DETECTION_COLLUSION_MIN_BUYERS,
+    DETECTION_COLLUSION_MIN_WINS,
+)
 from capiba.db.arangodb import get_capiba_db
 from capiba.db.triage import register_signals
-from capiba.detection.graphs import detect_collusion
+from capiba.detection.graphs import collusion_eligibility, pair_buyers_from_eligibility
 from capiba.detection.screening import sanctioned_supplier_signals
 from capiba.detection.signals import (
     SignalType,
@@ -336,10 +340,26 @@ def task_detect(**context: Any) -> dict[str, Any]:
         logger.warning("Sanction screening unavailable (silver sanctions): %s", e)
 
     # Best-effort: graph signals never fail the task (ArangoDB may be down).
+    graph_snapshot: dict[str, Any] | None = None
     try:
         db = get_capiba_db()
-        pairs = detect_collusion(db, min_wins=DETECTION_COLLUSION_MIN_WINS)
-        signals.extend(collusion_signals(pairs, DETECTION_COLLUSION_MIN_WINS))
+        eligibility = collusion_eligibility(db, min_wins=DETECTION_COLLUSION_MIN_WINS)
+        pair_buyers = pair_buyers_from_eligibility(
+            eligibility, DETECTION_COLLUSION_MIN_BUYERS
+        )
+        graph_snapshot = {
+            "rows": eligibility,
+            "min_wins": DETECTION_COLLUSION_MIN_WINS,
+            "min_buyers": DETECTION_COLLUSION_MIN_BUYERS,
+        }
+        signals.extend(
+            collusion_signals(
+                [set(pair) for pair, _ in pair_buyers],
+                DETECTION_COLLUSION_MIN_WINS,
+                DETECTION_COLLUSION_MIN_BUYERS,
+                dict(pair_buyers),
+            )
+        )
         # Editorial triage queue (O10): new signals enter as pending_review.
         register_signals(db, signals)
     except Exception as e:
@@ -354,7 +374,13 @@ def task_detect(**context: Any) -> dict[str, Any]:
     # Best-effort: reproducible evidence packages (O9) never fail the task.
     try:
         if signals:
-            store_signal_packages(EvidenceStorage(), signals, contracts, run_date)
+            store_signal_packages(
+                EvidenceStorage(),
+                signals,
+                contracts,
+                run_date,
+                graph_snapshot=graph_snapshot,
+            )
     except Exception as e:
         logger.warning("Failed to store signal evidence packages (MinIO): %s", e)
 

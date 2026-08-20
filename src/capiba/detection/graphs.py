@@ -20,24 +20,25 @@ from capiba.db.arangodb import execute_aql, get_capiba_db
 logger = logging.getLogger(__name__)
 
 
-def detect_collusion(
+def collusion_eligibility(
     db: StandardDatabase | None = None,
     min_wins: int = 3,
-) -> list[set[str]]:
-    """Detects pairs of suppliers alternating wins for the same buyer.
+) -> list[dict[str, Any]]:
+    """Lists the eligible (buyer, supplier) rows with their win counts.
 
     Adapted semantics (PR-D-02, section 3): there is no contract→buyer
     edge, so the buyer is the ``buyer.siafi_code`` attribute of the
-    ``contracts`` document. For each buyer b, let S_b be the set of
-    suppliers with >= ``min_wins`` ``won`` edges (suppliers → contracts)
-    to contracts of b. The output is every pair {s1, s2} ⊆ S_b, s1 ≠ s2.
+    ``contracts`` document. A row is eligible when the supplier has >=
+    ``min_wins`` ``won`` edges (suppliers → contracts) to contracts of the
+    buyer. The sorted rows are also the eligibility snapshot stored in the
+    graph evidence package (PR-D-03).
 
     Args:
         db: ArangoDB connection. If None, creates a new one.
         min_wins: Minimum number of wins per (buyer, supplier) to be eligible.
 
     Returns:
-        List of pairs (sets of two CNPJs), sorted deterministically.
+        Rows ``{"buyer", "supplier", "wins"}`` sorted by (buyer, supplier).
     """
     if db is None:
         db = get_capiba_db()
@@ -48,20 +49,92 @@ def detect_collusion(
             FOR s IN INBOUND c won
                 COLLECT buyer = c.buyer.siafi_code, supplier = s._key INTO wins
                 FILTER LENGTH(wins) >= @minWins
-                RETURN {buyer, supplier}
+                RETURN {buyer, supplier, wins: LENGTH(wins)}
     """
 
     rows = execute_aql(db, query, {"minWins": min_wins})
+    return sorted(rows, key=lambda row: (row["buyer"], row["supplier"]))
 
+
+def pair_buyers_from_eligibility(
+    rows: list[dict[str, Any]], min_buyers: int = 1
+) -> list[tuple[tuple[str, str], list[str]]]:
+    """Derives collusion pairs with the buyers where each pair is eligible.
+
+    Refined semantics (PR-D-03b, section 3): for each buyer b with
+    eligible suppliers S_b, form every pair {s1, s2} ⊆ S_b; a pair is
+    flagged only when it is eligible in >= ``min_buyers`` distinct buyers.
+    ``min_buyers = 1`` reduces exactly to the D-02/D-03 semantics.
+
+    Args:
+        rows: Eligibility rows from ``collusion_eligibility``.
+        min_buyers: Minimum number of distinct buyers sharing the pair.
+
+    Returns:
+        Sorted list of ``(pair, buyers)`` — pair as a sorted tuple of two
+        CNPJs, buyers as the sorted list of siafi codes.
+    """
     suppliers_by_buyer: dict[str, list[str]] = {}
     for row in rows:
         suppliers_by_buyer.setdefault(row["buyer"], []).append(row["supplier"])
 
-    pairs: list[set[str]] = []
+    buyers_by_pair: dict[tuple[str, str], list[str]] = {}
     for buyer in sorted(suppliers_by_buyer):
         for s1, s2 in combinations(sorted(suppliers_by_buyer[buyer]), 2):
-            pairs.append({s1, s2})
-    pairs.sort(key=lambda pair: tuple(sorted(pair)))
+            buyers_by_pair.setdefault((s1, s2), []).append(buyer)
+
+    return sorted(
+        (pair, sorted(buyers))
+        for pair, buyers in buyers_by_pair.items()
+        if len(buyers) >= min_buyers
+    )
+
+
+def pairs_from_eligibility(
+    rows: list[dict[str, Any]], min_buyers: int = 1
+) -> list[set[str]]:
+    """Derives the collusion pairs from eligibility rows (pure function).
+
+    For each buyer b with eligible suppliers S_b, the output is every pair
+    {s1, s2} ⊆ S_b, s1 ≠ s2 — suppliers alternating wins for the same
+    buyer (PR-D-02, section 3) — restricted to pairs eligible in >=
+    ``min_buyers`` distinct buyers (PR-D-03b). Deterministic and exact by
+    construction.
+
+    Args:
+        rows: Eligibility rows from ``collusion_eligibility``.
+        min_buyers: Minimum number of distinct buyers sharing the pair.
+
+    Returns:
+        List of pairs (sets of two CNPJs), sorted deterministically.
+    """
+    return [
+        {s1, s2}
+        for (s1, s2), _buyers in pair_buyers_from_eligibility(rows, min_buyers)
+    ]
+
+
+def detect_collusion(
+    db: StandardDatabase | None = None,
+    min_wins: int = 3,
+    min_buyers: int = 1,
+) -> list[set[str]]:
+    """Detects pairs of suppliers alternating wins for the same buyer(s).
+
+    Composition of ``collusion_eligibility`` (AQL aggregation) and
+    ``pairs_from_eligibility`` (pure pair derivation), in the adapted
+    semantics of PR-D-02, section 3, refined by co-occurrence across
+    buyers in PR-D-03b, section 3.
+
+    Args:
+        db: ArangoDB connection. If None, creates a new one.
+        min_wins: Minimum number of wins per (buyer, supplier) to be eligible.
+        min_buyers: Minimum number of distinct buyers sharing the pair.
+
+    Returns:
+        List of pairs (sets of two CNPJs), sorted deterministically.
+    """
+    pairs = pairs_from_eligibility(collusion_eligibility(db, min_wins), min_buyers)
     logger.info("Suspected collusion pairs: %d", len(pairs))
     return pairs
 

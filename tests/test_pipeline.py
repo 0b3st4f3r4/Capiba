@@ -129,7 +129,7 @@ class TestTaskDetect:
             self.mock_store_packages = mock_store
             yield
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_writes_signals(
@@ -152,7 +152,7 @@ class TestTaskDetect:
         )
         assert {s["signal_type"] for s in signals} == {"concentration"}
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_adds_collusion_signals(
@@ -162,7 +162,10 @@ class TestTaskDetect:
         from capiba.config import DETECTION_COLLUSION_MIN_WINS
 
         mock_lake.read_silver_contracts.return_value = []
-        mock_collusion.return_value = [{"91000000000002", "91000000000001"}]
+        mock_collusion.return_value = [
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 4},
+        ]
 
         summary = task_detect(ds="2026-01-01")
 
@@ -174,7 +177,7 @@ class TestTaskDetect:
         assert signals[0]["signal_type"] == "collusion_network"
         assert signals[0]["entity_id"] == "91000000000001+91000000000002"
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_adds_sanctioned_supplier_signals(
@@ -210,7 +213,7 @@ class TestTaskDetect:
         assert screened[0]["score"] == 1.0
         assert summary["signals"] == len(signals)
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_sanctions_failure_keeps_other_signals(
@@ -249,7 +252,7 @@ class TestTaskDetect:
         assert {s["signal_type"] for s in signals} == {"concentration"}
 
     @patch("capiba.pipeline.tasks.register_signals")
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_registers_signals_for_triage(
@@ -273,7 +276,7 @@ class TestTaskDetect:
         assert len(mock_register.call_args.args[1]) == summary["signals"]
 
     @patch("capiba.pipeline.tasks.register_signals")
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_triage_failure_does_not_abort(
@@ -296,7 +299,7 @@ class TestTaskDetect:
         assert summary["signals"] >= 1
         mock_lake.write_fraud_signals.assert_called_once()
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_stores_evidence_packages(
@@ -317,8 +320,15 @@ class TestTaskDetect:
         assert args[1] == mock_lake.write_fraud_signals.call_args.args[0]
         assert args[2] == contracts
         assert args[3] == date(2026, 1, 1)
+        # Graph snapshot (PR-D-03): eligibility rows flow to the packages.
+        graph_snapshot = self.mock_store_packages.call_args.kwargs["graph_snapshot"]
+        assert graph_snapshot == {
+            "rows": mock_collusion.return_value,
+            "min_wins": 3,
+            "min_buyers": 1,
+        }
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_evidence_failure_does_not_abort(
@@ -337,7 +347,7 @@ class TestTaskDetect:
         assert summary["signals"] >= 1
         mock_lake.write_fraud_signals.assert_called_once()
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_read_failure(
@@ -352,7 +362,7 @@ class TestTaskDetect:
         assert summary == {"signals": 0}
         mock_lake.write_fraud_signals.assert_not_called()
 
-    @patch("capiba.pipeline.tasks.detect_collusion")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_write_failure(
@@ -381,8 +391,16 @@ class TestTaskDbtRun:
 
         summary = task_dbt_run()
 
-        mock_run_dbt.assert_called_once_with("run")
-        assert summary == {"dbt": "run", "project_dir": DBT_PROJECT_DIR}
+        mock_run_dbt.assert_called_once_with("run", select=None)
+        assert summary == {"dbt": "run", "select": [], "project_dir": DBT_PROJECT_DIR}
+
+    @patch("capiba.pipeline.dbt_runner.run_dbt")
+    def test_task_dbt_run_with_select(self, mock_run_dbt: MagicMock) -> None:
+        """A model selection must reach run_dbt and the summary."""
+        summary = task_dbt_run(select=["pod_usage_hourly"])
+
+        mock_run_dbt.assert_called_once_with("run", select=["pod_usage_hourly"])
+        assert summary["select"] == ["pod_usage_hourly"]
 
 
 class TestTaskPostStep:
@@ -413,6 +431,13 @@ class TestTaskPostStep:
             mock_dbt.return_value = {"dbt": "run"}
             summary = task_post_step("dbt_run", "spec.yaml")
         assert summary == {"dbt": "run"}
+
+    def test_dbt_run_select_passthrough(self) -> None:
+        """The dbt model selection reaches task_dbt_run."""
+        with patch("capiba.pipeline.tasks.task_dbt_run") as mock_dbt:
+            mock_dbt.return_value = {"dbt": "run"}
+            task_post_step("dbt_run", "spec.yaml", select=["pod_usage_hourly"])
+        mock_dbt.assert_called_once_with(select=["pod_usage_hourly"])
 
 
 class TestRecordQualityBatch:

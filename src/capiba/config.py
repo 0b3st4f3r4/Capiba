@@ -198,6 +198,12 @@ EVIDENCE_MAX_SIZE_VIDEO = int(
 # by battery D-02; PR-D-03 will calibrate on real volume.
 DETECTION_COLLUSION_MIN_WINS = int(os.getenv("DETECTION_COLLUSION_MIN_WINS", "3"))
 
+# Minimum distinct buyers in which the supplier pair must co-occur (PR-D-03b
+# refinement; 1 = the single-buyer semantics of D-03). Stays at the default
+# until battery D-03b calibrates the (min_wins, min_buyers) grid on real
+# volume and a human decision promotes the calibrated values.
+DETECTION_COLLUSION_MIN_BUYERS = int(os.getenv("DETECTION_COLLUSION_MIN_BUYERS", "1"))
+
 # =============================================================================
 # Notification (SMTP)
 # =============================================================================

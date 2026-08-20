@@ -1,0 +1,29 @@
+{
+  "battery": "D-03",
+  "part": "synthetic",
+  "predictions": {
+    "P1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P2": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P3": {
+      "verdict": "success",
+      "failures": []
+    },
+    "P4": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "invariants": {
+    "monotonicity": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "verdict": "success"
+}

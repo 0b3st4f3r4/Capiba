@@ -1,0 +1,83 @@
+{
+  "id": "D-03b",
+  "description": "Refinamento da calibração do collusion_network: semântica de co-ocorrência (par com >= min_wins vitórias por comprador em >= min_buyers compradores distintos), grade (w, n) em {3,4,5}x{2,3}, mesmo orçamento de triagem da D-03 (500 backlog / 20 por dia). Ver docs/preregistrations/PR-D-03b.md. Executada em 2026-08-19, veredito inconclusive — ver docs/results/R-D-03b.md.",
+  "requires_infra": "arangodb",
+  "runner": "collusion",
+  "refines": "D-03",
+  "seeds": [
+    7,
+    17,
+    27,
+    37,
+    47
+  ],
+  "calibration": {
+    "candidates_min_wins": [3, 4, 5],
+    "candidates_min_buyers": [2, 3],
+    "candidate_order": "min_buyers_outer_lexicographic",
+    "budget": {
+      "backlog_max_pairs": 500,
+      "daily_max_pairs": 20
+    },
+    "increment_window_days": 30,
+    "robustness_window_days": 60,
+    "control_min_wins": 2,
+    "control_min_buyers": 2,
+    "date_field": "signature_date",
+    "siafi_coverage_min": 0.9,
+    "time_budget_seconds": 600,
+    "materialize_only_at_calibrated_w": true
+  },
+  "synthetic": {
+    "comment": "59 contratos/seed; a seed só randomiza campos neutros. PLANT-B/IT-B1/BD-B1 recentes (últimos 30 dias); IT-B2/BD-B2/CTRL-B1/SOLO antigos.",
+    "planted_buyer": {
+      "id": "PLANT-B",
+      "suppliers": [
+        {"id": "91000000000001", "wins": 4},
+        {"id": "91000000000002", "wins": 4},
+        {"id": "91000000000003", "wins": 4}
+      ],
+      "boundary_supplier": {"id": "91000000000004", "wins": 2},
+      "within_increment_window": true
+    },
+    "itinerant_pair": {
+      "supplier_ids": ["95000000000001", "95000000000002"],
+      "buyers": [
+        {"id": "IT-B1", "wins_each": 3, "within_increment_window": true},
+        {"id": "IT-B2", "wins_each": 3, "within_increment_window": false}
+      ]
+    },
+    "boundary_pair": {
+      "suppliers": [
+        {"id": "96000000000001", "wins_by_buyer": {"BD-B1": 3, "BD-B2": 3}},
+        {"id": "96000000000002", "wins_by_buyer": {"BD-B1": 3, "BD-B2": 2}}
+      ],
+      "buyers_within_increment_window": {"BD-B1": true, "BD-B2": false}
+    },
+    "control_same_buyer": {
+      "buyer_id": "CTRL-B1",
+      "suppliers": ["92000000000001", "92000000000002", "92000000000003"],
+      "wins_each": 2,
+      "within_increment_window": false
+    },
+    "control_solo_buyers": {
+      "buyer_ids": ["SOLO-B1", "SOLO-B2", "SOLO-B3", "SOLO-B4"],
+      "supplier_ids": ["93000000000001", "93000000000002", "93000000000003", "93000000000004"],
+      "wins_each": 4,
+      "within_increment_window": false
+    }
+  },
+  "expectations": {
+    "pairs_min3_buyers1_exact_count": 5,
+    "pairs_min3_buyers2_exact": [["95000000000001", "95000000000002"]],
+    "pair_buyers_min3_buyers2_exact": {"95000000000001+95000000000002": ["IT-B1", "IT-B2"]},
+    "pairs_min4_buyers2_exact_count": 0,
+    "pairs_min2_buyers2_control_exact": [
+      ["95000000000001", "95000000000002"],
+      ["96000000000001", "96000000000002"]
+    ],
+    "recent_pairs_min3_buyers2_exact": 1,
+    "evidence_reproduction_match": true,
+    "evidence_tampered_match": false
+  }
+}

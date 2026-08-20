@@ -1,0 +1,4 @@
+{"seed": 37, "operator": "sweep_histogram", "histogram": {"2": 4, "4": 7}}
+{"seed": 37, "operator": "sweep_pairs_by_candidate", "aql": {"3": 3, "4": 3, "5": 0, "6": 0, "8": 0, "10": 0}, "python": {"3": 3, "4": 3, "5": 0, "6": 0, "8": 0, "10": 0}}
+{"seed": 37, "operator": "sweep_increment_daily", "3": 0.1, "4": 0.1, "5": 0.0, "6": 0.0, "8": 0.0, "10": 0.0}
+{"seed": 37, "operator": "evidence_reproduction", "signals": 3, "matches": [true, true, true], "tampered": {"signal_key": "supplier:91000000000001+91000000000002:collusion_network", "expected": 1.0, "actual": null, "integrity": false, "match": false}}

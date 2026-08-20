@@ -104,6 +104,41 @@ def compute(context: dict[str, Any]) -> None:
     context["signals"] = detect_fraud_signals(context["contracts"])
 
 
+@given(
+    parsers.parse("an eligibility snapshot with min_wins {min_wins:d} for the collusion pair")
+)
+def eligibility_snapshot(context: dict[str, Any], min_wins: int) -> None:
+    context["graph_snapshot"] = {
+        "rows": [
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 3},
+        ],
+        "min_wins": min_wins,
+    }
+
+
+@given(
+    parsers.parse(
+        "an eligibility snapshot with min_wins {min_wins:d}"
+        " and min_buyers {min_buyers:d} for the collusion pair"
+    )
+)
+def eligibility_snapshot_min_buyers(
+    context: dict[str, Any], min_wins: int, min_buyers: int
+) -> None:
+    """Snapshot where the pair is eligible in two distinct buyers (PR-D-03b)."""
+    context["graph_snapshot"] = {
+        "rows": [
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 3},
+            {"buyer": "B2", "supplier": "91000000000001", "wins": 3},
+            {"buyer": "B2", "supplier": "91000000000002", "wins": 5},
+        ],
+        "min_wins": min_wins,
+        "min_buyers": min_buyers,
+    }
+
+
 @when("the evidence packages are stored")
 def store(context: dict[str, Any]) -> None:
     context["result"] = packages.store_signal_packages(
@@ -111,10 +146,15 @@ def store(context: dict[str, Any]) -> None:
         context["signals"],
         context.get("contracts", []),
         run_date=None,
+        graph_snapshot=context.get("graph_snapshot"),
     )
     batch_sha = context["result"]["batch_sha256"]
     data, _ = context["storage"].objects[batch_sha]
     context["batch_package"] = json.loads(data)
+    graph_sha = context["result"]["graph_sha256"]
+    if graph_sha:
+        graph_data, _ = context["storage"].objects[graph_sha]
+        context["graph_package"] = json.loads(graph_data)
 
 
 @when("a source row of the batch package is tampered with")
@@ -162,3 +202,32 @@ def manifest_non_reproducible(context: dict[str, Any], signal_key: str) -> None:
     ]
     assert manifests, f"no stored manifest for {signal_key}"
     assert manifests[0]["reproducible"] is False
+
+
+@then(parsers.parse('the manifest of "{signal_key}" is marked reproducible'))
+def manifest_reproducible(context: dict[str, Any], signal_key: str) -> None:
+    manifests = [
+        json.loads(data)
+        for data, metadata in context["storage"].objects.values()
+        if metadata.get("signal_key") == signal_key
+    ]
+    assert manifests, f"no stored manifest for {signal_key}"
+    assert manifests[0]["reproducible"] is True
+    assert manifests[0]["graph_sha256"] == context["result"]["graph_sha256"]
+
+
+@then(parsers.parse("the graph batch package records min_buyers {min_buyers:d}"))
+def graph_package_min_buyers(context: dict[str, Any], min_buyers: int) -> None:
+    reproduction = context["graph_package"]["reproduction"]
+    assert reproduction["min_buyers"] == min_buyers
+
+
+@then(
+    parsers.parse(
+        'reproducing "{signal_key}" from the graph batch package'
+        " matches the stored score"
+    )
+)
+def graph_reproduction_matches(context: dict[str, Any], signal_key: str) -> None:
+    outcome = packages.reproduce_signal(context["graph_package"], signal_key)
+    assert outcome["match"], outcome

@@ -11,7 +11,10 @@ from unittest.mock import MagicMock
 
 from capiba.detection.graphs import (
     anomalous_geography,
+    collusion_eligibility,
     detect_collusion,
+    pair_buyers_from_eligibility,
+    pairs_from_eligibility,
     trace_ownership,
 )
 
@@ -21,6 +24,107 @@ def _fake_db(graph_name: str = "capiba_graph") -> MagicMock:
     db = MagicMock()
     db.graph.return_value.name = graph_name
     return db
+
+
+class TestCollusionEligibility:
+    """Tests for collusion_eligibility (PR-D-03 eligibility snapshot)."""
+
+    def test_rows_sorted_with_win_counts(self, monkeypatch) -> None:
+        """Rows come back sorted by (buyer, supplier) with win counts."""
+        db = _fake_db()
+        execute = MagicMock(
+            return_value=[
+                {"buyer": "B2", "supplier": "S4", "wins": 3},
+                {"buyer": "B1", "supplier": "S2", "wins": 4},
+                {"buyer": "B1", "supplier": "S1", "wins": 5},
+            ]
+        )
+        monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
+
+        rows = collusion_eligibility(db=db, min_wins=3)
+
+        assert rows == [
+            {"buyer": "B1", "supplier": "S1", "wins": 5},
+            {"buyer": "B1", "supplier": "S2", "wins": 4},
+            {"buyer": "B2", "supplier": "S4", "wins": 3},
+        ]
+
+    def test_query_groups_by_buyer_and_returns_wins(self, monkeypatch) -> None:
+        """The AQL groups by buyer.siafi_code and returns the win count."""
+        db = _fake_db()
+        execute = MagicMock(return_value=[])
+        monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
+
+        collusion_eligibility(db=db, min_wins=5)
+
+        query, bind_vars = execute.call_args.args[1], execute.call_args.args[2]
+        assert "FOR c IN contracts" in query
+        assert "c.buyer.siafi_code != null" in query
+        assert "INBOUND c won" in query
+        assert "LENGTH(wins) >= @minWins" in query
+        assert "wins: LENGTH(wins)" in query
+        assert bind_vars == {"minWins": 5}
+
+
+class TestPairsFromEligibility:
+    """Tests for pairs_from_eligibility (pure pair derivation)."""
+
+    def test_pairs_grouped_by_buyer(self) -> None:
+        """Eligible rows become pairs within each buyer, sorted."""
+        rows = [
+            {"buyer": "B1", "supplier": "S2", "wins": 3},
+            {"buyer": "B1", "supplier": "S1", "wins": 3},
+            {"buyer": "B1", "supplier": "S3", "wins": 3},
+            {"buyer": "B2", "supplier": "S4", "wins": 3},
+            {"buyer": "B2", "supplier": "S5", "wins": 3},
+        ]
+        assert pairs_from_eligibility(rows) == [
+            {"S1", "S2"},
+            {"S1", "S3"},
+            {"S2", "S3"},
+            {"S4", "S5"},
+        ]
+
+    def test_empty_rows_yield_no_pairs(self) -> None:
+        """No eligible rows, no pairs."""
+        assert pairs_from_eligibility([]) == []
+
+
+class TestPairBuyersFromEligibility:
+    """Tests for pair_buyers_from_eligibility (PR-D-03b co-occurrence)."""
+
+    ROWS = [
+        {"buyer": "B1", "supplier": "S1", "wins": 3},
+        {"buyer": "B1", "supplier": "S2", "wins": 3},
+        {"buyer": "B1", "supplier": "S3", "wins": 3},
+        {"buyer": "B2", "supplier": "S1", "wins": 3},
+        {"buyer": "B2", "supplier": "S2", "wins": 3},
+        {"buyer": "B3", "supplier": "S4", "wins": 3},
+        {"buyer": "B3", "supplier": "S5", "wins": 3},
+    ]
+
+    def test_min_buyers_one_matches_plain_pairs(self) -> None:
+        """min_buyers=1 reduces exactly to the D-03 pair semantics."""
+        assert [set(pair) for pair, _ in pair_buyers_from_eligibility(self.ROWS)] == (
+            pairs_from_eligibility(self.ROWS)
+        )
+
+    def test_min_buyers_two_filters_single_buyer_pairs(self) -> None:
+        """Only pairs eligible in >= 2 distinct buyers survive at n=2."""
+        assert pair_buyers_from_eligibility(self.ROWS, min_buyers=2) == [
+            (("S1", "S2"), ["B1", "B2"]),
+        ]
+
+    def test_buyers_annotation_sorted(self) -> None:
+        """Each pair carries the sorted buyers where it is eligible."""
+        assert pair_buyers_from_eligibility(self.ROWS, min_buyers=1)[0] == (
+            ("S1", "S2"),
+            ["B1", "B2"],
+        )
+
+    def test_empty_rows_yield_no_pairs(self) -> None:
+        """No eligible rows, no pairs."""
+        assert pair_buyers_from_eligibility([], min_buyers=2) == []
 
 
 class TestDetectCollusion:

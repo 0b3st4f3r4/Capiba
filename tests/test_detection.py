@@ -458,7 +458,24 @@ class TestSharedSignals:
         assert signal["score"] == 1.0
         assert json.loads(signal["details"]) == {
             "min_wins": 3,
+            "min_buyers": 1,
             "suppliers": ["91000000000001", "91000000000002"],
+        }
+
+    def test_collusion_signals_buyers_annotation(self) -> None:
+        """With a buyer mapping, details carry the sorted co-occurring buyers."""
+        buyers_by_pair = {("91000000000001", "91000000000002"): ["B2", "B1"]}
+        signals = collusion_signals(
+            [{"91000000000001", "91000000000002"}],
+            min_wins=3,
+            min_buyers=2,
+            buyers_by_pair=buyers_by_pair,
+        )
+        assert json.loads(signals[0]["details"]) == {
+            "min_wins": 3,
+            "min_buyers": 2,
+            "suppliers": ["91000000000001", "91000000000002"],
+            "buyers": ["B2", "B1"],
         }
 
     def test_collusion_signals_deterministic_ordering(self) -> None:

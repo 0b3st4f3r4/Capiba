@@ -112,7 +112,7 @@ class TestStoreSignalPackages:
         storage = FakeStorage()
         result = packages.store_signal_packages(storage, [], contracts, None)
 
-        assert result == {"batch_sha256": None, "manifests": 0}
+        assert result == {"batch_sha256": None, "graph_sha256": None, "manifests": 0}
         assert storage.objects == {}
 
     def test_stores_batch_and_manifest(
@@ -144,7 +144,7 @@ class TestStoreSignalPackages:
         assert manifests[0][1]["batch_sha256"] == result["batch_sha256"]
 
     def test_collusion_manifest_is_not_reproducible(self) -> None:
-        """Graph-derived signals are marked non-reproducible."""
+        """Graph-derived signals without a snapshot stay non-reproducible."""
         storage = FakeStorage()
         collusion = {
             "entity_type": "supplier",
@@ -161,6 +161,156 @@ class TestStoreSignalPackages:
             if meta.get("signal_key") == "supplier:91000000000001+91000000000002:collusion_network"
         )
         assert manifest["reproducible"] is False
+        assert "graph_sha256" not in manifest
+
+
+COLLUSION_SIGNAL = {
+    "entity_type": "supplier",
+    "entity_id": "91000000000001+91000000000002",
+    "signal_type": "collusion_network",
+    "score": 1.0,
+    "details": '{"min_wins": 3, "suppliers": ["91000000000001", "91000000000002"]}',
+}
+COLLUSION_SIGNAL_KEY = "supplier:91000000000001+91000000000002:collusion_network"
+SNAPSHOT_ROWS = [
+    {"buyer": "B1", "supplier": "91000000000001", "wins": 4},
+    {"buyer": "B1", "supplier": "91000000000002", "wins": 3},
+]
+
+
+class TestGraphBatchPackage:
+    """Tests for the graph batch package (PR-D-03 eligibility snapshot)."""
+
+    def test_payload_shape(self) -> None:
+        """The package carries schema, min_wins, snapshot rows and hash."""
+        package = packages.build_graph_batch_package(
+            SNAPSHOT_ROWS, [COLLUSION_SIGNAL], 3, date(2026, 1, 1)
+        )
+
+        assert package["schema"] == "capiba.signal-package/1"
+        assert package["kind"] == "graph_batch"
+        assert package["window"] == {"run_date": "2026-01-01"}
+        assert package["reproduction"] == {
+            "operator": "detect_collusion",
+            "min_wins": 3,
+            "min_buyers": 1,
+        }
+        assert package["snapshot_rows"] == SNAPSHOT_ROWS
+        assert len(package["snapshot_sha256"]) == 64
+
+    def test_store_with_snapshot_makes_collusion_reproducible(self) -> None:
+        """With a graph snapshot the collusion manifest is reproducible."""
+        storage = FakeStorage()
+        result = packages.store_signal_packages(
+            storage,
+            [COLLUSION_SIGNAL],
+            [],
+            date(2026, 1, 1),
+            graph_snapshot={"rows": SNAPSHOT_ROWS, "min_wins": 3},
+        )
+
+        assert result["graph_sha256"] is not None
+        graph_data, graph_meta = storage.objects[result["graph_sha256"]]
+        assert graph_meta["signal_key"] == "graph-batch:2026-01-01"
+        assert json.loads(graph_data)["kind"] == "graph_batch"
+
+        manifest = next(
+            json.loads(data)
+            for data, meta in storage.objects.values()
+            if meta.get("signal_key") == COLLUSION_SIGNAL_KEY
+        )
+        assert manifest["reproducible"] is True
+        assert manifest["graph_sha256"] == result["graph_sha256"]
+
+    def test_snapshot_rows_sorted_on_build(self) -> None:
+        """Snapshot rows are stored sorted by (buyer, supplier)."""
+        shuffled = list(reversed(SNAPSHOT_ROWS))
+        package = packages.build_graph_batch_package(
+            shuffled, [COLLUSION_SIGNAL], 3, None
+        )
+        assert package["snapshot_rows"] == SNAPSHOT_ROWS
+
+
+class TestReproduceGraphSignal:
+    """Tests for the reproduction of a collusion signal from its package."""
+
+    def _package(self) -> dict[str, Any]:
+        return packages.build_graph_batch_package(
+            SNAPSHOT_ROWS, [COLLUSION_SIGNAL], 3, None
+        )
+
+    def test_reproduction_matches(self) -> None:
+        """Same snapshot + same min_wins reproduce the stored signal."""
+        outcome = packages.reproduce_signal(self._package(), COLLUSION_SIGNAL_KEY)
+
+        assert outcome["integrity"] is True
+        assert outcome["expected"] == 1.0
+        assert outcome["actual"] == 1.0
+        assert outcome["match"] is True
+
+    def test_tampered_row_breaks_reproduction(self) -> None:
+        """Removing a snapshot row fails integrity and the match."""
+        package = self._package()
+        package["snapshot_rows"] = package["snapshot_rows"][1:]
+
+        outcome = packages.reproduce_signal(package, COLLUSION_SIGNAL_KEY)
+
+        assert outcome["integrity"] is False
+        assert outcome["match"] is False
+
+    def test_pair_below_min_wins_does_not_reappear(self) -> None:
+        """A snapshot with wins below min_wins yields no pair (actual None)."""
+        rows = [dict(row, wins=2) for row in SNAPSHOT_ROWS]
+        package = packages.build_graph_batch_package(rows, [COLLUSION_SIGNAL], 3, None)
+
+        outcome = packages.reproduce_signal(package, COLLUSION_SIGNAL_KEY)
+
+        assert outcome["integrity"] is True  # hash matches the stored rows
+        assert outcome["expected"] == 1.0
+        assert outcome["actual"] is None
+        assert outcome["match"] is False
+
+    def test_min_buyers_two_reproduction_matches(self) -> None:
+        """PR-D-03b: a package at min_buyers=2 reproduces the refined pair."""
+        rows = [
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 3},
+            {"buyer": "B2", "supplier": "91000000000001", "wins": 3},
+            {"buyer": "B2", "supplier": "91000000000002", "wins": 5},
+        ]
+        package = packages.build_graph_batch_package(
+            rows, [COLLUSION_SIGNAL], 3, None, min_buyers=2
+        )
+
+        outcome = packages.reproduce_signal(package, COLLUSION_SIGNAL_KEY)
+
+        assert package["reproduction"]["min_buyers"] == 2
+        assert outcome["integrity"] is True
+        assert outcome["actual"] == 1.0
+        assert outcome["match"] is True
+
+    def test_min_buyers_two_requires_two_buyers(self) -> None:
+        """A pair eligible in a single buyer does not reappear at min_buyers=2."""
+        package = packages.build_graph_batch_package(
+            SNAPSHOT_ROWS, [COLLUSION_SIGNAL], 3, None, min_buyers=2
+        )
+
+        outcome = packages.reproduce_signal(package, COLLUSION_SIGNAL_KEY)
+
+        assert outcome["integrity"] is True
+        assert outcome["actual"] is None
+        assert outcome["match"] is False
+
+    def test_legacy_package_without_min_buyers_uses_default_one(self) -> None:
+        """Packages written before PR-D-03b reproduce with min_buyers=1."""
+        package = self._package()
+        del package["reproduction"]["min_buyers"]
+
+        outcome = packages.reproduce_signal(package, COLLUSION_SIGNAL_KEY)
+
+        assert outcome["integrity"] is True
+        assert outcome["actual"] == 1.0
+        assert outcome["match"] is True
 
 
 class TestReproduceSignal:

@@ -18,7 +18,21 @@ Feature: Reproducible evidence package per signal
     And a source row of the batch package is tampered with
     Then reproducing "supplier:12345678000199:single_bid" from the batch package does not match the stored score
 
-  Scenario: Graph-derived signals are packaged as non-reproducible
+  Scenario: Graph-derived signals are reproducible with the eligibility snapshot
+    Given a computed collusion signal "supplier:91000000000001+91000000000002:collusion_network"
+    And an eligibility snapshot with min_wins 3 for the collusion pair
+    When the evidence packages are stored
+    Then the manifest of "supplier:91000000000001+91000000000002:collusion_network" is marked reproducible
+    And reproducing "supplier:91000000000001+91000000000002:collusion_network" from the graph batch package matches the stored score
+
+  Scenario: Graph-derived signals without snapshot stay non-reproducible
     Given a computed collusion signal "supplier:91000000000001+91000000000002:collusion_network"
     When the evidence packages are stored
     Then the manifest of "supplier:91000000000001+91000000000002:collusion_network" is marked non-reproducible
+
+  Scenario: Graph-derived signals reproduce under the co-occurrence refinement (PR-D-03b)
+    Given a computed collusion signal "supplier:91000000000001+91000000000002:collusion_network"
+    And an eligibility snapshot with min_wins 3 and min_buyers 2 for the collusion pair
+    When the evidence packages are stored
+    Then the graph batch package records min_buyers 2
+    And reproducing "supplier:91000000000001+91000000000002:collusion_network" from the graph batch package matches the stored score

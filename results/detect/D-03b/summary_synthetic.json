@@ -1,0 +1,33 @@
+{
+  "battery": "D-03b",
+  "part": "synthetic",
+  "predictions": {
+    "Q1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "Q2": {
+      "verdict": "success",
+      "failures": []
+    },
+    "Q3": {
+      "verdict": "success",
+      "failures": []
+    },
+    "Q4": {
+      "verdict": "success",
+      "failures": []
+    },
+    "Q5": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "invariants": {
+    "monotonicity": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "verdict": "success"
+}

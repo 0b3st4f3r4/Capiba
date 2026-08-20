@@ -28,7 +28,12 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    empiricamente (bateria D-02, `docs/results/R-D-02.md`, 6/6), e agora estão
    conectados: o `task_detect` emite o sinal `collusion_network` por par de
    fornecedores (`collusion_signals` em `detection/signals.py`, score binário
-   1.0 como placeholder de calibração, limiar `DETECTION_COLLUSION_MIN_WINS=3`,
+   1.0, limiar `DETECTION_COLLUSION_MIN_WINS=3` — placeholder cuja calibração
+   em volume real (bateria D-03, `docs/results/R-D-03.md`) foi **inconclusiva**:
+   a semântica de pares explode no regime real, e o refinamento por co-ocorrência
+   entre compradores (bateria D-03b, `docs/results/R-D-03b.md`) também foi
+   **inconclusivo** — redução ~28×, mas nenhum ponto da grade {3,4,5} × {2,3}
+   coube no orçamento de triagem (próximo refinamento: PR-D-03c);
    best-effort, pois ArangoDB fora do ar não derruba a task) e a API expõe
    `GET /v1/graph/ownership/{cnpj}?max_depth=3` (router `api/routers/graph.py`,
    503 com ArangoDB indisponível). `anomalous_geography` segue fora, sem fonte
@@ -138,10 +143,14 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    armazena no `EvidenceStorage` (best-effort) um pacote de lote por run (linhas
    silver + `source_rows_sha256` + janela + versão do código, essencial porque
    `anomalous_duration` usa IQR pooled) e um manifesto por sinal com a chave do
-   O10 e `batch_sha256` (`evidence/packages.py`; `collusion_network` marcado
-   `reproducible: false` — derivado do grafo, dívida do PR-D-03). Reprodução via
+   O10 e `batch_sha256` (`evidence/packages.py`; o `collusion_network` ganhou
+   na bateria D-03 o pacote `graph_batch` — snapshot de elegibilidade
+   `{buyer, supplier, wins}` + `min_wins` + `snapshot_sha256` — e seus
+   manifestos passam a `reproducible: true` quando o snapshot é armazenado).
+   Reprodução via
    `reproduce_signal` (reexecuta `detect_fraud_signals` sobre as linhas do
-   pacote e compara o score — critério de aceitação coberto por BDD). Endpoint
+   pacote, ou re-deriva os pares do snapshot de grafo, e compara o score —
+   critério de aceitação coberto por BDD). Endpoint
    `GET /v1/signals/{key}/evidence` lista os pacotes do sinal; o download segue
    pelo `GET /v1/evidence/{sha256}`.
 3. (em andamento) **CRI de Fazekas & Kocsis (O1).** Pré-registrado e

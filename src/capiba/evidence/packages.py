@@ -15,12 +15,18 @@ Two artifacts per detect run, stored via ``EvidenceStorage``:
   (``{entity_type}:{entity_id}:{signal_type}``), referencing the batch
   by its content hash (``batch_sha256``).
 
-``collusion_network`` is graph-derived (ArangoDB), so its manifest is
-marked ``reproducible: false`` — calibrating/reproducing it is PR-D-03
-scope.
+``collusion_network`` is graph-derived (ArangoDB), so it carries a third
+artifact (PR-D-03): a **graph batch package** (``kind: "graph_batch"``)
+with the eligibility snapshot — rows ``{buyer, supplier, wins}`` with
+``wins >= min_wins`` — and ``snapshot_sha256``; the ``reproduction`` block
+also carries ``min_buyers`` (PR-D-03b, default 1 for older packages). Its
+manifests reference ``graph_sha256`` and are ``reproducible: true``. When the graph snapshot
+is unavailable (ArangoDB down, best-effort path), the manifest falls back
+to ``reproducible: false``.
 
 Dependencies: capiba.evidence.storage, capiba.pipeline.tasks (lazy,
-for reproduction), capiba.db.triage (signal key)
+for reproduction), capiba.db.triage (signal key), capiba.detection.graphs
+(pair derivation from the eligibility snapshot)
 """
 
 from __future__ import annotations
@@ -34,14 +40,15 @@ from datetime import date
 from typing import Any
 
 from capiba.db.triage import signal_key
-from capiba.detection.signals import SignalType
+from capiba.detection.graphs import pairs_from_eligibility
+from capiba.detection.signals import SignalType, collusion_signals
 
 logger = logging.getLogger(__name__)
 
 SCHEMA = "capiba.signal-package/1"
 
-# Graph-derived signals cannot be reproduced from the batch rows alone.
-NON_REPRODUCIBLE = {str(SignalType.COLLUSION_NETWORK)}
+# Graph-derived signals are reproducible only with a graph snapshot.
+GRAPH_DERIVED = {str(SignalType.COLLUSION_NETWORK)}
 
 _METADATA_SOURCE = "detect"
 _METADATA_CAPTURED_BY = "capiba-pipeline"
@@ -102,14 +109,55 @@ def build_batch_package(
     }
 
 
+def build_graph_batch_package(
+    snapshot_rows: list[dict[str, Any]],
+    signals: list[dict[str, Any]],
+    min_wins: int,
+    run_date: date | None,
+    min_buyers: int = 1,
+) -> dict[str, Any]:
+    """Builds the graph batch package: eligibility snapshot + signals + hash.
+
+    Args:
+        snapshot_rows: Eligibility rows ``{"buyer", "supplier", "wins"}``
+            from ``collusion_eligibility`` at ``min_wins``.
+        signals: Collusion signal rows emitted in the run.
+        min_wins: Eligibility threshold that produced the snapshot.
+        run_date: Run partition date (None for ad-hoc runs).
+        min_buyers: Distinct-buyer threshold applied to the pairs
+            (PR-D-03b; 1 = single-buyer semantics of D-03).
+
+    Returns:
+        Graph batch package payload (schema ``capiba.signal-package/1``).
+    """
+    rows = sorted(snapshot_rows, key=lambda row: (row["buyer"], row["supplier"]))
+    return {
+        "schema": SCHEMA,
+        "kind": "graph_batch",
+        "window": {"run_date": run_date.isoformat() if run_date else None},
+        "code": _code_version(),
+        "reproduction": {
+            "operator": "detect_collusion",
+            "min_wins": min_wins,
+            "min_buyers": min_buyers,
+        },
+        "signals": [_signal_view(signal) for signal in signals],
+        "snapshot_rows": rows,
+        "snapshot_sha256": _sha256(rows),
+    }
+
+
 def build_signal_manifest(
-    signal: dict[str, Any], batch_sha256: str
+    signal: dict[str, Any], batch_sha256: str, graph_sha256: str | None = None
 ) -> dict[str, Any]:
     """Builds the per-signal manifest referencing the batch package.
 
     Args:
         signal: Signal row emitted in the run.
         batch_sha256: Content hash (storage SHA-256) of the batch package.
+        graph_sha256: Content hash of the graph batch package, when the
+            signal is graph-derived and the eligibility snapshot was
+            stored (PR-D-03); makes the signal reproducible.
 
     Returns:
         Signal manifest payload with the O10 triage ``signal_key``.
@@ -119,14 +167,19 @@ def build_signal_manifest(
         str(signal["entity_id"]),
         str(signal["signal_type"]),
     )
-    return {
+    manifest: dict[str, Any] = {
         "schema": SCHEMA,
         "kind": "signal_manifest",
         "signal_key": key,
         "signal": _signal_view(signal),
         "batch_sha256": batch_sha256,
-        "reproducible": str(signal["signal_type"]) not in NON_REPRODUCIBLE,
     }
+    if graph_sha256 is not None:
+        manifest["graph_sha256"] = graph_sha256
+    manifest["reproducible"] = (
+        str(signal["signal_type"]) not in GRAPH_DERIVED or graph_sha256 is not None
+    )
+    return manifest
 
 
 def store_signal_packages(
@@ -134,24 +187,32 @@ def store_signal_packages(
     signals: list[dict[str, Any]],
     contracts: list[dict[str, Any]],
     run_date: date | None,
+    graph_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Stores the batch package and one manifest per signal.
 
     Artifacts are content-addressed (SHA-256 object keys), so identical
-    reruns converge to the same objects.
+    reruns converge to the same objects. When ``graph_snapshot`` is given
+    (``{"rows": eligibility rows, "min_wins": int}``), a graph batch
+    package is stored as well and the graph-derived manifests reference it
+    with ``reproducible: true`` (PR-D-03).
 
     Args:
         storage: EvidenceStorage instance (MinIO).
         signals: Signal rows emitted in the run.
         contracts: Silver contract rows read by the detect task.
         run_date: Run partition date (None for ad-hoc runs).
+        graph_snapshot: Eligibility snapshot of the collusion detection,
+            or None when ArangoDB was unavailable (manifests stay
+            non-reproducible).
 
     Returns:
-        Summary ``{"batch_sha256": str, "manifests": int}``;
-        ``batch_sha256`` is None when there are no signals.
+        Summary ``{"batch_sha256": str, "graph_sha256": str | None,
+        "manifests": int}``; ``batch_sha256`` is None when there are no
+        signals.
     """
     if not signals:
-        return {"batch_sha256": None, "manifests": 0}
+        return {"batch_sha256": None, "graph_sha256": None, "manifests": 0}
 
     from datetime import UTC, datetime
 
@@ -173,8 +234,44 @@ def store_signal_packages(
     )
     batch_sha256 = batch_result["sha256"]
 
+    graph_sha256: str | None = None
+    if graph_snapshot is not None:
+        graph_signals = [
+            signal
+            for signal in signals
+            if str(signal["signal_type"]) in GRAPH_DERIVED
+        ]
+        graph_batch = build_graph_batch_package(
+            graph_snapshot["rows"],
+            graph_signals,
+            graph_snapshot["min_wins"],
+            run_date,
+            int(graph_snapshot.get("min_buyers", 1)),
+        )
+        graph_result = storage.store(
+            _canonical(graph_batch),
+            f"signal-graph-batch-{run_date or 'adhoc'}.json",
+            {
+                "signal_key": f"graph-batch:{run_date or 'adhoc'}",
+                "entity_cnpj": "multiple",
+                "evidence_type": "signal_package",
+                "captured_at": captured_at,
+                "source": _METADATA_SOURCE,
+                "hash_sha256": graph_batch["snapshot_sha256"],
+                "captured_by": _METADATA_CAPTURED_BY,
+            },
+            "application/json",
+        )
+        graph_sha256 = graph_result["sha256"]
+
     for signal in signals:
-        manifest = build_signal_manifest(signal, batch_sha256)
+        manifest = build_signal_manifest(
+            signal,
+            batch_sha256,
+            graph_sha256
+            if str(signal["signal_type"]) in GRAPH_DERIVED
+            else None,
+        )
         storage.store(
             _canonical(manifest),
             f"signal-manifest-{manifest['signal_key']}.json",
@@ -192,17 +289,39 @@ def store_signal_packages(
         )
 
     logger.info(
-        "Signal evidence packages stored: batch %s + %d manifests",
+        "Signal evidence packages stored: batch %s + graph %s + %d manifests",
         batch_sha256,
+        graph_sha256,
         len(signals),
     )
-    return {"batch_sha256": batch_sha256, "manifests": len(signals)}
+    return {
+        "batch_sha256": batch_sha256,
+        "graph_sha256": graph_sha256,
+        "manifests": len(signals),
+    }
+
+
+def _score(signals: list[dict[str, Any]], signal_key_: str) -> float | None:
+    """Score of the signal identified by the O10 key, None when absent."""
+    for signal in signals:
+        key = signal_key(
+            str(signal["entity_type"]),
+            str(signal["entity_id"]),
+            str(signal["signal_type"]),
+        )
+        if key == signal_key_:
+            return float(signal["score"])
+    return None
 
 
 def reproduce_signal(
     batch_package: dict[str, Any], signal_key_: str
 ) -> dict[str, Any]:
     """Re-executes the operator over the package rows and compares the score.
+
+    Dispatches by ``kind``: ``batch`` re-runs ``detect_fraud_signals`` over
+    the silver rows; ``graph_batch`` (PR-D-03) re-derives the collusion
+    pairs from the eligibility snapshot.
 
     Args:
         batch_package: Batch package payload (as stored).
@@ -214,24 +333,48 @@ def reproduce_signal(
         when the signal does not reappear, and ``match`` requires
         integrity plus equal scores.
     """
+    if batch_package.get("kind") == "graph_batch":
+        return _reproduce_graph_signal(batch_package, signal_key_)
+
     from capiba.pipeline.tasks import detect_fraud_signals
 
     rows = batch_package.get("source_rows", [])
     integrity = _sha256(rows) == batch_package.get("source_rows_sha256")
 
-    def _score(signals: list[dict[str, Any]]) -> float | None:
-        for signal in signals:
-            key = signal_key(
-                str(signal["entity_type"]),
-                str(signal["entity_id"]),
-                str(signal["signal_type"]),
-            )
-            if key == signal_key_:
-                return float(signal["score"])
-        return None
+    expected = _score(batch_package.get("signals", []), signal_key_)
+    actual = _score(detect_fraud_signals(rows), signal_key_)
+    return {
+        "signal_key": signal_key_,
+        "expected": expected,
+        "actual": actual,
+        "integrity": integrity,
+        "match": bool(integrity and expected is not None and actual == expected),
+    }
 
-    expected = _score(batch_package.get("signals", []))
-    actual = _score(detect_fraud_signals(rows))
+
+def _reproduce_graph_signal(
+    graph_package: dict[str, Any], signal_key_: str
+) -> dict[str, Any]:
+    """Re-derives the collusion pairs from the eligibility snapshot.
+
+    The snapshot rows are re-filtered by the package ``min_wins`` (the
+    derivation rule under test), turned into pairs by
+    ``pairs_from_eligibility`` at the package ``min_buyers`` (default 1 —
+    packages written before PR-D-03b) and converted back into signals —
+    the same composition the detect task runs against the live graph.
+    """
+    rows = graph_package.get("snapshot_rows", [])
+    integrity = _sha256(rows) == graph_package.get("snapshot_sha256")
+    min_wins = int(graph_package.get("reproduction", {}).get("min_wins", 3))
+    min_buyers = int(graph_package.get("reproduction", {}).get("min_buyers", 1))
+
+    eligible = [row for row in rows if int(row.get("wins", 0)) >= min_wins]
+    recomputed = collusion_signals(
+        pairs_from_eligibility(eligible, min_buyers), min_wins, min_buyers
+    )
+
+    expected = _score(graph_package.get("signals", []), signal_key_)
+    actual = _score(recomputed, signal_key_)
     return {
         "signal_key": signal_key_,
         "expected": expected,

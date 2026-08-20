@@ -1,0 +1,60 @@
+{
+  "id": "D-03",
+  "description": "Calibração do limiar min_wins do collusion_network sobre o grafo real acumulado (regra de decisão por orçamento de triagem, seção 3 do PR) + evidência reproduzível via snapshot de elegibilidade (graph_batch). Ver docs/preregistrations/PR-D-03.md (aprovado e executado; veredito inconclusive — resultado em docs/results/R-D-03.md).",
+  "requires_infra": "arangodb",
+  "runner": "collusion",
+  "seeds": [
+    7,
+    17,
+    27,
+    37,
+    47
+  ],
+  "calibration": {
+    "candidates": [3, 4, 5, 6, 8, 10],
+    "budget": {
+      "backlog_max_pairs": 500,
+      "daily_max_pairs": 20
+    },
+    "increment_window_days": 30,
+    "robustness_window_days": 60,
+    "control_min_wins": 2,
+    "date_field": "signature_date",
+    "siafi_coverage_min": 0.9,
+    "time_budget_seconds": 600,
+    "materialize_only_at_calibrated_w": true
+  },
+  "synthetic": {
+    "comment": "População idêntica à D-02 (36 contratos/seed); a seed só randomiza campos neutros. Contratos de PLANT-B datados nos últimos 30 dias da varredura; controles e solos com mais de 30 dias.",
+    "planted_buyer": {
+      "id": "PLANT-B",
+      "suppliers": [
+        {"id": "91000000000001", "wins": 4},
+        {"id": "91000000000002", "wins": 4},
+        {"id": "91000000000003", "wins": 4}
+      ],
+      "boundary_supplier": {"id": "91000000000004", "wins": 2},
+      "within_increment_window": true
+    },
+    "control_same_buyer": {
+      "buyer_id": "CTRL-B1",
+      "suppliers": ["92000000000001", "92000000000002", "92000000000003"],
+      "wins_each": 2,
+      "within_increment_window": false
+    },
+    "control_solo_buyers": {
+      "buyer_ids": ["SOLO-B1", "SOLO-B2", "SOLO-B3", "SOLO-B4"],
+      "supplier_ids": ["93000000000001", "93000000000002", "93000000000003", "93000000000004"],
+      "wins_each": 4,
+      "within_increment_window": false
+    }
+  },
+  "expectations": {
+    "histogram_exact": {"4": 7, "2": 4},
+    "pairs_by_candidate_exact": {"3": 3, "4": 3, "5": 0, "6": 0, "8": 0, "10": 0},
+    "recent_pairs_min3_exact": 3,
+    "recent_pairs_min2_control_exact": 6,
+    "evidence_reproduction_match": true,
+    "evidence_tampered_match": false
+  }
+}
