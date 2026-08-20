@@ -1,7 +1,7 @@
 component,pod_pattern,request_cpu_millicores,request_memory_bytes
 api,capiba-api-%,100,268435456
 postgresql,capiba-postgresql-%,100,268435456
-arangodb,capiba-arangodb-%,250,402653184
+arangodb,capiba-arangodb-%,250,1073741824
 redis,capiba-redis-%,100,134217728
 minio,capiba-minio-%,100,268435456
 iceberg-catalog,capiba-iceberg-catalog-%,50,134217728
