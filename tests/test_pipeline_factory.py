@@ -103,6 +103,9 @@ class TestBuildDags:
         assert dag.dag_id == "factory_test"
         assert dag.schedule == "0 6 * * *"
         assert dag.catchup is False
+        # Overlapping runs race the non-atomic silver upsert (DELETE+append)
+        # and duplicate rows; runs of the same pipeline must be serialized.
+        assert dag.max_active_runs == 1
 
         # The single-task simplification must never return.
         assert "run" not in {t.task_id for t in dag.tasks}

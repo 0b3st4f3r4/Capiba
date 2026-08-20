@@ -176,6 +176,11 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
         schedule=spec.schedule,
         start_date=datetime(2026, 1, 1),
         catchup=False,
+        # Serialize runs of the same pipeline: the silver upsert is
+        # DELETE-then-append (not atomic), so overlapping runs (scheduled +
+        # manual/backfill) race the DELETE and duplicate rows — seen on
+        # silver contracts dt=2026-08-18/19 with batches seconds apart.
+        max_active_runs=1,
         tags=["ingestion", "declarative"],
     )
 
