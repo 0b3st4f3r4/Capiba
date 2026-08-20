@@ -20,6 +20,7 @@ from capiba.ingestion.cnpj import (
     Company,
     Establishment,
     Partner,
+    RfbMunicipality,
     edge_kind_for_qualificacao,
     entity_for_zip,
     parse_cnpj_zip,
@@ -58,6 +59,7 @@ class TestEntityForZip:
             ("Empresas0.zip", "companies"),
             ("Estabelecimentos9.zip", "establishments"),
             ("Socios3.zip", "partners"),
+            ("Municipios.zip", "rfb_municipalities"),
             ("Cnaes.zip", None),
             ("Motivos.zip", None),
             ("Simples.zip", None),
@@ -184,6 +186,7 @@ class TestEdgeKindForQualificacao:
                     "data_entrada": None,
                 },
             ),
+            (RfbMunicipality, {"tom_code": "7107", "name": "SAO PAULO"}),
         ):
             dumped = model.model_validate(row).model_dump(mode="json")
             assert model.model_validate(dumped).model_dump(mode="json") == dumped
@@ -244,6 +247,25 @@ class TestParseCnpjZip:
         assert records[0]["data_entrada"] == "2015-01-01"
         assert records[0]["faixa_etaria"] == "5"
         assert records[0]["cnpj_cpf_socio"] == "***123456**"
+
+    def test_parse_municipios_reference(self, tmp_path: Path) -> None:
+        """Municipios.zip (TOM code -> name) lands in ``rfb_municipalities``."""
+        zip_path = _write_zip(
+            tmp_path / "Municipios.zip",
+            "K3241.K03200Y0.D50610.MUNICCSV",
+            ["7107;SAO PAULO", "2531;RECIFE", "00;INVALIDO"],
+        )
+
+        chunks = list(parse_cnpj_zip(zip_path))
+
+        assert len(chunks) == 1
+        entity, records, errors = chunks[0]
+        assert entity == "rfb_municipalities"
+        assert errors == 1  # the malformed TOM code is counted and skipped
+        assert {r["tom_code"]: r["name"] for r in records} == {
+            "7107": "SAO PAULO",
+            "2531": "RECIFE",
+        }
 
     def test_reference_zip_is_rejected(self, tmp_path: Path) -> None:
         """Non-entity files (Cnaes.zip etc.) are not parseable."""

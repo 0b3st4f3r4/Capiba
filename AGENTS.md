@@ -109,7 +109,9 @@ e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
 `src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
 streaming: parse chunked dos ZIPs Empresas/Estabelecimentos/Socios para as
 tabelas silver Iceberg `companies`/`establishments`/`partners`
-(opt-in via `FEDERAL_REVENUE_FILES`), e o destino `arangodb_graph` carrega
+(opt-in via `FEDERAL_REVENUE_FILES`) — o `Municipios.zip` (baixado por
+padrão) vira a silver de referência `rfb_municipalities` (código TOM → nome
+do município, elo da cadeia de geo do fornecedor) —, e o destino `arangodb_graph` carrega
 o grafo em vocabulário FtM (O4): vértices `companies` (Company) e
 `persons` (Person — sócios PF/estrangeiros e representantes legais) e
 arestas `ownership` ({persons,companies}→companies — sócio PJ vira
@@ -125,6 +127,23 @@ limiar 0,85; link supplier↔company determinístico por CNPJ) grava arestas
 (`persist_cnpj_entities`, limiar `DETECTION_ENTITY_THRESHOLD`,
 default 0,85) — best-effort (`resolution_error` no sumário, nunca derruba
 a carga), sem colapsar vértices.
+A referência geográfica de municípios (O6, fatia 1 — infra do sinal
+`anomalous_geography`, que segue desativado pendendo pré-registro) vive em
+`src/capiba/ingestion/geography.py`: CSV vendored
+`src/capiba/ingestion/reference/municipios.csv` (kelvins/Municipios-Brasileiros,
+MIT — atribuição em `reference/README.md`), carregamento lazy e lookups puros por
+(nome, UF) normalizado e por código IBGE (nomes de município são únicos por
+UF no IBGE, então o de-para do comprador PNCP é determinístico). A silver de
+referência `municipalities` (ibge_code, name, uf, siafi_code, latitude,
+longitude) é carregada por `lake.load_municipalities` — idempotente por
+conteúdo (ibge_codes já presentes na partição são pulados), sem DAG nova. Na
+persistência (`upsert_contract`/`bulk_upsert_contracts`), o vértice `buyers`
+ganha `ibge_code`/`latitude`/`longitude` via (city, uf) e o vértice
+`suppliers` ganha `latitude`/`longitude` quando o CNPJ resolve na cadeia
+silver `establishments` (código TOM) → `rfb_municipalities` → referência
+vendored — best-effort (falha de lookup nunca derruba o upsert) e com a
+resolução em funções puras injetáveis (`geography.buyer_geo_fields` e
+`geography.build_supplier_geo_index`).
 O download da fórmula
 (`task_download_source`) sobe cada arquivo ao bronze assim que termina e o
 remove do tempdir; num retry, os arquivos já presentes no bronze

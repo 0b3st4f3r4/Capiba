@@ -20,11 +20,45 @@ from typing import Any
 from arango.database import StandardDatabase
 
 from capiba.db.arangodb import upsert_edge, upsert_vertex
+from capiba.ingestion import geography
 from capiba.ingestion.cnpj import edge_kind_for_qualificacao, partner_key
 from capiba.ingestion.normalizer import Contract
 from capiba.quality.lineage import LineageTracker
 
 logger = logging.getLogger(__name__)
+
+
+def _default_supplier_geo(cnpjs: set[str]) -> dict[str, dict[str, Any]] | None:
+    """Builds the CNPJ -> lat/long supplier index from the silver (best-effort).
+
+    Streams the silver ``establishments``/``rfb_municipalities`` tables once
+    per bulk load, keeping only the establishments of the batch's CNPJs —
+    the same full-scan trade-off accepted by ``persist_cnpj_entities``. Any
+    failure (missing tables, offline catalog) degrades to no enrichment:
+    geography never fails a persistence run.
+    """
+    if not cnpjs:
+        return None
+    try:
+        from capiba.pipeline import lake  # lazy: heavier import chain
+
+        rfb_rows = [
+            row
+            for batch in lake.read_silver_entities("rfb_municipalities")
+            for row in batch
+        ]
+        if not rfb_rows:
+            return None
+        establishments = (
+            row
+            for batch in lake.read_silver_entities("establishments")
+            for row in batch
+            if str(row.get("cnpj") or "") in cnpjs
+        )
+        return geography.build_supplier_geo_index(establishments, rfb_rows)
+    except Exception as exc:
+        logger.warning("Supplier geo enrichment unavailable: %s", exc)
+        return None
 
 
 def _sanitize_key(value: str) -> str:
@@ -49,13 +83,25 @@ def upsert_contract(
     db: StandardDatabase,
     contract: Contract,
     tracker: LineageTracker | None = None,
+    supplier_geo: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Persists a single contract and its relationships.
+
+    Geographic enrichment (O6, slice 1): the ``buyers`` vertex gains
+    ``ibge_code``/``latitude``/``longitude`` resolved from (city, UF)
+    against the vendored municipality reference, and the ``suppliers``
+    vertex gains ``latitude``/``longitude`` when the CNPJ resolves in
+    ``supplier_geo``. Lookups are best-effort — a failure or a miss never
+    fails the upsert.
 
     Args:
         db: Connection to the Capiba database.
         contract: Normalized contract.
         tracker: Optional lineage tracker.
+        supplier_geo: Optional CNPJ -> ``{"latitude", "longitude"}`` index
+            (see ``geography.build_supplier_geo_index``); None disables the
+            supplier enrichment (single-contract callers do not trigger a
+            silver scan — ``bulk_upsert_contracts`` wires the default).
 
     Returns:
         Operation metadata (inserted/updated keys).
@@ -80,6 +126,7 @@ def upsert_contract(
                 "primary_cnae": contract.supplier.primary_cnae,
                 "state": contract.supplier.state,
                 "city": contract.supplier.city,
+                **(supplier_geo or {}).get(contract.supplier.cnpj, {}),
             },
         )
         upsert_edge(
@@ -91,6 +138,11 @@ def upsert_contract(
         )
         logger.debug("Edge won created: %s -> %s", supplier_key, key)
 
+    try:
+        buyer_geo = geography.buyer_geo_fields(contract.buyer.city, contract.buyer.uf)
+    except Exception as exc:
+        logger.warning("Buyer geo lookup failed, persisting without it: %s", exc)
+        buyer_geo = None
     buyer_key = _sanitize_key(contract.buyer.siafi_code)
     upsert_vertex(
         db,
@@ -102,6 +154,7 @@ def upsert_contract(
             "government_level": contract.buyer.government_level,
             "uf": contract.buyer.uf,
             "city": contract.buyer.city,
+            **(buyer_geo or {}),
         },
     )
 
@@ -121,13 +174,20 @@ def bulk_upsert_contracts(
     db: StandardDatabase,
     contracts: list[Contract],
     tracker: LineageTracker | None = None,
+    supplier_geo: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Persists a list of contracts in bulk.
+
+    When ``supplier_geo`` is not given, the CNPJ -> lat/long index is built
+    once from the silver ``establishments``/``rfb_municipalities`` tables
+    (``_default_supplier_geo``, best-effort); pass an explicit mapping to
+    skip the silver scan (tests, offline runs).
 
     Args:
         db: Connection to the Capiba database.
         contracts: List of normalized contracts.
         tracker: Optional lineage tracker.
+        supplier_geo: Optional CNPJ -> ``{"latitude", "longitude"}`` index.
 
     Returns:
         Operation summary.
@@ -136,9 +196,14 @@ def bulk_upsert_contracts(
     succeeded = 0
     errors = 0
 
+    if supplier_geo is None:
+        supplier_geo = _default_supplier_geo(
+            {c.supplier.cnpj for c in contracts if c.supplier.cnpj}
+        )
+
     for contract in contracts:
         try:
-            upsert_contract(db, contract, tracker=tracker)
+            upsert_contract(db, contract, tracker=tracker, supplier_geo=supplier_geo)
             succeeded += 1
         except Exception as exc:
             errors += 1

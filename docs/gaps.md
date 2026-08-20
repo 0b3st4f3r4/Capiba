@@ -36,8 +36,16 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    coube no orçamento de triagem (próximo refinamento: PR-D-03c);
    best-effort, pois ArangoDB fora do ar não derruba a task) e a API expõe
    `GET /v1/graph/ownership/{cnpj}?max_depth=3` (router `api/routers/graph.py`,
-   503 com ArangoDB indisponível). `anomalous_geography` segue fora, sem fonte
-   de lat/long.
+   503 com ArangoDB indisponível). `anomalous_geography` segue fora, mas a
+   infra de geografia (O6, fatia 1) está pronta: referência vendored de
+   municípios (`src/capiba/ingestion/geography.py` + CSV MIT em
+   `src/capiba/ingestion/reference/`), silvers de referência `municipalities`
+   (loader idempotente `lake.load_municipalities`) e `rfb_municipalities`
+   (TOM→nome, parse do `Municipios.zip` do dump RFB) e enriquecimento
+   best-effort dos vértices `buyers`/`suppliers` com lat/long na
+   persistência. Falta a fatia 2: adaptar o operador (que hoje espera
+   vértices `bids` inexistentes) e ativá-lo, o que depende de pré-registro
+   (PR-D-09).
 5. (aberto) **Conectar os operadores NLP.** `semantic_gap` e `detect_clone`
    (`src/capiba/detection/nlp_operators.py`), junto com `db/vectors.py` e
    `db/search.py`, seguem sem consumidor; `SignalType.SEMANTIC_GAP` não tem

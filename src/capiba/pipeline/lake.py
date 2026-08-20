@@ -68,7 +68,8 @@ from capiba.config import (
     MINIO_SECRET_KEY,
     MINIO_SECURE,
 )
-from capiba.ingestion.cnpj import Company, Establishment, Partner
+from capiba.ingestion.cnpj import Company, Establishment, Partner, RfbMunicipality
+from capiba.ingestion.geography import Municipality, municipality_rows
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.sanctions import Sanction
 from capiba.ingestion.tse import CampaignDonation, Candidacy
@@ -289,6 +290,41 @@ CANDIDACIES_PARTITION_SPEC = PartitionSpec(
     )
 )
 
+# Iceberg schema of the silver ``rfb_municipalities`` table: the TOM code
+# -> municipality name reference shipped with the CNPJ dump
+# (``Municipios.zip``), the missing link between
+# ``establishments.municipio`` (a TOM code) and the geographic reference
+# (O6, slice 1). Partitioned by the ingestion date ``dt``.
+RFB_MUNICIPALITIES_SCHEMA = Schema(
+    NestedField(1, "tom_code", StringType(), required=True),
+    NestedField(2, "name", StringType(), required=False),
+    NestedField(3, "dt", DateType(), required=False),
+    NestedField(4, "ingested_at", TimestamptzType(), required=False),
+)
+
+RFB_MUNICIPALITIES_PARTITION_SPEC = PartitionSpec(
+    PartitionField(source_id=3, field_id=1000, transform=IdentityTransform(), name="dt")
+)
+
+# Iceberg schema of the silver ``municipalities`` table: the vendored
+# Brazilian municipality reference (kelvins/Municipios-Brasileiros, MIT —
+# ``capiba.ingestion.data``) with IBGE code, UF, SIAFI code and lat/long,
+# loaded by ``load_municipalities``. Partitioned by the load date ``dt``.
+MUNICIPALITIES_SCHEMA = Schema(
+    NestedField(1, "ibge_code", StringType(), required=True),
+    NestedField(2, "name", StringType(), required=False),
+    NestedField(3, "uf", StringType(), required=False),
+    NestedField(4, "siafi_code", StringType(), required=False),
+    NestedField(5, "latitude", DoubleType(), required=False),
+    NestedField(6, "longitude", DoubleType(), required=False),
+    NestedField(7, "dt", DateType(), required=False),
+    NestedField(8, "ingested_at", TimestamptzType(), required=False),
+)
+
+MUNICIPALITIES_PARTITION_SPEC = PartitionSpec(
+    PartitionField(source_id=7, field_id=1000, transform=IdentityTransform(), name="dt")
+)
+
 # Silver entity tables: name -> (schema, partition spec, pydantic model).
 ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
     "companies": (COMPANIES_SCHEMA, COMPANIES_PARTITION_SPEC, Company),
@@ -301,6 +337,16 @@ ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
         CampaignDonation,
     ),
     "candidacies": (CANDIDACIES_SCHEMA, CANDIDACIES_PARTITION_SPEC, Candidacy),
+    "rfb_municipalities": (
+        RFB_MUNICIPALITIES_SCHEMA,
+        RFB_MUNICIPALITIES_PARTITION_SPEC,
+        RfbMunicipality,
+    ),
+    "municipalities": (
+        MUNICIPALITIES_SCHEMA,
+        MUNICIPALITIES_PARTITION_SPEC,
+        Municipality,
+    ),
 }
 
 # Iceberg schema of the bronze ``raw_<source>`` tables: the full payload kept
@@ -860,6 +906,38 @@ def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
         return
     for batch in table.scan().to_arrow_batch_reader():
         yield batch.to_pylist()
+
+
+def load_municipalities(run_date: date | None = None) -> str:
+    """Loads the vendored municipality reference into the silver, idempotently.
+
+    The rows come from the packaged CSV (``capiba.ingestion.geography``);
+    the load is **idempotent by content**: ``ibge_code`` values already
+    present in the partition are skipped, so a re-run never duplicates rows
+    with either catalog (unlike the dump entities, there is no Trino
+    DELETE involved — the reference is small and full-content comparable).
+
+    Args:
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        The Iceberg table identifier written.
+    """
+    partition = _partition_day(run_date)
+    existing = {
+        str(row.get("ibge_code"))
+        for batch in read_silver_entities("municipalities")
+        for row in batch
+        if row.get("dt") == partition
+    }
+    rows = [row for row in municipality_rows() if row["ibge_code"] not in existing]
+    table_id = write_silver_entities("municipalities", rows, run_date=run_date)
+    logger.info(
+        "Municipalities reference loaded: %d new rows (%d already present)",
+        len(rows),
+        len(existing),
+    )
+    return table_id
 
 
 def read_fraud_signals() -> list[dict[str, Any]]:

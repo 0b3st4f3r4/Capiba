@@ -483,6 +483,68 @@ def test_read_silver_entities_without_table(local_catalog: Path) -> None:
     assert list(lake.read_silver_entities("partners")) == []
 
 
+_MUNICIPALITY_ROWS = [
+    {
+        "ibge_code": "2611606",
+        "name": "Recife",
+        "uf": "PE",
+        "siafi_code": "2531",
+        "latitude": -8.04666,
+        "longitude": -34.8771,
+    },
+    {
+        "ibge_code": "3550308",
+        "name": "São Paulo",
+        "uf": "SP",
+        "siafi_code": "7107",
+        "latitude": -23.5329,
+        "longitude": -46.6395,
+    },
+]
+
+
+def test_load_municipalities_roundtrip_typed(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reference loader writes typed rows partitioned by dt."""
+    monkeypatch.setattr(lake, "municipality_rows", lambda: _MUNICIPALITY_ROWS)
+
+    identifier = lake.load_municipalities(run_date=RUN_DATE)
+
+    assert identifier == "capiba.municipalities"
+    rows = [row for batch in lake.read_silver_entities("municipalities") for row in batch]
+    assert {row["ibge_code"] for row in rows} == {"2611606", "3550308"}
+    assert rows[0]["latitude"] == pytest.approx(-8.04666)
+    assert rows[0]["dt"] == RUN_DATE
+
+
+def test_load_municipalities_is_idempotent(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-run of the loader never duplicates the partition rows."""
+    monkeypatch.setattr(lake, "municipality_rows", lambda: _MUNICIPALITY_ROWS)
+
+    lake.load_municipalities(run_date=RUN_DATE)
+    lake.load_municipalities(run_date=RUN_DATE)
+
+    rows = [row for batch in lake.read_silver_entities("municipalities") for row in batch]
+    assert len(rows) == 2
+
+
+def test_load_municipalities_appends_new_codes(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reference update appends only the ibge codes not yet loaded."""
+    monkeypatch.setattr(lake, "municipality_rows", lambda: _MUNICIPALITY_ROWS[:1])
+    lake.load_municipalities(run_date=RUN_DATE)
+    monkeypatch.setattr(lake, "municipality_rows", lambda: _MUNICIPALITY_ROWS)
+    lake.load_municipalities(run_date=RUN_DATE)
+
+    rows = [row for batch in lake.read_silver_entities("municipalities") for row in batch]
+    assert {row["ibge_code"] for row in rows} == {"2611606", "3550308"}
+    assert len(rows) == 2
+
+
 def _sanction_row(sanction_id: str = "ceis-1") -> dict[str, Any]:
     """Builds a minimal Sanction-valid serializable record."""
     return {

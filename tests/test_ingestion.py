@@ -413,6 +413,143 @@ class TestPersistence:
         assert args[3] == "contracts/T001"
 
 
+class TestGeoEnrichment:
+    """Geographic enrichment of the buyers/suppliers vertices (O6, slice 1)."""
+
+    @patch("capiba.ingestion.persistence.upsert_vertex")
+    @patch("capiba.ingestion.persistence.upsert_edge")
+    def test_buyer_vertex_gains_geo_fields(
+        self, mock_edge: MagicMock, mock_vertex: MagicMock
+    ) -> None:
+        """The buyer (Belo Horizonte/MG) resolves against the vendored CSV."""
+        contract = Contract.from_transparency(_transparency_payload())
+
+        upsert_contract(MagicMock(), contract)
+
+        buyer_doc = mock_vertex.call_args_list[2].args[3]
+        assert mock_vertex.call_args_list[2].args[1] == "buyers"
+        assert buyer_doc["ibge_code"] == "3106200"
+        assert buyer_doc["latitude"] == pytest.approx(-19.9102)
+        assert buyer_doc["longitude"] == pytest.approx(-43.9266)
+
+    @patch("capiba.ingestion.persistence.upsert_vertex")
+    @patch("capiba.ingestion.persistence.upsert_edge")
+    def test_unknown_buyer_city_keeps_plain_vertex(
+        self, mock_edge: MagicMock, mock_vertex: MagicMock
+    ) -> None:
+        """An unresolved (city, UF) never fails the upsert nor adds geo keys."""
+        raw = {**_transparency_payload()}
+        raw["orgao"] = {**raw["orgao"], "municipio": "Cidade Inexistente", "uf": "MG"}  # type: ignore[index]
+        contract = Contract.from_transparency(raw)
+
+        upsert_contract(MagicMock(), contract)
+
+        buyer_doc = mock_vertex.call_args_list[2].args[3]
+        assert "ibge_code" not in buyer_doc
+        assert "latitude" not in buyer_doc
+
+    @patch("capiba.ingestion.persistence.upsert_vertex")
+    @patch("capiba.ingestion.persistence.upsert_edge")
+    def test_supplier_vertex_gains_geo_from_index(
+        self, mock_edge: MagicMock, mock_vertex: MagicMock
+    ) -> None:
+        """A supplier CNPJ present in the index gains latitude/longitude."""
+        contract = Contract.from_transparency(_transparency_payload())
+
+        upsert_contract(
+            MagicMock(),
+            contract,
+            supplier_geo={"98765432000196": {"latitude": -8.0, "longitude": -34.9}},
+        )
+
+        supplier_doc = mock_vertex.call_args_list[1].args[3]
+        assert mock_vertex.call_args_list[1].args[1] == "suppliers"
+        assert supplier_doc["latitude"] == -8.0
+        assert supplier_doc["longitude"] == -34.9
+        assert "ibge_code" not in supplier_doc
+
+    @patch("capiba.ingestion.persistence.upsert_vertex")
+    @patch("capiba.ingestion.persistence.upsert_edge")
+    def test_supplier_without_index_entry_keeps_plain_vertex(
+        self, mock_edge: MagicMock, mock_vertex: MagicMock
+    ) -> None:
+        contract = Contract.from_transparency(_transparency_payload())
+
+        upsert_contract(MagicMock(), contract, supplier_geo={})
+
+        supplier_doc = mock_vertex.call_args_list[1].args[3]
+        assert "latitude" not in supplier_doc
+
+    @patch("capiba.ingestion.persistence.upsert_contract")
+    @patch("capiba.ingestion.persistence._default_supplier_geo")
+    def test_bulk_wires_default_supplier_geo(
+        self, mock_geo: MagicMock, mock_upsert: MagicMock
+    ) -> None:
+        """The bulk load builds the supplier index once and passes it down."""
+        mock_geo.return_value = {"98765432000196": {"latitude": -8.0}}
+        contracts = [Contract.from_transparency(_transparency_payload())]
+
+        bulk_upsert_contracts(MagicMock(), contracts)
+
+        mock_geo.assert_called_once_with({"98765432000196"})
+        assert mock_upsert.call_args.kwargs["supplier_geo"] == mock_geo.return_value
+
+    @patch("capiba.ingestion.persistence.upsert_contract")
+    @patch("capiba.ingestion.persistence._default_supplier_geo")
+    def test_bulk_explicit_supplier_geo_skips_silver_scan(
+        self, mock_geo: MagicMock, mock_upsert: MagicMock
+    ) -> None:
+        """An explicit index (tests/offline) disables the default wiring."""
+        contracts = [Contract.from_transparency(_transparency_payload())]
+
+        bulk_upsert_contracts(MagicMock(), contracts, supplier_geo={})
+
+        mock_geo.assert_not_called()
+
+    def test_default_supplier_geo_degrades_on_lake_failure(self) -> None:
+        """A silver read failure yields None, never an exception."""
+        with patch(
+            "capiba.pipeline.lake.read_silver_entities",
+            side_effect=RuntimeError("catalog down"),
+        ):
+            from capiba.ingestion.persistence import _default_supplier_geo
+
+            assert _default_supplier_geo({"98765432000196"}) is None
+
+    def test_default_supplier_geo_builds_index_from_silver(self) -> None:
+        """The default wiring chains establishments -> TOM -> coordinates."""
+        from capiba.ingestion.persistence import _default_supplier_geo
+
+        batches = {
+            "rfb_municipalities": [[{"tom_code": "2531", "name": "RECIFE"}]],
+            "establishments": [
+                [
+                    {
+                        "cnpj": "98765432000196",
+                        "municipio": "2531",
+                        "uf": "PE",
+                        "is_matriz": True,
+                    },
+                    {  # not in the batch CNPJ set: filtered out
+                        "cnpj": "11111111000111",
+                        "municipio": "2531",
+                        "uf": "PE",
+                        "is_matriz": True,
+                    },
+                ]
+            ],
+        }
+        with patch(
+            "capiba.pipeline.lake.read_silver_entities",
+            side_effect=lambda entity: iter(batches[entity]),
+        ):
+            index = _default_supplier_geo({"98765432000196"})
+
+        assert index is not None
+        assert set(index) == {"98765432000196"}
+        assert index["98765432000196"]["latitude"] == pytest.approx(-8.04666)
+
+
 class TestNormalizerHelpers:
     """Tests for the normalizer helper functions and edge cases."""
 

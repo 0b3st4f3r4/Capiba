@@ -1,9 +1,9 @@
 """Streaming parser of the Federal Revenue CNPJ dump.
 
 Chunk: federal_revenue
-Responsibility: Parse the Empresas/Estabelecimentos/Socios ZIP members of
-the monthly CNPJ dump into validated pydantic records, chunked so the
-multi-GB files never materialize in memory.
+Responsibility: Parse the Empresas/Estabelecimentos/Socios/Municipios ZIP
+members of the monthly CNPJ dump into validated pydantic records, chunked
+so the multi-GB files never materialize in memory.
 
 The dump layouts are positional (``header=None``, ``sep=";"``, latin1):
 the official column order of each entity is declared below and rows are
@@ -87,11 +87,19 @@ SOCIOS_COLUMNS = [
     "faixa_etaria",
 ]
 
-# ZIP name prefix -> silver entity name.
+MUNICIPIOS_COLUMNS = [
+    "tom_code",
+    "nome",
+]
+
+# ZIP name prefix -> silver entity name. ``Municipios.zip`` is the small
+# TOM code -> municipality name reference table shipped with the dump (the
+# ``establishments.municipio`` column is a TOM code, not a name).
 _ENTITY_PREFIXES = {
     "Empresas": "companies",
     "Estabelecimentos": "establishments",
     "Socios": "partners",
+    "Municipios": "rfb_municipalities",
 }
 
 
@@ -260,16 +268,40 @@ class Partner(BaseModel):
         return _parse_rfb_date(value)
 
 
+class RfbMunicipality(BaseModel):
+    """One row of the Municipios* reference file (silver ``rfb_municipalities``).
+
+    Maps the RFB/TOM municipality code — the value stored in the silver
+    ``establishments.municipio`` column — to the official municipality name,
+    the missing link of the supplier geo-enrichment chain (O6).
+    """
+
+    tom_code: str = Field(pattern=r"^\d{4}$")
+    name: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reshape(cls, data: Any) -> Any:
+        """Flattens the raw dump columns (a revalidated silver row passes through)."""
+        if not isinstance(data, dict) or "nome" not in data:
+            return data
+        data = dict(data)
+        data["name"] = data.get("nome")
+        return data
+
+
 _ENTITY_MODELS: dict[str, type[BaseModel]] = {
     "companies": Company,
     "establishments": Establishment,
     "partners": Partner,
+    "rfb_municipalities": RfbMunicipality,
 }
 
 _ENTITY_COLUMNS: dict[str, list[str]] = {
     "companies": EMPRESAS_COLUMNS,
     "establishments": ESTABELECIMENTOS_COLUMNS,
     "partners": SOCIOS_COLUMNS,
+    "rfb_municipalities": MUNICIPIOS_COLUMNS,
 }
 
 
@@ -277,8 +309,8 @@ def entity_for_zip(filename: str) -> str | None:
     """Maps a dump ZIP file name to its silver entity.
 
     Returns:
-        ``companies``/``establishments``/``partners``, or None for the
-        non-entity files (Cnaes.zip, Motivos.zip, ...).
+        ``companies``/``establishments``/``partners``/``rfb_municipalities``,
+        or None for the non-entity files (Cnaes.zip, Motivos.zip, ...).
     """
     for prefix, entity in _ENTITY_PREFIXES.items():
         if filename.startswith(prefix):
