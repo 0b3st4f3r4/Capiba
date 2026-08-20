@@ -71,6 +71,7 @@ from capiba.config import (
 from capiba.ingestion.cnpj import Company, Establishment, Partner
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.sanctions import Sanction
+from capiba.ingestion.tse import CampaignDonation
 from capiba.pipeline import trino
 
 if TYPE_CHECKING:
@@ -232,12 +233,48 @@ SANCTIONS_PARTITION_SPEC = PartitionSpec(
     )
 )
 
+# Iceberg schema of the silver ``campaign_donations`` table (TSE prestação
+# de contas eleitorais — receitas de candidatos), partitioned by the
+# ingestion date ``dt``. The donor documents are complete at the source and
+# kept here for the deterministic match of the ``political_connection``
+# signal; masking for publication is a gold mart concern (PR-D-08, LGPD).
+CAMPAIGN_DONATIONS_SCHEMA = Schema(
+    NestedField(1, "id", StringType(), required=True),
+    NestedField(2, "election_year", LongType(), required=False),
+    NestedField(3, "donor_document", StringType(), required=False),
+    NestedField(4, "donor_name", StringType(), required=False),
+    NestedField(5, "donor_origin_document", StringType(), required=False),
+    NestedField(6, "donor_origin_name", StringType(), required=False),
+    NestedField(7, "donation_date", DateType(), required=False),
+    NestedField(8, "amount", DecimalType(38, 2), required=False),
+    NestedField(9, "revenue_origin", StringType(), required=False),
+    NestedField(10, "candidate_sequential", StringType(), required=False),
+    NestedField(11, "candidate_name", StringType(), required=False),
+    NestedField(12, "party", StringType(), required=False),
+    NestedField(13, "office", StringType(), required=False),
+    NestedField(14, "ue_name", StringType(), required=False),
+    NestedField(15, "uf", StringType(), required=False),
+    NestedField(16, "dt", DateType(), required=False),
+    NestedField(17, "ingested_at", TimestamptzType(), required=False),
+)
+
+CAMPAIGN_DONATIONS_PARTITION_SPEC = PartitionSpec(
+    PartitionField(
+        source_id=16, field_id=1000, transform=IdentityTransform(), name="dt"
+    )
+)
+
 # Silver entity tables: name -> (schema, partition spec, pydantic model).
 ENTITY_TABLES: dict[str, tuple[Schema, PartitionSpec, type[BaseModel]]] = {
     "companies": (COMPANIES_SCHEMA, COMPANIES_PARTITION_SPEC, Company),
     "establishments": (ESTABLISHMENTS_SCHEMA, ESTABLISHMENTS_PARTITION_SPEC, Establishment),
     "partners": (PARTNERS_SCHEMA, PARTNERS_PARTITION_SPEC, Partner),
     "sanctions": (SANCTIONS_SCHEMA, SANCTIONS_PARTITION_SPEC, Sanction),
+    "campaign_donations": (
+        CAMPAIGN_DONATIONS_SCHEMA,
+        CAMPAIGN_DONATIONS_PARTITION_SPEC,
+        CampaignDonation,
+    ),
 }
 
 # Iceberg schema of the bronze ``raw_<source>`` tables: the full payload kept

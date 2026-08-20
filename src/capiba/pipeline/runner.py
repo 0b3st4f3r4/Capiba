@@ -35,7 +35,6 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from capiba.config import FEDERAL_REVENUE_FILES
-from capiba.ingestion.cnpj import entity_for_zip
 from capiba.pipeline import lake
 from capiba.pipeline.registry import (
     DESTINATION_REGISTRY,
@@ -303,7 +302,13 @@ def _formula_file_dump(
         if download is None:  # guarded by spec validation
             raise ValueError(f"Source '{source.name}' has no dump downloader")
 
-        params = {"files": FEDERAL_REVENUE_FILES, **source.params}
+        # The CNPJ file list default only applies to federal_revenue; other
+        # dump sources derive their files from their own params (e.g. the
+        # TSE snapshot derives the file name from params.year).
+        default_files = (
+            FEDERAL_REVENUE_FILES if source.name == "federal_revenue" else None
+        )
+        params = {"files": default_files, **source.params}
 
         downloaded_paths: list[Path] = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -348,15 +353,18 @@ def _formula_file_dump(
                 result.manifests[source.name]["files"]
             )
 
-            parser = DUMP_PARSER_REGISTRY.get(source.name)
-            if parser is None or not destination_names & {
+            dump_parser = DUMP_PARSER_REGISTRY.get(source.name)
+            if dump_parser is None or not destination_names & {
                 "lake_silver",
                 "arangodb_graph",
             }:
                 continue
 
             def _normalize_dump(
-                parser: Callable[..., Any] = parser,
+                parser: Callable[..., Any] = dump_parser.parse,
+                entity_for_file: Callable[[str], str | None] = (
+                    dump_parser.entity_for_file
+                ),
                 source_name: str = source.name,
                 downloaded_paths: list[Path] = downloaded_paths,
             ) -> tuple[dict[str, int], int, int]:
@@ -364,7 +372,7 @@ def _formula_file_dump(
                 total_rows = 0
                 errors = 0
                 for zip_path in downloaded_paths:
-                    if entity_for_zip(zip_path.name) is None:
+                    if entity_for_file(zip_path.name) is None:
                         logger.info("Skipping non-entity dump file: %s", zip_path.name)
                         continue
                     for entity, records, parse_errors in parser(zip_path):

@@ -1,0 +1,31 @@
+# Monthly TSE campaign finance dump (O8, PR-D-08): downloads the fixed
+# prestação de contas eleitorais snapshot of the configured election year
+# (default: 2024 municipal elections — the cycle that crosses with the
+# municipal suppliers of monthly_transparency), lands the ZIP under
+# tse/files/ in the bronze bucket, records a manifest in the raw_tse
+# Iceberg table and normalizes the receitas_candidatos CSV (streaming,
+# chunked) into the silver campaign_donations table. An empty manifest
+# fails the run.
+#
+# Snapshot semantics: the dump is not month-indexed — reference_month is
+# ignored by the downloader (params.year selects the snapshot). The monthly
+# schedule re-downloads the snapshot as the TSE republishes it along the
+# accounts judgement; the silver partition of the run date is deleted
+# before parsing, so re-runs never duplicate rows. Donor documents are
+# complete at the source and kept in the silver for the deterministic
+# match of the political_connection signal; masking for publication is a
+# gold mart concern (LGPD, PR-D-08 §2).
+name: monthly_tse
+description: Monthly TSE campaign finance (prestação de contas) snapshot crawl
+schedule: "37 6 3 * *" # 3rd of the month, 06:37 UTC
+window: previous_month # required by file_dump; the snapshot ignores it
+sources:
+  - name: tse
+    # params.year/params.base_url/params.files override the TSE_ELECTION_YEAR /
+    # TSE_BASE_URL config defaults when declared.
+    params:
+      year: 2024
+formula: file_dump
+destinations:
+  - lake_bronze # manifest recorded in the bronze layer
+  - lake_silver # reports the streaming entity counts (writes happen in normalize)

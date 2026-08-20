@@ -703,15 +703,16 @@ def task_normalize_dump(
     import tempfile
     from pathlib import Path
 
-    from capiba.ingestion.cnpj import entity_for_zip
-
     run_date = _lake_run_date(context) or date.today()
     spec = _load_spec(spec_path)
     ti = context["ti"]
 
-    parser = DUMP_PARSER_REGISTRY.get(source_name)
+    dump_parser = DUMP_PARSER_REGISTRY.get(source_name)
     destination_names = {d.name for d in spec.destinations}
-    if parser is None or not destination_names & {"lake_silver", "arangodb_graph"}:
+    if dump_parser is None or not destination_names & {
+        "lake_silver",
+        "arangodb_graph",
+    }:
         summary: dict[str, Any] = {
             "source": source_name,
             "entities": {},
@@ -733,7 +734,7 @@ def task_normalize_dump(
     entities = {
         entity
         for entry in manifest.get("files", [])
-        if (entity := entity_for_zip(entry["file"])) is not None
+        if (entity := dump_parser.entity_for_file(entry["file"])) is not None
     }
     for entity in sorted(entities):
         lake.delete_silver_entities_partition(entity, run_date)
@@ -743,7 +744,7 @@ def task_normalize_dump(
     with tempfile.TemporaryDirectory() as tmp:
         for entry in manifest.get("files", []):
             filename = entry["file"]
-            if entity_for_zip(filename) is None:
+            if dump_parser.entity_for_file(filename) is None:
                 logger.info("Skipping non-entity dump file: %s", filename)
                 continue
             try:
@@ -754,7 +755,7 @@ def task_normalize_dump(
                 continue
             zip_path = Path(tmp) / filename
             zip_path.write_bytes(data)
-            for entity, records, parse_errors in parser(zip_path):
+            for entity, records, parse_errors in dump_parser.parse(zip_path):
                 errors += parse_errors
                 if not records:
                     continue

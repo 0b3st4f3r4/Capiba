@@ -136,6 +136,16 @@ FEDERAL_REVENUE_FILES = [
     if f.strip()
 ]
 
+# Electoral data (TSE — campaign finance / prestação de contas)
+TSE_BASE_URL = os.getenv(
+    "TSE_BASE_URL",
+    "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas",
+)
+# Election year of the fixed prestação de contas snapshot (2024 municipal
+# elections); the dump is not month-indexed, so the pipeline's
+# reference_month does not apply (see dags/pipelines/monthly_tse.yaml).
+TSE_ELECTION_YEAR = int(os.getenv("TSE_ELECTION_YEAR", "2024"))
+
 # =============================================================================
 # Evidence (files in MinIO/S3)
 # =============================================================================

@@ -80,11 +80,15 @@ SOURCE_INLETS = {
     "cnep": Asset(uri="capiba://source/cnep"),
     # Municipal official gazettes via the Querido Diário API (OKBR).
     "querido_diario": Asset(uri="capiba://source/querido_diario"),
+    # TSE campaign finance dump (prestação de contas eleitorais, O8).
+    "tse": Asset(uri="capiba://source/tse"),
 }
 
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
 # Silver sanctions table (entities_collect normalize).
 SILVER_SANCTIONS = Asset(uri="capiba://silver/sanctions")
+# Silver campaign donations table (TSE file_dump normalize, O8).
+SILVER_CAMPAIGN_DONATIONS = Asset(uri="capiba://silver/campaign_donations")
 # Silver CNPJ entity tables (file_dump normalize) and their graph load.
 SILVER_CNPJ_ENTITIES = [
     Asset(uri=f"capiba://silver/{entity}")
@@ -94,6 +98,14 @@ ARANGO_CNPJ_ENTITIES = [
     Asset(uri="capiba://arangodb/companies"),
     Asset(uri="capiba://arangodb/partners"),
 ]
+# Silver/graph assets produced by each dump source's streaming normalize.
+SILVER_DUMP_ENTITIES = {
+    "federal_revenue": SILVER_CNPJ_ENTITIES,
+    "tse": [SILVER_CAMPAIGN_DONATIONS],
+}
+ARANGO_DUMP_ENTITIES = {
+    "federal_revenue": ARANGO_CNPJ_ENTITIES,
+}
 ARANGO_CONTRACTS = Asset(uri="capiba://arangodb/contracts")
 GOLD_FRAUD_SIGNALS = Asset(uri="capiba://gold/fraud_signals")
 GOLD_MARTS = [
@@ -134,14 +146,16 @@ def _outlets(spec: PipelineSpec) -> list[Asset]:
                 outlets.append(Asset(uri="capiba://bronze/federal_revenue/files"))
     if "lake_silver" in destination_names:
         if spec.formula == "file_dump":
-            outlets.extend(SILVER_CNPJ_ENTITIES)
+            for source in spec.sources:
+                outlets.extend(SILVER_DUMP_ENTITIES.get(source.name, []))
         elif spec.formula == "entities_collect":
             outlets.append(SILVER_SANCTIONS)
         else:
             outlets.append(SILVER_CONTRACTS)
     if "arangodb_graph" in destination_names:
         if spec.formula == "file_dump":
-            outlets.extend(ARANGO_CNPJ_ENTITIES)
+            for source in spec.sources:
+                outlets.extend(ARANGO_DUMP_ENTITIES.get(source.name, []))
         else:
             outlets.append(ARANGO_CONTRACTS)
     if "gold_report" in destination_names:

@@ -58,6 +58,20 @@ destinations:
   - arangodb_graph
 """
 
+DUMP_TSE_SPEC = """\
+name: factory_dump_tse
+schedule: "37 6 3 * *"
+window: previous_month
+sources:
+  - name: tse
+    params:
+      year: 2024
+formula: file_dump
+destinations:
+  - lake_bronze
+  - lake_silver
+"""
+
 MANUAL_SPEC = """\
 name: factory_manual
 sources:
@@ -202,6 +216,30 @@ class TestBuildDags:
         assert "capiba://arangodb/partners" in outlet_uris
         assert "capiba://silver/contracts" not in outlet_uris
 
+    def test_dump_tse_pipeline_assets(self, factory, tmp_path: Path) -> None:
+        """A TSE file_dump spec gets a normalize task and its own silver asset."""
+        (tmp_path / "dump_tse.yaml").write_text(DUMP_TSE_SPEC, encoding="utf-8")
+
+        dags = factory.build_dags(tmp_path)
+        dag = dags["factory_dump_tse"]
+
+        assert {t.task_id for t in dag.tasks} == {
+            "download_tse",
+            "normalize_tse",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+        }
+        assert dag.get_task("download_tse").downstream_task_ids == {"normalize_tse"}
+
+        download = dag.get_task("download_tse")
+        assert {a.uri for a in download.inlets} == {"capiba://source/tse"}
+        outlet_uris = {a.uri for a in download.outlets}
+        assert "capiba://bronze/raw_tse" in outlet_uris
+        assert "capiba://silver/campaign_donations" in outlet_uris
+        # The CNPJ entity assets belong to the federal_revenue dump only.
+        assert "capiba://silver/companies" not in outlet_uris
+        assert "capiba://silver/contracts" not in outlet_uris
+
     def test_unscheduled_pipeline(self, factory, tmp_path: Path) -> None:
         """A spec without schedule yields a manually triggered DAG."""
         (tmp_path / "manual.yaml").write_text(MANUAL_SPEC, encoding="utf-8")
@@ -281,6 +319,18 @@ class TestRealPipelines:
             "destination_lake_silver",
             "destination_arangodb_graph",
             "destination_gold_report",
+        }
+
+    def test_real_monthly_tse_dag(self, factory) -> None:
+        """The shipped monthly_tse spec produces a granular dump DAG (O8)."""
+        dag = factory.monthly_tse
+
+        assert dag.schedule == "37 6 3 * *"
+        assert {t.task_id for t in dag.tasks} == {
+            "download_tse",
+            "normalize_tse",
+            "destination_lake_bronze",
+            "destination_lake_silver",
         }
 
     def test_dagbag_parses_without_import_errors(self, factory) -> None:

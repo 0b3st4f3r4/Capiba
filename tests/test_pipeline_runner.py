@@ -476,6 +476,49 @@ def _fake_cnpj_download(destination: Path, *_args: Any, **_kwargs: Any) -> list[
     ]
 
 
+TSE_HEADER = (
+    "SQ_PRESTADOR_CONTAS;SQ_CANDIDATO;NM_CANDIDATO;SG_PARTIDO;DS_CARGO;NM_UE;"
+    "SG_UF;DS_ORIGEM_RECEITA;SQ_RECEITA;DT_RECEITA;VR_RECEITA;"
+    "NR_CPF_CNPJ_DOADOR;NM_DOADOR;NM_DOADOR_RFB;NR_CPF_CNPJ_DOADOR_ORIGINARIO"
+)
+TSE_PJ_ROW = (
+    "111;9001;JOANA CANDIDATA;XX;Prefeito;RECIFE;PE;"
+    "Recursos de pessoas jurídicas;555;2024-08-15T00:00:00;50.000,00;"
+    "12345678000190;EMPRESA DOADORA;EMPRESA DOADORA LTDA;"
+)
+TSE_PF_ROW = (
+    "111;9001;JOANA CANDIDATA;XX;Prefeito;RECIFE;PE;"
+    "Recursos de pessoas físicas;556;15/09/2024;1.000,50;12345678901;"
+    "JOAO D***;JOAO DA SILVA;"
+)
+TSE_BAD_ROW = (
+    "111;9001;JOANA CANDIDATA;XX;Prefeito;RECIFE;PE;"
+    "Recursos de pessoas físicas;557;31/99/2024;10,00;12345678901;X;X;"
+)
+
+
+def _tse_zip(path: Path, rows: list[str]) -> Path:
+    """Writes a fixture TSE dump ZIP with one receitas member (latin1)."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(
+            "receitas_candidatos_2024_BRASIL.csv",
+            "\n".join([TSE_HEADER, *rows]).encode("latin1"),
+        )
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
+def _fake_tse_download(destination: Path, *_args: Any, **_kwargs: Any) -> list[Path]:
+    """Fake tse download with the candidates' prestação de contas ZIP."""
+    return [
+        _tse_zip(
+            destination / "prestacao_de_contas_eleitorais_candidatos_2024.zip",
+            [TSE_PJ_ROW, TSE_BAD_ROW, TSE_PF_ROW],
+        )
+    ]
+
+
 def _mock_graph_db() -> MagicMock:
     """A mocked ArangoDB whose collections are stable per-name mocks."""
     db = MagicMock()
@@ -648,6 +691,66 @@ class TestFileDumpNormalize:
             "download_federal_revenue",
             "destination_lake_bronze",
         ]
+
+
+class TestTseFileDumpNormalize:
+    """Tests of the file_dump formula over the TSE snapshot source (O8)."""
+
+    def _spec(self, destinations: list[str]) -> PipelineSpec:
+        return PipelineSpec.model_validate(
+            {
+                "name": "test_tse_dump",
+                "window": "previous_month",
+                "sources": [{"name": "tse", "params": {"year": 2024}}],
+                "formula": "file_dump",
+                "destinations": destinations,
+            }
+        )
+
+    def test_normalize_to_silver(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The receitas member flows (chunked) to silver campaign_donations."""
+        download = MagicMock(side_effect=_fake_tse_download)
+        monkeypatch.setitem(SOURCE_REGISTRY, "tse", SourceDef(download=download))
+
+        report = run_pipeline(
+            self._spec(["lake_bronze", "lake_silver"]), date(2026, 2, 2)
+        )
+
+        assert report.success is True
+        assert [s.name for s in report.steps] == [
+            "download_tse",
+            "normalize_tse",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+        ]
+        normalize = report.steps[1]
+        assert normalize.rows_out == 2
+        assert normalize.errors == 1  # the unparseable date row
+
+        # The TSE source derives its file list from params.year; the CNPJ
+        # default file list must not leak into other dump sources.
+        assert download.call_args.kwargs["files"] is None
+        assert download.call_args.kwargs["year"] == 2024
+
+        assert report.outputs["tse_entities"] == {"campaign_donations": 2}
+        donations = [
+            r for batch in lake.read_silver_entities("campaign_donations") for r in batch
+        ]
+        assert {r["donor_document"] for r in donations} == {
+            "12345678000190",
+            "12345678901",
+        }
+        pj = next(r for r in donations if r["donor_document"] == "12345678000190")
+        assert pj["donor_name"] == "EMPRESA DOADORA LTDA"
+        assert pj["election_year"] == 2024
+        assert pj["office"] == "Prefeito"
+        assert str(pj["amount"]) == "50000.00"
+        assert str(pj["donation_date"]) == "2024-08-15"
 
 
 class TestTaskNormalizeDump:

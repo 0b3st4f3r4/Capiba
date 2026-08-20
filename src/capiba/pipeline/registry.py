@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from capiba.ingestion.cnpj import entity_for_zip as cnpj_entity_for_zip
 from capiba.ingestion.cnpj import parse_cnpj_zip
 from capiba.ingestion.crawler_federal_revenue import download_cnpj_dump
 from capiba.ingestion.crawler_pncp import fetch_contract_updates as pncp_fetch_updates
@@ -37,10 +38,13 @@ from capiba.ingestion.crawler_transparency import (
 from capiba.ingestion.crawler_transparency import (
     fetch_sanctions,
 )
+from capiba.ingestion.crawler_tse import download_tse_dump
 from capiba.ingestion.mock import mock_pncp, mock_transparency
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.pod_usage import fetch_pod_usage
 from capiba.ingestion.sanctions import Sanction
+from capiba.ingestion.tse import entity_for_dump as tse_entity_for_dump
+from capiba.ingestion.tse import parse_tse_zip
 from capiba.quality.validators import CONTRACT_RULES, GAZETTE_RULES, ValidationRule
 
 if TYPE_CHECKING:
@@ -155,6 +159,7 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pncp_contract_updates": SourceDef(fetch=_fetch_pncp_contract_updates),
     "transparency": SourceDef(fetch=_fetch_transparency),
     "federal_revenue": SourceDef(download=download_cnpj_dump),
+    "tse": SourceDef(download=download_tse_dump),
     "mock_pncp": SourceDef(fetch=_fetch_mock_pncp),
     "mock_transparency": SourceDef(fetch=_fetch_mock_transparency),
     "pod_usage": SourceDef(fetch=_fetch_pod_usage),
@@ -204,11 +209,26 @@ ENTITY_NORMALIZER_REGISTRY: dict[str, EntityNormalizerDef] = {
     "ceaf": EntityNormalizerDef(entity="sanctions", normalize=Sanction.from_ceaf),
 }
 
-# Streaming parser per dump source: parse(zip_path, chunk_size) yields
-# (entity, records, errors) chunks. Used by the file_dump formula when the
-# spec declares the lake_silver/arangodb_graph destinations.
-DUMP_PARSER_REGISTRY: dict[str, Callable[..., Any]] = {
-    "federal_revenue": parse_cnpj_zip,
+@dataclass(frozen=True)
+class DumpParserDef:
+    """Streaming parser of a dump source and its file → entity mapping.
+
+    Used by the ``file_dump`` formula when the spec declares the
+    lake_silver/arangodb_graph destinations: ``parse(zip_path, chunk_size)``
+    yields (entity, records, errors) chunks and ``entity_for_file`` maps a
+    dump file name to its silver entity (None for non-entity files).
+    """
+
+    parse: Callable[..., Any]
+    entity_for_file: Callable[[str], str | None]
+
+
+# Streaming parser per dump source.
+DUMP_PARSER_REGISTRY: dict[str, DumpParserDef] = {
+    "federal_revenue": DumpParserDef(
+        parse=parse_cnpj_zip, entity_for_file=cnpj_entity_for_zip
+    ),
+    "tse": DumpParserDef(parse=parse_tse_zip, entity_for_file=tse_entity_for_dump),
 }
 
 # Explicit transformation entries; names not present here are resolved by

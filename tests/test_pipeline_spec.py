@@ -70,6 +70,7 @@ class TestLoadSpec:
             "hourly_pod_usage",
             "weekly_sanctions",
             "daily_querido_diario",
+            "monthly_tse",
         }
         updates = specs["daily_pncp_updates"]
         assert updates.name == "daily_pncp_updates"
@@ -110,6 +111,13 @@ class TestLoadSpec:
         assert gazettes.sources[0].params == {"territory_id": "2611606"}
         assert gazettes.validation is not None
         assert gazettes.validation.ruleset == "gazette_rules"
+        tse = specs["monthly_tse"]
+        assert tse.schedule == "37 6 3 * *"
+        assert tse.formula == "file_dump"
+        assert [s.name for s in tse.sources] == ["tse"]
+        assert tse.sources[0].params == {"year": 2024}
+        assert [d.name for d in tse.destinations] == ["lake_bronze", "lake_silver"]
+        assert tse.post_steps == []  # dbt/detect live in the gold_detection DAG
 
     def test_string_shorthand(self, tmp_path: Path) -> None:
         """Plain strings are accepted as shorthand for name-only entries."""

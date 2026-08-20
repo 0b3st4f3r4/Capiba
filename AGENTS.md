@@ -92,7 +92,14 @@ oficiais do município-piloto Recife, IBGE 2611606, via API do Querido
 Diário/OKBR) e
 `daily_pncp_updates` a partir de `daily_pncp_updates.yaml` (fonte
 `pncp_contract_updates`, `/v1/contratos/atualizacao`, bronze-only — flags
-de aditivo do PR-D-05 leem as observações bronze; o silver não é tocado).
+de aditivo do PR-D-05 leem as observações bronze; o silver não é tocado) e
+`monthly_tse` a partir de `monthly_tse.yaml` (O8 — snapshot fixo da
+prestação de contas eleitorais do TSE, ano via `params.year`/`TSE_ELECTION_YEAR`;
+o `reference_month` não se aplica; o normalize streaming grava a silver
+`campaign_donations` a partir do `receitas_candidatos_<ano>_BRASIL.csv` —
+parser `src/capiba/ingestion/tse.py`; documentos completos no silver para o
+match do sinal `political_connection`, mascaramento é preocupação do mart
+gold, PR-D-08 §2).
 A fórmula `file_dump`, quando a spec declara `lake_silver`/`arangodb_graph`
 e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
 `src/capiba/ingestion/cnpj.py`), ganha uma etapa `normalize_<fonte>`
