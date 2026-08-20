@@ -20,11 +20,15 @@ revela e quem é afetado por ele.
 A coleta é declarativa: cada fonte pública é uma spec YAML em
 `dags/pipelines/*.yaml`, com fontes, janela temporal, fórmula, validações
 e destinos, executada pelo runner (`src/capiba/pipeline/runner.py`) sem
-código Python adicional. Hoje cobrimos os diários de contratações (PNCP
-e Portal da Transparência, pipeline `daily_ingestion`), o dump CNPJ da
-Receita Federal (pipeline `monthly_federal_revenue`) e as listas de
-sanções CEIS/CNEP do Portal da Transparência (pipeline
-`weekly_sanctions`).
+código Python adicional. Hoje cobrimos os diários de contratações (PNCP,
+pipeline `daily_pncp`, e Portal da Transparência, pipeline
+`monthly_transparency`, mais as atualizações incrementais do PNCP em
+`daily_pncp_updates`), o dump CNPJ da Receita Federal (pipeline
+`monthly_federal_revenue`), as listas de sanções CEIS/CNEP/CEAF do
+Portal da Transparência (pipeline `weekly_sanctions`), os diários
+oficiais de Recife via Querido Diário/OKBR (pipeline
+`daily_querido_diario`) e a prestação de contas eleitorais do TSE
+(pipeline `monthly_tse`).
 
 A coleta obedece a três princípios editoriais. O primeiro é preferir
 dados granulares a agregados: a análise sob todos os ângulos exige o
@@ -48,8 +52,8 @@ coletados: a documentação de cada fonte é analisada em
 (`src/capiba/quality/profiling.py`) revela distribuições, nulos e faixas
 antes de qualquer conclusão. Pergunte o que está faltando: as lacunas de
 uma base são preenchidas por cruzamento com outras (contratos × CNPJ ×
-órgãos), e o roadmap de fontes futuras, TSE e dados privados via
-LGPD/DP, está em `docs/arquitetura.md`.
+órgãos), e o roadmap de fontes futuras — dados privados via LGPD/DP —
+está em `docs/arquitetura.md`.
 
 ## 3. Verificar os dados
 
@@ -76,10 +80,16 @@ catálogo dbt (`make dbt-docs`) documenta modelos e colunas, e o Marquez
 registra a linhagem ponta a ponta (fonte → bronze → silver → gold →
 grafo/serving) derivada da própria spec, de modo que a metodologia é um
 artefato versionado, não um relato de memória. Os relatórios de run no
-gold (`reports/daily_ingestion/`) e a tabela `platform_metrics`
-funcionam como diário de dados, registrando o que cada execução fez,
-passo a passo. O acesso é controlado por sensibilidade: SSO Keycloak em
-todas as UIs e usuários com escopo por bucket no MinIO, compartilhando
+gold (`reports/<pipeline>/dt=YYYY-MM-DD/`, p.ex. `reports/daily_pncp/`)
+e a tabela `platform_metrics` funcionam como diário de dados,
+registrando o que cada execução fez, passo a passo. Cada sinal de
+fraude ganha um pacote de evidências reproduzível
+(`src/capiba/evidence/packages.py`), servido por
+`GET /v1/signals/{key}/evidence`, e o `reproduce_signal` reexecuta a
+detecção sobre o pacote para conferir o score, a resposta
+computacional ao "questionar cada número". O acesso é controlado por
+sensibilidade: SSO Keycloak em todas as UIs e usuários com escopo por
+bucket no MinIO, compartilhando
 dados apenas com quem precisa deles, com a classificação LGPD explícita
 por fonte (ver `docs/governanca.md`).
 
@@ -105,9 +115,15 @@ membro da equipe, ou de fora dela, reproduz o resultado.
 Nenhum sinal vira publicação sem confirmação. A revisão humana vem
 primeiro: o revisor de experimentos e o data steward da fonte (papéis em
 `docs/governanca.md`) validam sinais contra leis e regulamentações
-vigentes e contra a qualidade da fonte no período. Depois vem a
-reportagem adicional: a análise indica *onde* apurar, e a visita ao
-local, a fonte humana e o documento público confirmam ou derrubam o
+vigentes e contra a qualidade da fonte no período. Esse trabalho é
+operacionalizado pela triagem de sinais: cada sinal novo entra como
+`pending_review` na coleção `signal_reviews` (`src/capiba/db/triage.py`)
+e transita para `confirmed`, `rejected` ou `published`, sempre com
+revisor identificado, pela API `/v1/triage` ou pela página `/triage` do
+portal; o relatório de precisão por operador vira rótulo para o ML.
+Depois vem a reportagem adicional: a análise indica *onde* apurar, e a
+visita ao local, a fonte humana e o documento público confirmam ou
+derrubam o
 sinal; o direito de resposta às pessoas e entidades citadas precede
 qualquer publicação. Ao longo do caminho, as perguntas de validação
 editorial orientam o julgamento: o sinal expõe irregularidade real? Há
@@ -124,7 +140,14 @@ PostgreSQL DWH para consulta de baixa latência. Dados e metodologia são
 abertos: os marts gold e o catálogo dbt docs funcionam como o documento
 de metodologia público, qualquer pessoa pode ver de onde veio cada
 número e como foi calculado, e a cópia de auditoria no bronze permite
-verificação independente. E a narrativa vem antes do dado bruto: o
+verificação independente. A camada pública é concreta: os marts
+liberados são exportados para o bucket `capiba-public`
+(`src/capiba/pipeline/public_export.py`, allowlist fail-closed) e
+servidos sem autenticação por `GET /v1/public/marts` e
+`GET /v1/public/marts/{name}/{csv|parquet}`, com a metodologia em
+`GET /v1/public/methodology`; quem quer acompanhar um município assina
+alertas por e-mail (`/v1/subscriptions`), disparados quando um sinal do
+município é publicado na triagem. E a narrativa vem antes do dado bruto: o
 público raramente se interessa por tabelas, a história precisa de
 ângulo, personagens e contexto. A plataforma entrega as evidências e as
 visualizações; a narrativa é trabalho editorial.

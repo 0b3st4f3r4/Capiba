@@ -51,17 +51,22 @@ flowchart TB
     Motor --> Consumidores
 ```
 
-Fontes com pipeline hoje: PNCP e Portal da Transparência (pipeline diário) e
+Fontes com pipeline hoje: PNCP (pipelines diários `daily_pncp` e
+`daily_pncp_updates`, este bronze-only) e Portal da Transparência (pipeline
+mensal `monthly_transparency`), e
 Receita Federal (pipeline mensal `monthly_federal_revenue`, que baixa o dump
 CNPJ para o bronze e, quando os arquivos Empresas/Estabelecimentos/Socios
 estão habilitados via `FEDERAL_REVENUE_FILES`, normaliza em streaming para
 as tabelas silver `companies`/`establishments`/`partners` e carrega o grafo
 ArangoDB com vértices FtM `companies`/`persons` e arestas
 `ownership`/`directorship`). As
-listas de sanções CEIS/CNEP do Portal da Transparência entram pelo pipeline
+listas de sanções CEIS/CNEP/CEAF do Portal da Transparência entram pelo pipeline
 semanal `weekly_sanctions` (fórmula `entities_collect`, tabela silver
-`sanctions`). TSE e dados privados via LGPD/DP são visão de longo prazo, sem
-implementação.
+`sanctions`). O TSE entra pelo pipeline mensal `monthly_tse` (fórmula
+`file_dump`, tabelas silver `campaign_donations` e `candidacies`) e os
+diários oficiais de Recife pelo diário `daily_querido_diario` (fórmula
+`documents_collect`, via Querido Diário/OKBR). Dados privados via LGPD/DP
+seguem visão de longo prazo, sem implementação.
 
 ## Protocolos de compartilhamento (roadmap)
 
@@ -84,8 +89,11 @@ DAMA-DMBOK, papéis, régua regulatória LGPD/LAI) está documentada em
 A casa se mantém em ordem pelo Apache Airflow, que orquestra pipelines de
 ingestão declarativos: specs YAML em `dags/pipelines/*.yaml`, uma DAG gerada
 por spec pelo factory `dags/pipeline_factory.py` (detalhes em
-`docs/ingestao.md`). O storage mora no ArangoDB (multi-modelo, único banco
-da aplicação) e no MinIO, com o Redis segurando o cache do monitor de
+`docs/ingestao.md`). Às specs soma-se a DAG imperativa `gold_detection.py`
+(diária, 08:00 UTC): rebuild dos marts via `dbt_run`, `detect` sobre todo o
+silver e post step `export_public_marts` — é a run final a disparar após um
+backfill. O storage mora no ArangoDB (multi-modelo, banco de grafos e
+documentos da aplicação) e no MinIO, com o Redis segurando o cache do monitor de
 qualidade e dos hot paths da API: habilitado por padrão, e tudo degrada
 graciosamente quando ele sai de cena. O ML é scikit-learn com spaCy, a API
 é FastAPI e a visualização é Grafana, com SSO via Keycloak e datasource
@@ -208,25 +216,42 @@ auditoria), as tabelas Iceberg `raw_<fonte>` e os arquivos de evidência
 image/document/audio/video/other). O `capiba-silver` abriga a tabela Iceberg
 `capiba.contracts` (contratos normalizados, particionada por `dt`) e as
 tabelas de entidades `companies`/`establishments`/`partners` (dump CNPJ da
-Receita) e `sanctions` (listas CEIS/CNEP do Portal da Transparência). O
+Receita), `sanctions` (listas CEIS/CNEP/CEAF do Portal da Transparência),
+`campaign_donations` e `candidacies` (prestação de contas do TSE),
+`rfb_municipalities` (de-para TOM→município da Receita) e `municipalities`
+(referência geográfica de municípios). O
 `capiba-gold` reúne os relatórios por execução
-(`reports/daily_ingestion/dt=YYYY-MM-DD/`), os marts Iceberg gerados pelo
+(`reports/<spec>/dt=YYYY-MM-DD/` — ex.: `reports/daily_pncp/`), os marts
+Iceberg gerados pelo
 dbt (`capiba.contracts_daily`, `capiba.contracts_by_agency`,
 `capiba.supplier_stats`, `capiba.data_quality_daily`,
-`capiba.pod_usage_hourly`, `capiba.platform_cost_daily`), a tabela
+`capiba.pod_usage_hourly`, `capiba.platform_cost_daily`,
+`capiba.contract_amendments`, `capiba.amendments_by_agency`,
+`capiba.amendments_by_supplier`, `capiba.contract_red_flags`,
+`capiba.red_flags_by_agency`, `capiba.red_flags_by_supplier` e
+`capiba.political_connections`), a tabela
 `capiba.platform_metrics` (métricas por passo de cada run, escritas pelo
-runner) e a tabela `capiba.fraud_signals` (sinais estatísticos do post step
-`detect`). O `detect` e a validação dos pipelines disparam alertas
+runner) e a tabela `capiba.fraud_signals` (sinais nomeados emitidos pelo
+post step `detect`: `sanctioned_supplier`, `sanctioned_name_match`,
+`political_connection`, `anomalous_geography` e `collusion_network`). O
+`detect` e a validação dos pipelines disparam alertas
 best-effort por e-mail (`src/capiba/notification/alerts.py`) quando
-`NOTIFICATION_RECIPIENTS` está configurado.
+`NOTIFICATION_RECIPIENTS` está configurado. Os sinais passam por triagem
+editorial (`src/capiba/db/triage.py`, rotas `/v1/triage` e página `/triage`
+do portal) antes da publicação, que dispara alertas aos assinantes do
+município (`src/capiba/db/subscriptions.py`, rotas `/v1/subscriptions`).
 
 Além do lake: `capiba-airflow-logs` recebe os logs remotos das tasks do
 Airflow, `capiba-artifacts` recebe o código (`src/`) e as DAGs publicados
 por `make publish-artifacts` (sincronizados aos pods do Airflow por init
-container e sidecar, sem rebuild de imagem) e `capiba-backups` recebe os
+container e sidecar, sem rebuild de imagem), `capiba-backups` recebe os
 dumps diários do CronJob `capiba-backup` (`pg_dump` dos bancos airflow,
 keycloak, lakekeeper e marquez, mais `arangodump` do database `capiba`, em
-`dt=YYYY-MM-DD/{postgresql,arangodb}/`).
+`dt=YYYY-MM-DD/{postgresql,arangodb}/`) e `capiba-public` recebe o export
+público dos marts liberados (allowlist LGPD fail-closed em
+`src/capiba/pipeline/public_export.py`, CSV e Parquet versionados em
+`marts/<mart>/dt=<data>/`), servidos pela API pública sem autenticação
+(`/v1/public/marts`).
 
 O layout completo de buckets é criado de forma idempotente por
 `make init-buckets`.

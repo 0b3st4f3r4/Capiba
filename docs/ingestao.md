@@ -24,10 +24,12 @@ flowchart LR
 ### PNCP
 
 O crawler do PNCP consulta `GET /v1/contratos`, o endpoint dos contratos já
-firmados, com fornecedor e valores. A paginação e o retry estão implementados
-no próprio crawler, com backoff exponencial compartilhado em
-`src/capiba/ingestion/_http.py`; os detalhes da API (URL base, formato de
-data, limites e rate limit) vivem em `docs/apis_fontes.md`.
+firmados, com fornecedor e valores. O endpoint irmão
+`GET /v1/contratos/atualizacao` é consultado pela DAG `daily_pncp_updates`
+para capturar contratos aditivados após a publicação original. A paginação
+e o retry estão implementados no próprio crawler, com backoff exponencial
+compartilhado em `src/capiba/ingestion/_http.py`; os detalhes da API (URL
+base, formato de data, limites e rate limit) vivem em `docs/apis_fontes.md`.
 
 ### Portal da Transparência
 
@@ -188,13 +190,16 @@ no-op quando `NOTIFICATION_RECIPIENTS` está vazio e nunca derrubam a task.
 
 Os nomes do YAML resolvem para implementações via
 `src/capiba/pipeline/registry.py`. As fontes (`SOURCE_REGISTRY`) são `pncp`,
-`transparency`, `federal_revenue` (dump de arquivos), `pod_usage`
-(metrics-server), `ceis` e `cnep` (listas de sanções), além de `mock_pncp` e
+`pncp_contract_updates` (atualizações de contratos), `transparency`,
+`federal_revenue` e `tse` (dumps de arquivos), `pod_usage`
+(metrics-server), `ceis`, `cnep` e `ceaf` (listas de sanções) e
+`querido_diario` (diários oficiais), além de `mock_pncp` e
 `mock_transparency` para rodar offline. Os normalizadores
 (`NORMALIZER_REGISTRY`) fazem o mapeamento raw → `Contract` por fonte, e as
-fontes mock reutilizam o normalizador da fonte que imitam. O único ruleset
-(`RULESET_REGISTRY`) é `contract_rules`
-(`src/capiba/quality/validators.py`). Fórmulas e destinos
+fontes mock reutilizam o normalizador da fonte que imitam (o
+`pncp_contract_updates` compartilha o payload de `/v1/contratos` e reusa o
+do `pncp`). Os rulesets (`RULESET_REGISTRY`) são `contract_rules` e
+`gazette_rules` (`src/capiba/quality/validators.py`). Fórmulas e destinos
 (`FORMULA_REGISTRY`/`DESTINATION_REGISTRY`) são registrados pelo próprio
 runner ao ser importado.
 
@@ -216,25 +221,39 @@ tem parser registrado (`DUMP_PARSER_REGISTRY`), uma etapa
 `normalize_<fonte>` streaming faz o parse dos ZIPs de entidade
 (Empresas/Estabelecimentos/Socios, em chunks, já que os dumps de GBs nunca
 são materializados em memória) para as tabelas silver
-`companies`/`establishments`/`partners`; arquivos de referência (Cnaes.zip
-etc.) são pulados. Nesse caso o destino `lake_silver` apenas reporta as
+`companies`/`establishments`/`partners`; o `Municipios.zip` vira a silver
+`rfb_municipalities` (de-para código TOM → município, elo da geografia do
+fornecedor) e os demais arquivos de referência (Cnaes.zip etc.) são
+pulados. Nesse caso o destino `lake_silver` apenas reporta as
 contagens (a escrita já ocorreu no normalize) e `arangodb_graph` carrega o
 grafo a partir do silver (vértices FtM `companies`/`persons`, arestas
-`ownership`/`directorship`).
+`ownership`/`directorship`). O mesmo mecanismo atende ao dump do TSE (fonte
+`tse`, parser em `src/capiba/ingestion/tse.py`), normalizado para as
+silvers `campaign_donations` e `candidacies`.
 
 **`metrics_collect`** tira um snapshot pontual de métricas (ex.:
 `pod_usage`) direto para os destinos, sem normalização nem validação; a
 janela é ignorada.
 
 **`entities_collect`** cuida do snapshot de uma lista de entidades, como as
-listas de sanções CEIS/CNEP do Portal da Transparência (fontes `ceis` e
-`cnep`): crawl por fonte (a janela é ignorada, pois a lista é um retrato
-corrente), uma etapa `normalize_<fonte>` por fonte, que valida os registros
+listas de sanções CEIS/CNEP/CEAF do Portal da Transparência (fontes `ceis`,
+`cnep` e `ceaf`): crawl por fonte (a janela é ignorada, pois a lista é um
+retrato corrente) com **checkpoint por página** no bronze
+(`<fonte>/pages/dt=<data>/page-NNNNN.json.gz` — o retry retoma da próxima
+página), uma etapa `normalize_<fonte>` por fonte, que valida os registros
 contra o modelo da entidade registrado no `ENTITY_NORMALIZER_REGISTRY` e
 escreve na tabela silver da entidade (best-effort, como no file_dump). O
 destino `lake_silver` apenas reporta as contagens e `lake_bronze` guarda o
-payload bruto (`raw_ceis`/`raw_cnep`). A validação cruzada da spec exige
-fetcher e entrada no `ENTITY_NORMALIZER_REGISTRY` para cada fonte.
+payload bruto (`raw_ceis`/`raw_cnep`/`raw_ceaf`). A validação cruzada da
+spec exige fetcher e entrada no `ENTITY_NORMALIZER_REGISTRY` para cada fonte.
+
+**`documents_collect`** cuida de documentos datados com janela, como os
+diários oficiais do Querido Diário (fonte `querido_diario`): `crawl_<fonte>`
+guarda os metadados no bronze e `download_<fonte>_texts` baixa o texto
+extraído (`txt_url`) de cada documento para `<fonte>/files/dt=<run>/`, com
+nome determinístico — o retry pula textos já persistidos e falhas de
+download são best-effort. O ruleset declarado valida os registros brutos;
+não há normalização silver (documentos não são contratos).
 
 ### Janelas temporais
 
@@ -284,13 +303,24 @@ falha é o que torna o retry seguro: se o DELETE falha, o append não acontece
 (nunca duplica); se o append falha após o DELETE, o re-run restaura as linhas
 (idempotente por construção). No catálogo SQLite offline (sem Trino) a escrita
 degrada para append puro. As tabelas silver de entidades
-(`companies`/`partners`/`sanctions`, via `write_silver_entities`) seguem em
-append puro.
+(`companies`/`partners`/`sanctions`, via `write_silver_entities`) são
+append-por-chunk precedido de DELETE da partição `dt=<run_date>` via Trino
+(`lake.delete_silver_entities_partition`; se o DELETE falha, nada é
+escrito), de modo que o retry nunca duplica — no catálogo SQLite offline
+degradam para append puro.
 
 ### DAGs atuais
 
 **`daily_pncp`** (`daily_pncp.yaml`, `0 6 * * *`): PNCP do dia anterior para
 bronze, silver, grafo ArangoDB e relatório gold. Sem post steps.
+
+**`daily_pncp_updates`** (`daily_pncp_updates.yaml`, `41 6 * * *`): coleta
+diária do endpoint `/v1/contratos/atualizacao` do PNCP (fonte
+`pncp_contract_updates`, fórmula `contracts_default`, crawler
+`fetch_contract_updates`), **bronze-only** por desenho — captura contratos
+aditivados após a publicação original, insumo dos marts de aditivos
+computados a partir do bronze; a silver `contracts` não é tocada. Sem post
+steps.
 
 **`monthly_transparency`** (`monthly_transparency.yaml`, `0 7 2 * *`):
 Portal da Transparência do mês anterior (fechado) para bronze, silver, grafo
@@ -305,10 +335,22 @@ por fornecedor (composto Benford + IsolationForest, componentes em
 `details`), `single_bid` por fornecedor (taxa de modalidade não
 competitiva, emitido só quando > 0 com ≥ 3 contratos), `concentration`
 por órgão (HHI) e `anomalous_duration` por fornecedor (vigências outlier
-IQR). A eles se soma o sinal de grafo `collusion_network`, computado
+IQR). A eles se somam o sinal de grafo `collusion_network`, computado
 best-effort pelo `detect_collusion` sobre o ArangoDB com limiar
-`DETECTION_COLLUSION_MIN_WINS` (default 3) e score binário 1.0. Todos são
-materializados na tabela Iceberg gold `capiba.fraud_signals`.
+`DETECTION_COLLUSION_MIN_WINS` (default 3) e score binário 1.0, e os sinais
+best-effort de contexto: `sanctioned_supplier` (match exato de sanção por
+documento) e `sanctioned_name_match` (screening fuzzy) sobre a silver
+`sanctions`, `political_connection` (doador de campanha de prefeito eleito
+que vira fornecedor do município, sobre as silvers TSE) e
+`anomalous_geography` (distância entre a sede do fornecedor PJ e o município
+comprador, sobre a referência `municipalities`). Todos são
+materializados na tabela Iceberg gold `capiba.fraud_signals` e registrados
+na fila de triagem editorial (`register_signals`, coleção `signal_reviews`
+— ver `docs/api.md`), com pacotes de evidência reproduzíveis por sinal
+gravados no bucket bronze (`evidence/packages.py`). A DAG termina com o
+post step `export_public_marts` (`pipeline/public_export.py`), que exporta
+os marts da allowlist LGPD para o bucket `capiba-public`
+(`PUBLIC_EXPORT_BUCKET`), em CSV + Parquet versionados pela data da run.
 
 **`monthly_federal_revenue`** (`monthly_federal_revenue.yaml`,
 `23 5 2 * *`): baixa os arquivos de referência do dump CNPJ da Receita
@@ -320,6 +362,17 @@ Empresas*/Estabelecimentos*/Socios* habilitados (opt-in, GBs cada), a
 task `normalize_federal_revenue` faz o parse streaming descrito na fórmula
 `file_dump` e o destino `arangodb_graph` carrega o grafo, insumo dos
 operadores de grafo em `src/capiba/detection/graphs.py`.
+
+**`monthly_tse`** (`monthly_tse.yaml`, `37 6 3 * *`): baixa o snapshot fixo
+da prestação de contas eleitorais do TSE (fórmula `file_dump`, fonte `tse`,
+downloader em `crawler_tse.py`, parser em `src/capiba/ingestion/tse.py`) do
+ano configurado (`TSE_ELECTION_YEAR`/`params.year`, default 2024) —
+`reference_month` não se aplica, pois o dump não é indexado por mês. O
+normalize streaming grava as silvers `campaign_donations`
+(`receitas_candidatos_<ano>`) e `candidacies` (`consulta_cand_<ano>`, gate
+do eleito), insumo do sinal `political_connection`; os documentos dos
+doadores ficam completos no silver e o mascaramento é preocupação do mart
+gold (LGPD).
 
 **`hourly_pod_usage`** (`hourly_pod_usage.yaml`, `7 * * * *`): coleta o
 uso de CPU/memória dos pods do namespace (fórmula `metrics_collect`,
@@ -359,7 +412,10 @@ Contratos são salvos na collection `contracts`. Fornecedores são salvos em
 `buyers`. Empresas e sócios do dump CNPJ seguem o vocabulário FtM:
 vértices `companies`/`persons` (carga em lote por `bulk_upsert_cnpj`, a
 partir das tabelas silver) conectados via arestas
-`ownership`/`directorship`, classificadas pela qualificação RFB.
+`ownership`/`directorship`, classificadas pela qualificação RFB. Após a
+carga, a resolução de entidades (`src/capiba/detection/entities.py`) grava
+best-effort arestas `same_as` entre vértices `persons` acima do limiar
+`DETECTION_ENTITY_THRESHOLD` (default 0,85), sem colapsar vértices.
 
 ## Ciclo de vida de um contrato
 
@@ -387,7 +443,9 @@ flowchart LR
     subgraph fontes["Fontes externas"]
         pncp[PNCP]
         transp[Portal da Transparência]
-        rf["Receita Federal<br/>[roadmap]"]
+        rf[Receita Federal]
+        tse[TSE]
+        qd["Querido Diário"]
     end
 
     subgraph bronze["Bronze<br/>capiba-bronze"]
@@ -397,6 +455,7 @@ flowchart LR
 
     subgraph silver["Silver<br/>capiba-silver"]
         contracts["capiba.contracts"]
+        entities["entidades<br/>(companies, sanctions, ...)"]
     end
 
     subgraph gold["Gold<br/>capiba-gold"]
@@ -407,7 +466,10 @@ flowchart LR
     pncp --> raw
     transp --> raw
     rf --> raw
+    tse --> raw
+    qd --> raw
     raw --> contracts
+    raw --> entities
     contracts --> marts
     contracts --> signals
 ```
@@ -419,11 +481,22 @@ No **bronze** (`capiba-bronze`) ficam a cópia de auditoria bruta
 a tabela Iceberg `capiba.contracts`, com os contratos normalizados e
 tipados (datas, `decimal(18,2)`, structs `buyer`/`supplier`), particionada
 por `dt` — escrita em regime upsert-por-id (ver "Separação por fonte e
-upsert do silver"). O **gold** (`capiba-gold`) guarda os relatórios de
-execução em
+upsert do silver"). Ao lado dela vivem as tabelas de entidades
+(`ENTITY_TABLES` em `pipeline/lake.py`): `companies`/`establishments`/
+`partners`/`rfb_municipalities` (dump CNPJ), `sanctions` (sanções),
+`campaign_donations`/`candidacies` (TSE) e `municipalities` — referência
+geográfica vendored (`ingestion/reference/municipios.csv`, lookups em
+`ingestion/geography.py`), carregada por `lake.load_municipalities`. Na
+persistência, compradores e fornecedores ganham ibge/lat/long por essa
+referência (fornecedores via cadeia `establishments` →
+`rfb_municipalities`), insumo do sinal `anomalous_geography`. O **gold**
+(`capiba-gold`) guarda os relatórios de execução em
 `reports/<pipeline>/dt=YYYY-MM-DD/*.json.gz`, os marts Iceberg
 construídos pelo dbt (`capiba.contracts_daily`, `capiba.contracts_by_agency`,
-`capiba.supplier_stats`, `capiba.data_quality_daily`,
+`capiba.supplier_stats`, os de aditivos `contract_amendments`/
+`amendments_by_agency`/`amendments_by_supplier`, os de red flags
+`contract_red_flags`/`red_flags_by_agency`/`red_flags_by_supplier`,
+`capiba.political_connections`, `capiba.data_quality_daily`,
 `capiba.pod_usage_hourly`, `capiba.platform_cost_daily`) e a tabela
 `capiba.platform_metrics`, com as métricas por passo de cada run escritas
 pelo runner em regime best-effort. Fora do lago, o **serving** (PostgreSQL

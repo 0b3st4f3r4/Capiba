@@ -12,8 +12,10 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    silver `companies`/`establishments`/`partners`
    (`src/capiba/pipeline/lake.py`), declaradas como sources no dbt
    (`dbt/models/staging/sources.yml`); a carga de empresas e sócios no
-   ArangoDB (`bulk_upsert_cnpj`, vértices `companies`/`partners`, aresta
-   `partner_of`, destino `arangodb_graph` no spec
+   ArangoDB (`bulk_upsert_cnpj`, vocabulário FtM: vértices
+   `companies`/`persons`, arestas `ownership`/`directorship` — as coleções
+   legadas `partners`/`partner_of`/`owns` foram renomeadas, destino
+   `arangodb_graph` no spec
    `dags/pipelines/monthly_federal_revenue.yaml`); e a etapa de normalize
    streaming na fórmula `file_dump` (`src/capiba/pipeline/runner.py`), com a
    task granular `normalize_<fonte>` no factory.
@@ -102,10 +104,13 @@ com os detalhes (caminhos, linhas, evidências) dentro de cada item.
    `ceis` e `cnep` (sanções) estão feitos: pipeline semanal `weekly_sanctions`
    (fórmula `entities_collect`, bronze `raw_ceis`/`raw_cnep` e silver
    `sanctions`, modelo `Sanction`); o sinal "fornecedor sancionado" depende de
-   pré-registro (PR-D-06, registrado e aprovado, não executado). Seguem abertos `licitacoes` e `despesas/documentos`
-   (Transparência) e `atas`, `contratacoes/publicacao` e
-   `contratos/atualizacao` (PNCP), com pré-registro PR-D-* para os que virarem
-   sinal.
+   pré-registro (PR-D-06, registrado e aprovado, não executado). No PNCP,
+   `contratos/atualizacao` está feito: fonte `pncp_contract_updates`
+   (`src/capiba/pipeline/registry.py`) e pipeline diário bronze-only
+   `daily_pncp_updates` (ver item editorial 4). Seguem abertos `licitacoes` e
+   `despesas/documentos`
+   (Transparência) e `atas` e `contratacoes/publicacao` (PNCP), com
+   pré-registro PR-D-* para os que virarem sinal.
 4. (feito) **Testes dbt irregulares.** `unique` e `not_null` em `contracts.id`
    (silver) e `unique` em `contracts_by_agency.siafi_code`; testes de coluna
    (`not_null` em dt/ingested_at/payload_json) em `raw_pod_usage` e
@@ -232,8 +237,17 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    extraído de cada diário como arquivo bronze. Pendente: primeira run real
    no cluster (após publish/rollout) e alimentar os sinais de NLP
    (`semantic_gap`, `detect_clone`) com o corpus.
-9. (aberto) **TSE: doações × contratos (O8).** Sinal `political_connection` com
-   pré-registro e critério de refutação.
+9. (em andamento) **TSE: doações × contratos (O8).** Pré-registrado e
+   validado no regime sintético (PR-D-08/R-D-08): pipeline mensal
+   `monthly_tse` (snapshot da prestação de contas, silvers
+   `campaign_donations`/`candidacies`, parser `ingestion/tse.py`), sinal
+   `political_connection` (`detection/political.py`, match exato por
+   documento de doador de campanha de prefeito eleito que vira fornecedor
+   do município na janela do mandato; emitido best-effort no `task_detect`)
+   e mart gold `political_connections` (CPF mascarado na origem, chave
+   `signal_id` sha256, já na allowlist da exportação pública —
+   `pipeline/public_export.py`). P8/volume real pendente; calibração dos
+   placeholders exige PR-D-08b.
 10. (implementado) **Saída pública para a comunidade (O11).** Marts gold
     baixáveis (CSV/Parquet) sem auth: post step `export_public_marts` da
     `gold_detection` exporta a allowlist LGPD (fail-closed) para o bucket
@@ -252,7 +266,9 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
 
 ## Roadmap de longo prazo (declarado, fora da fase)
 
-1. Fontes TSE (dados eleitorais).
+1. Fontes TSE (dados eleitorais) — entregues (pipeline `monthly_tse`, silvers
+   `campaign_donations`/`candidacies`, ver item editorial 9); restam anos
+   eleitorais adicionais e ampliação do recorte.
 2. Dados privados via LGPD/DP, que exigem análise de base legal prévia.
 3. Protocolos federados: differential privacy, federated learning, ZKP.
 4. Governança: glossário de negócio, classificação de sensibilidade por coluna,

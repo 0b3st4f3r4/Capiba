@@ -32,8 +32,7 @@ agrega mais de 400 listas no esquema
 matching `yente` self-hostable (MIT) e o benchmark de entity matching
 [OpenSanctions Pairs](https://arxiv.org/pdf/2603.11051). No Brasil, as
 listas equivalentes são CEIS, CNEP e CEAF do Portal da Transparência, e
-as duas primeiras já entram semanalmente pelo pipeline
-`weekly_sanctions`.
+as três já entram semanalmente pelo pipeline `weekly_sanctions`.
 
 **Plataformas investigativas convergiram para o modelo "follow the
 money".** O [Aleph (OCCRP)](https://knowledge.iadb.org/open-knowledge/code-development/open-source-solution/occrp-aleph)
@@ -76,8 +75,10 @@ aditivos) em um score 0–1, agregado por órgão e por fornecedor.
 validação empírica na literatura e a composição é defensável em revisão
 jurídica ("não torturar os dados"). **Onde**: `compute_cri`
 (`src/capiba/detection/ml_models.py`) existe sem uso fora dos testes;
-novo mart `dbt/models/marts/cri_daily.sql`; post step `detect`.
-**Critério de aceitação**: pré-registro `PR-D-*` com predição
+novo mart gold de red flags (entregue como
+`dbt/models/marts/contract_red_flags.sql`, + agregados
+`red_flags_by_agency.sql`/`red_flags_by_supplier.sql`); post step
+`detect`. **Critério de aceitação**: pré-registro `PR-D-*` com predição
 falsificável (ex.: órgãos no top decil do CRI concentram achados de
 auditoria); mart publicado; resultado em `docs/results/R-D-*.md`.
 **Sessões**: 2–3 (pré-registro, implementação, bateria).
@@ -88,13 +89,15 @@ Coletar aditivos e alterações contratuais (PNCP `contratos/atualizacao`,
 já listado em `docs/gaps.md`) e derivar as red flags "alta taxa de
 aditivos" e "contrato modificado após adjudicação".
 
-**Onde**: fonte nova na spec `dags/pipelines/daily_contracts.yaml`;
-colunas no silver; red flags no mart do CRI (O1). **Critério de
+**Onde**: fonte nova na spec `dags/pipelines/daily_pncp_updates.yaml`
+(entregue como `pncp_contract_updates`, bronze-only); colunas no silver;
+red flags no mart `contract_amendments` (O1). **Critério de
 aceitação**: percentual de contratos com aditivo por órgão fornecedor
 disponível no gold, com teste dbt.
 
 ### O3. Screening de fornecedores contra sanções e PEPs
 
+**Entregue** (PR-D-06/PR-D-06b, ver item editorial 5 do `docs/gaps.md`).
 Cruzar fornecedores e sócios, já normalizados no silver da Receita
 (`companies`/`partners`) e carregados no grafo pelo
 `monthly_federal_revenue`, com as listas de sanções e, opcionalmente, com
@@ -102,13 +105,17 @@ o OpenSanctions self-hosted (`yente`).
 
 **Por quê**: "fornecedor sancionado contratando com o poder público" é a
 história mais direta e de maior interesse público do domínio. **Onde**:
-as fontes `ceis`/`cnep` (analisadas em `docs/apis_fontes.md`) já entram
-pelo pipeline `weekly_sanctions` e deságuam na tabela silver `sanctions`;
-a CEAF segue como fonte nova. Falta o operador de screening em
-`detection/` e o sinal novo com `SignalType` correspondente. **Critério
-de aceitação**: sinal emitido quando CNPJ ou sócio casa com lista
-vigente; falso positivo mitigado por match em CNPJ (exato) antes de match
-em nome (fuzzy com limiar calibrado e pré-registrado). **Sessões**: 2–3.
+as fontes `ceis`/`cnep`/`ceaf` (analisadas em `docs/apis_fontes.md`) já
+entram pelo pipeline `weekly_sanctions` e deságuam na tabela silver
+`sanctions`; os operadores de screening vivem em `detection/screening.py`
+(match exato) e `detection/screening_fuzzy.py` (fuzzy com veto
+documental), com os sinais `SignalType.SANCTIONED_SUPPLIER` e
+`SANCTIONED_NAME_MATCH` emitidos pelo `task_detect`. **Critério
+de aceitação** (cumprido): sinal emitido quando CNPJ ou sócio casa com
+lista vigente; falso positivo mitigado por match em CNPJ (exato) antes de
+match em nome (fuzzy com limiar calibrado e pré-registrado). Restam para
+PRs próprios: PEPs/OpenSanctions (`yente`) e CEAF no grafo (sancionado
+como sócio de fornecedor, via O5).
 
 ## Horizonte 2: modelo "follow the money"
 
@@ -143,18 +150,21 @@ pré-registrado.
 
 ### O6. Operadores de grafo em produção
 
-O `detect_collusion` já está em produção: o `task_detect` emite o sinal
-`collusion_network` por par de fornecedores (limiar
+**Entregue.** O `detect_collusion` já está em produção: o `task_detect`
+emite o sinal `collusion_network` por par de fornecedores (limiar
 `DETECTION_COLLUSION_MIN_WINS`, best-effort), e o `trace_ownership`
-responde na API em `GET /v1/graph/ownership/{cnpj}`. O que falta é
-completar a trinca de `src/capiba/detection/graphs.py`: trazer o
-`anomalous_geography`, hoje fora do pipeline por não haver fonte de
-latitude/longitude, e gravar as evidências dos sinais de grafo.
+responde na API em `GET /v1/graph/ownership/{cnpj}`. A trinca foi
+completada: o `anomalous_geography` ganhou fonte de
+latitude/longitude (silver `municipalities` + referência vendored em
+`src/capiba/ingestion/reference/municipios.csv`, enriquecimento via
+`ingestion/geography.py`) e está em produção (`detection/geography.py`,
+validado pela bateria D-09, emitido best-effort no `task_detect`), e as
+evidências dos sinais de grafo são gravadas via `evidence/` (pacote
+`graph_batch` do `collusion_network` em `evidence/packages.py`).
 
-**Depende de**: O4 e de uma fonte de geolocalização para o
-`anomalous_geography`. **Critério de aceitação**: post step
-`detect_graph` no spec diário; sinal com as evidências (subgrafo)
-gravadas via `evidence/`.
+**Critério de aceitação** (cumprido, com adaptação): em vez de um post
+step `detect_graph` separado, o `task_detect` único cobre todos os
+sinais; sinais com as evidências gravadas via `evidence/`.
 
 ## Horizonte 3: fontes para o território
 
@@ -163,27 +173,33 @@ transparência é mais fraca e a pauta vive mais perto das pessoas.
 
 ### O7. Diários oficiais municipais via Querido Diário
 
-Ingerir diários oficiais pela API/toolkit do Querido Diário (OKBR, MIT)
-como fonte declarativa nova.
+**Entregue** (pendente só a primeira run real no cluster, conforme
+`docs/gaps.md`). Ingerir diários oficiais pela API/toolkit do Querido
+Diário (OKBR, MIT) como fonte declarativa nova.
 
 **Por quê**: leva a plataforma ao nível municipal, onde o jornalismo
 comunitário vive e onde a transparência é mais fraca. **Onde**: source
-`querido_diario` no registry e spec YAML; o NLP (`semantic_gap`,
-`detect_clone`) ganha matéria-prima textual. **Critério de aceitação**:
-pipeline diário de um município-piloto persistindo no bronze com
-validação declarada.
+`querido_diario` no registry (fórmula `documents_collect`) e spec
+`dags/pipelines/daily_querido_diario.yaml` do município-piloto Recife
+(IBGE 2611606); o NLP (`semantic_gap`,
+`detect_clone`) ganha matéria-prima textual. **Critério de aceitação**
+(cumprido): pipeline diário de um município-piloto persistindo no bronze
+com validação declarada (`gazette_rules`).
 
 ### O8. Dados eleitorais TSE: doações × contratos
 
-Fonte TSE (já no roadmap) com o cruzamento clássico: doadores de campanha
-que viram fornecedores do ente apoiado.
+**Entregue** (P8/volume real pendente, conforme item editorial 9 do
+`docs/gaps.md`). Fonte TSE (já no roadmap) com o cruzamento clássico:
+doadores de campanha que viram fornecedores do ente apoiado.
 
 **Por quê**: é o "indicador de conexões políticas" do CRI estendido e uma
 das pautas mais publicáveis do jornalismo de dados brasileiro. **Onde**:
 spec `monthly_tse.yaml` (dump periódico); cruzamento no gold via dbt;
-sinal `political_connection`. **Critério de aceitação**: pré-registro com
+sinal `political_connection`. **Critério de aceitação** (cumprido no
+regime sintético, PR-D-08/R-D-08): pré-registro com
 critério de refutação (doação lícita não é indício por si; o sinal exige
-coincidência temporal e concentração); mart publicado.
+coincidência temporal e concentração); mart `political_connections`
+publicado.
 
 ## Horizonte 4: publicação e verificação comunitária
 
@@ -193,15 +209,17 @@ financiou.
 
 ### O9. Pacote de evidências reproduzível por sinal
 
-Cada sinal publicado carrega um pacote: query/agregação que o gerou,
-janela temporal, versão do código (SHA do artefato), cópia das linhas
-fonte e hash. É o "diário de dados" automatizado.
+**Entregue.** Cada sinal publicado carrega um pacote: query/agregação que
+o gerou, janela temporal, versão do código (SHA do artefato), cópia das
+linhas fonte e hash. É o "diário de dados" automatizado.
 
 **Por quê**: é o que permite à segunda pessoa reproduzir a análise antes
 da publicação, e a defesa jurídica depois dela. **Onde**: a vertical
-`evidence/` já guarda e serve arquivos pelo router `/v1/evidence`; falta
-integrar o `EvidenceStorage` ao post step `detect` e abrir o endpoint
-`GET /signals/{id}/evidence` na API. **Critério de aceitação**: dado um
+`evidence/` guarda e serve arquivos pelo router `/v1/evidence`; o
+`task_detect` grava os pacotes best-effort no `EvidenceStorage`
+(`evidence/packages.py`) e o endpoint `GET /v1/signals/{key}/evidence`
+(`api/routers/signals.py`) lista os pacotes do sinal. **Critério de
+aceitação** (cumprido): dado um
 sinal, um terceiro executa o pacote e obtém o mesmo resultado (teste
 BDD).
 
@@ -242,6 +260,12 @@ aceitação**: despacho end-to-end com teste de integração; preferências de
 assinatura por município/órgão.
 
 ## Ordem sugerida
+
+A ordem abaixo é a registrada na pesquisa de 2026-08-18; hoje os itens
+O1–O12 estão entregues ou em andamento (status detalhado em
+`docs/gaps.md`), e o que resta são os desdobramentos anotados nos itens
+(NLP sobre o corpus de diários, PEPs/OpenSanctions, CEAF no grafo) e o
+modo leve de onboarding.
 
 1. **O9 + O10** (verificação e triagem): transformam sinais em produto
    editorial e criam o laço de rótulos humanos.

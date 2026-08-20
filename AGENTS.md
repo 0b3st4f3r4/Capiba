@@ -247,8 +247,9 @@ do dispatcher async) disparam do `task_detect` (sinais ≥
 
 ## Saída pública e pós-steps
 
-A `gold_detection` termina com o post step `export_public_marts`
-(`pipeline/public_export.py`): exporta os marts liberados para o bucket
+A `gold_detection` dispara, após o `dbt_run`, o `detect` e o post step
+`export_public_marts` em paralelo; o export
+(`pipeline/public_export.py`) leva os marts liberados para o bucket
 `capiba-public` (`PUBLIC_EXPORT_BUCKET`) em CSV + Parquet + manifest,
 versionado `marts/<mart>/dt=<data-da-run>/` (leitura via Trino, escrita
 via client MinIO do lake). Allowlist LGPD declarativa e **fail-closed** —
@@ -310,8 +311,8 @@ minio, s3, trino, airflow); `scripts/setup.sh` mapeia os hosts no
 `/etc/hosts`. Certificado self-signed (wildcard `*.capiba.local`,
 `scripts/gen-certs.sh`, secret `capiba-tls`) — o browser pede exceção.
 HTTP na 8088 segue respondendo (sem redirect). CI em
-`.github/workflows/ci.yml` (ruff, mypy, pytest com piso de 85% — também
-aplicado pelo hook `pytest-cov` do pre-commit).
+`.github/workflows/ci.yml` (isort, ruff, mypy, pytest com piso de 85% —
+também aplicado pelo hook `pytest-cov` do pre-commit — e bandit).
 
 SSO: Keycloak é o IdP OIDC de todas as UIs — portal capiba-dashboard na
 API (`/`, `api/portal.py`), Grafana, Airflow (FAB OAuth), MinIO Console,
@@ -413,7 +414,8 @@ andamento sem autorização explícita.
 - O desenvolvedor humano revisa o diff, roda `make test` e valida localmente.
 - O push para o remoto é feito manualmente pelo usuário; não executamos
   `git push` sem confirmação explícita.
-- Após o push, o CI em `.github/workflows/ci.yml` valida ruff, mypy e pytest.
+- Após o push, o CI em `.github/workflows/ci.yml` valida isort, ruff,
+  mypy, pytest e bandit.
 
 ## Decisões arquiteturais — requerem aprovação explícita
 

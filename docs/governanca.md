@@ -115,13 +115,22 @@ Detalhes em `docs/ingestao.md`.
 
 Os marts gold (Iceberg, via dbt-trino sobre o catálogo `gold`) são
 `contracts_daily`, `contracts_by_agency`, `supplier_stats`,
-`data_quality_daily`, `pod_usage_hourly` e `platform_cost_daily`. Acima
-deles, os modelos de serving em `dbt/models/serving/`
+`contract_amendments`, `amendments_by_agency`, `amendments_by_supplier`,
+`contract_red_flags`, `red_flags_by_agency`, `red_flags_by_supplier`,
+`political_connections`, `data_quality_daily`, `pod_usage_hourly` e
+`platform_cost_daily`. Ao lado dos marts, a tabela gold `fraud_signals`
+(Iceberg, escrita diretamente pelo `task_detect`, fora do dbt) guarda os
+sinais de detecção. Acima deles, os modelos de serving em `dbt/models/serving/`
 (`serving_supplier_stats`, `serving_municipality_daily`) são
 materializados no PostgreSQL DWH (database `dwh`) através do catálogo
 Trino `dwh`, uma camada de baixa latência para consumo direto, separada
 do lake analítico. O consumo acontece no Grafana, com datasource Trino
-provisionado e dashboards como código em `charts/capiba/dashboards/`.
+provisionado e dashboards como código em `charts/capiba/dashboards/`. O
+subconjunto liberado para consumo público segue uma allowlist
+fail-closed (`src/capiba/pipeline/public_export.py`): é exportado em
+CSV + Parquet para o bucket `capiba-public` e servido pela API pública
+(`/v1/public/marts`, sem auth), e um mart novo sem classificação LGPD
+falha o guarda.
 
 ## Federação: preparando as comunidades de dados
 
@@ -155,9 +164,17 @@ tratamento recai sobre dados já tornados públicos pelo próprio poder
 público, para finalidade compatível (transparência e controle social). A
 minimização é estrutural: o schema `Contract` carrega apenas os campos
 necessários à detecção, o bronze guarda o payload bruto para auditoria e
-os marts e o serving expõem agregações. O ponto de atenção é o roadmap:
-se fontes privadas entrarem, cada uma exige análise de base legal própria
-antes de a spec ser aprovada.
+os marts e o serving expõem agregações. A classificação por artefato é
+explícita: a allowlist do export público (`PUBLIC_MARTS` e
+`EXCLUDED_MARTS` em `src/capiba/pipeline/public_export.py`) registra a
+justificativa de cada mart — `political_connections` entra porque
+mascara CPF na origem, `contract_red_flags` fica de fora porque
+`supplier_id` pode ser CPF completo. As assinaturas de alerta por
+município (`src/capiba/db/subscriptions.py`) tratam o e-mail como dado
+pessoal mínimo: a coleção guarda e-mail, município e status, e apenas o
+hash sha256 do token de confirmação/cancelamento. O ponto de atenção é
+o roadmap: se fontes privadas entrarem, cada uma exige análise de base
+legal própria antes de a spec ser aprovada.
 
 **LAI (Lei 12.527/2011).** O Capiba opera *sobre* o que a LAI e os
 portais de transparência já publicam; não há coleta de dados
@@ -187,8 +204,13 @@ O **revisor de experimentos** aprova pré-registros em
 `docs/preregistrations/PR-D-*.md` antes de qualquer bateria de detecção
 e exige publicação de resultados, inclusive negativos, em
 `docs/results/R-D-*.md` (ver `docs/preregistrations/README.md`). O
-**mantenedor do projeto** homologa o conjunto (ver "Processo de
-desenvolvimento" no AGENTS.md); nenhum push é automático.
+**revisor de triagem** confirma, rejeita ou publica sinais na coleção
+`signal_reviews` (`src/capiba/db/triage.py`, transições
+`pending_review` → `confirmed`/`rejected`/`published`, revisor
+obrigatório), apoiado pelos pacotes de evidência reproduzíveis
+(`src/capiba/evidence/`); publicar é o gatilho dos alertas por
+município. O **mantenedor do projeto** homologa o conjunto (ver
+"Processo de desenvolvimento" no AGENTS.md); nenhum push é automático.
 
 Os artefatos operacionalizam os papéis: a spec YAML é a ata do steward,
 o pré-registro é a ata do experimento e o `data_quality_daily` é a pauta

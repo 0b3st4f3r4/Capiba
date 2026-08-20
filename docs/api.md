@@ -40,17 +40,21 @@ flowchart TB
         router_evidence["/v1/evidence"]
         router_graph["/v1/graph/ownership/{cnpj}"]
         router_triage["/v1/triage"]
+        router_public["/v1/public/*"]
+        router_subscriptions["/v1/subscriptions"]
         portal["Portal /<br/>SSO OIDC"]
         services["Services<br/>consulta ArangoDB + operadores"]
         operators["Operadores<br/>statistical.py · ml_models.py"]
     end
 
-    client["Cliente HTTP / Browser"] --> router_signals & router_ranking & router_evidence & router_graph & router_triage & portal
+    client["Cliente HTTP / Browser"] --> router_signals & router_ranking & router_evidence & router_graph & router_triage & router_public & router_subscriptions & portal
     router_signals --> services
     router_ranking --> services
     router_graph --> arango
     router_triage --> arango
+    router_subscriptions --> arango
     router_evidence --> minio[("MinIO<br/>bucket bronze")]
+    router_public --> minio
     portal --> services
     services --> operators
     services --> arango[("ArangoDB")]
@@ -353,7 +357,12 @@ a chave de triagem `{entity_type}:{entity_id}:{signal_type}`. O
 referenciando o lote via `batch_sha256` — o download do conteúdo segue pelo
 `GET /v1/evidence/{sha256}`. Nesses pacotes, o metadado `signal_key`
 substitui o `contract_id` obrigatório. Sinais derivados de grafo
-(`collusion_network`) são marcados `reproducible: false` no manifesto.
+(`collusion_network`) carregam um terceiro artefato — o pacote de snapshot
+do grafo (`kind: "graph_batch"`, com o snapshot de elegibilidade
+`{buyer, supplier, wins}` e `snapshot_sha256`) — e seus manifestos são
+`reproducible: true`, referenciando o lote do grafo via `graph_sha256`;
+`reproducible: false` é apenas o fallback best-effort quando o snapshot
+não pôde ser gravado (ArangoDB indisponível).
 
 **Response:** mesma estrutura da listagem por contrato, acrescida de
 `signal_key` e `batch_sha256`.
@@ -398,7 +407,11 @@ Aplica uma transição editorial a um sinal. As transições permitidas são
 `pending_review` para `confirmed` ou `rejected`, `confirmed` para
 `published` ou `rejected`, e `rejected` de volta para `confirmed`;
 `published` é terminal. O `reviewer` é obrigatório em toda transição e o
-`reason` é obrigatório no `rejected`.
+`reason` é obrigatório no `rejected`. A transição para `published`
+dispara, best-effort, o envio de alertas por e-mail aos assinantes
+confirmados do município do sinal (ver "Assinaturas de alertas" abaixo) —
+sinais sem município resolvível não disparam, e uma falha de envio nunca
+reverte a transição.
 
 **Body:**
 
@@ -447,3 +460,39 @@ schema dbt), pipelines de ingestão (das specs YAML) e a classificação LGPD
 que rege o export (marts exportados e excluídos, com justificativa).
 Degrada graciosamente quando `dags/` e `dbt/` não estão na imagem da API
 (seções vazias).
+
+## Assinaturas de alertas
+
+Rotas abertas (sem autenticação) para o jornalista comunitário assinar
+alertas de um município: quando um sinal do município é publicado na
+triagem, os assinantes confirmados recebem um e-mail com o link do pacote
+de evidências. A assinatura é por código IBGE de 7 dígitos e tem dois
+estágios (`pending` → `confirmed`), confirmada por um token opaco
+permanente entregue por e-mail — o mesmo link confirma e cancela, e só o
+hash SHA-256 do token é persistido.
+
+### POST /v1/subscriptions
+
+Registra uma assinatura pendente e envia o e-mail de confirmação.
+
+**Body:**
+
+```json
+{ "email": "ana@example.org", "ibge_code": "2611606" }
+```
+
+A resposta (201) é sempre genérica — o endpoint nunca revela se o e-mail
+já tem assinatura (anti-enumeração).
+
+**Erros:** `422` (código IBGE desconhecido), `503` (ArangoDB indisponível).
+
+### GET /v1/subscriptions/confirm?token=...
+
+Confirma uma assinatura pendente via token de gerenciamento.
+
+### GET /v1/subscriptions/unsubscribe?token=...
+
+Cancela a assinatura via token de gerenciamento (o mesmo do e-mail de
+confirmação).
+
+**Erros (ambas):** `404` (token inválido), `503` (ArangoDB indisponível).
