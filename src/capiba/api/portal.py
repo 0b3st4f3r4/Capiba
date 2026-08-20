@@ -144,14 +144,18 @@ def _count_fraud_signals() -> int:
 
 
 def collect_stats() -> dict[str, int | None]:
-    """Cross-service lake statistics; failures degrade to None, never break."""
+    """Cross-service lake statistics; failures degrade to None, never break.
+
+    Uses Trino counts (``lake.count_*``): scanning the full silver into
+    memory just to count rows OOMKilled the API pod on real volume.
+    """
     try:
-        contracts: int | None = len(lake.read_silver_contracts())
+        contracts: int | None = lake.count_silver_contracts()
     except Exception as exc:
         logger.warning("Silver contracts stat unavailable: %s", exc)
         contracts = None
     try:
-        fraud_signals: int | None = len(lake.read_fraud_signals())
+        fraud_signals: int | None = lake.count_fraud_signals()
     except Exception as exc:
         logger.warning("Fraud signals stat unavailable: %s", exc)
         fraud_signals = None

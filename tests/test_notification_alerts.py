@@ -165,11 +165,24 @@ class TestTaskWiring:
 
     @patch("capiba.pipeline.tasks.notify_fraud_signals")
     @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
     def test_task_detect_notifies_signals(
-        self, mock_lake: MagicMock, mock_notify: MagicMock
+        self,
+        mock_get_db: MagicMock,
+        mock_eligibility: MagicMock,
+        mock_lake: MagicMock,
+        mock_notify: MagicMock,
     ) -> None:
-        """task_detect must notify the computed signals (best-effort)."""
+        """task_detect must notify the computed signals (best-effort).
+
+        The graph DB and the eligibility AQL are mocked: without this the
+        test escapes to the real ArangoDB whenever a port-forward is up and
+        the pair derivation explodes combinatorially on real data.
+        """
         from capiba.pipeline.tasks import task_detect
+
+        mock_eligibility.return_value = []
 
         mock_lake.read_silver_contracts.return_value = [
             {

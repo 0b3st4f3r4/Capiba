@@ -286,6 +286,19 @@ regime/calibração (baterias) são `@pytest.mark.slow` (ative com
 Testes BDD (pytest-bdd) em `tests/bdd/`, features em
 `tests/bdd/features/*.feature`.
 
+Teto da suíte rápida (`make test`): **2 minutos** (referência 2026-08-20:
+~45 s, 1075 testes). Se estourar, há teste vazando para infra real —
+investigue antes de aceitar. Causa observada: testes de wiring do
+`task_detect` sem mock de `get_capiba_db`/`collusion_eligibility`
+executam o AQL de elegibilidade no ArangoDB real quando os port-forwards
+estão ativos, e a derivação de pares
+(`graphs.pair_buyers_from_eligibility`) explode combinatorialmente em
+volume real (travamento de >10 min a 60% CPU). Todo teste unitário deve
+mockar os clientes de infra (`get_capiba_db`, `lake`, storage MinIO) —
+o padrão de `tests/test_pipeline.py` (`@patch` em
+`capiba.pipeline.tasks.get_capiba_db` e `collusion_eligibility`) é a
+referência.
+
 Experimentos de detecção (novos sinais, calibração) seguem doutrina de
 pré-registro (adaptada do programa Tanajura): predição numérica
 falsificável com critérios de sucesso **e de refutação** em

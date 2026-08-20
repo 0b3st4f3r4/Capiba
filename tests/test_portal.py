@@ -80,8 +80,8 @@ def keycloak_token(keycloak_metadata: None, monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.fixture
 def stats_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fixture: lake stats available with deterministic counts."""
-    monkeypatch.setattr(lake, "read_silver_contracts", lambda: [{}, {}, {}])
-    monkeypatch.setattr(lake, "read_fraud_signals", lambda: [{}, {}, {}, {}, {}, {}, {}])
+    monkeypatch.setattr(lake, "count_silver_contracts", lambda: 3)
+    monkeypatch.setattr(lake, "count_fraud_signals", lambda: 7)
 
 
 @pytest.fixture
@@ -91,8 +91,8 @@ def stats_down(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raise() -> Any:
         raise ConnectionError("lake is down")
 
-    monkeypatch.setattr(lake, "read_silver_contracts", _raise)
-    monkeypatch.setattr(lake, "read_fraud_signals", _raise)
+    monkeypatch.setattr(lake, "count_silver_contracts", _raise)
+    monkeypatch.setattr(lake, "count_fraud_signals", _raise)
 
 
 @pytest.mark.usefixtures("stats_ok")
@@ -187,8 +187,8 @@ class TestStatsHelpers:
         def _raise() -> Any:
             raise ConnectionError("down")
 
-        monkeypatch.setattr(lake, "read_silver_contracts", _raise)
-        monkeypatch.setattr(lake, "read_fraud_signals", lambda: [{}, {}, {}, {}, {}])
+        monkeypatch.setattr(lake, "count_silver_contracts", _raise)
+        monkeypatch.setattr(lake, "count_fraud_signals", lambda: 5)
         assert portal.collect_stats() == {"contracts": None, "fraud_signals": 5}
 
     def test_register_keycloak_idempotent(

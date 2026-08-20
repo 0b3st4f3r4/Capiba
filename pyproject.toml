@@ -16,6 +16,8 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic",
+    "email-validator",
+    "python-multipart",
     "python-arango",
     "pandas",
     "numpy",

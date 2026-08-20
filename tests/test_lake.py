@@ -281,6 +281,51 @@ def test_read_fraud_signals_without_table(local_catalog: Path) -> None:
     assert lake.read_fraud_signals() == []
 
 
+def test_count_silver_contracts_sqlite_fallback(local_catalog: Path) -> None:
+    """With the offline catalog the count degrades to a local scan."""
+    lake.write_silver([_contract("C001"), _contract("C002")], run_date=RUN_DATE)
+
+    assert lake.count_silver_contracts() == 2
+
+
+def test_count_fraud_signals_sqlite_fallback(local_catalog: Path) -> None:
+    """With the offline catalog the count degrades to a local scan."""
+    signals = [
+        {"entity_type": "supplier", "entity_id": "12345678000199", "signal_type": "price", "score": 0.9, "details": "{}"},
+    ]
+    lake.write_fraud_signals(signals, run_date=RUN_DATE)
+
+    assert lake.count_fraud_signals() == 1
+
+
+def test_count_silver_contracts_trino(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In the cluster the count is a Trino count(*) over the silver catalog."""
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+    monkeypatch.setattr(trino, "run_query", lambda sql: [{"n": 42}])
+
+    assert lake.count_silver_contracts() == 42
+
+
+def test_count_fraud_signals_trino(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In the cluster the count is a Trino count(*) over the gold catalog."""
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+
+    captured: dict[str, str] = {}
+
+    def _run_query(sql: str) -> list[dict[str, Any]]:
+        captured["sql"] = sql
+        return [{"n": 7}]
+
+    monkeypatch.setattr(trino, "run_query", _run_query)
+
+    assert lake.count_fraud_signals() == 7
+    assert captured["sql"] == "SELECT count(*) AS n FROM gold.capiba.fraud_signals"
+
+
 def test_write_fraud_signals_roundtrip(local_catalog: Path) -> None:
     """Gold Iceberg table stores one row per detected signal."""
     signals = [

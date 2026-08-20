@@ -66,8 +66,8 @@ def stats_down(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raise() -> Any:
         raise ConnectionError("down")
 
-    monkeypatch.setattr(lake, "read_silver_contracts", _raise)
-    monkeypatch.setattr(lake, "read_fraud_signals", _raise)
+    monkeypatch.setattr(lake, "count_silver_contracts", _raise)
+    monkeypatch.setattr(lake, "count_fraud_signals", _raise)
 
 
 @when("o usuário acessa a página inicial do portal")

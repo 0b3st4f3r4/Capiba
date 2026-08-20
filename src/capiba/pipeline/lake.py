@@ -90,6 +90,10 @@ ICEBERG_NAMESPACE = "capiba"
 # delete-half of the silver contracts upsert.
 SILVER_TRINO_CATALOG = "silver"
 
+# Trino catalog bound to the gold warehouse — used for row counts that must
+# not scan the whole table into memory (portal stats).
+GOLD_TRINO_CATALOG = "gold"
+
 # Ids per DELETE statement of the silver contracts upsert (keeps the
 # generated SQL comfortably below Trino's query length limits).
 UPSERT_DELETE_CHUNK_SIZE = 500
@@ -800,6 +804,25 @@ def read_silver_contracts() -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], rows)
 
 
+def count_silver_contracts() -> int:
+    """Counts rows of the silver ``contracts`` table without scanning it.
+
+    Goes through Trino (``count(*)``) so the API never materializes the
+    whole table in memory just for a number — the full scan OOMKilled the
+    API pod on real PNCP volume (2026-08-20). With the offline SQLite
+    catalog there is no Trino, so it degrades to a local scan (small data).
+
+    Returns:
+        Row count of the silver ``contracts`` table.
+    """
+    if ICEBERG_CATALOG_URI.startswith("sqlite"):
+        return len(read_silver_contracts())
+    rows = trino.run_query(
+        f"SELECT count(*) AS n FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contracts"  # nosec: B608
+    )
+    return int(rows[0]["n"]) if rows else 0
+
+
 def delete_silver_entities_partition(entity: str, run_date: date) -> None:
     """Deletes the entity's silver rows of one partition day through Trino.
 
@@ -954,6 +977,23 @@ def read_fraud_signals() -> list[dict[str, Any]]:
         return []
     rows = table.scan().to_pandas().to_dict("records")
     return cast(list[dict[str, Any]], rows)
+
+
+def count_fraud_signals() -> int:
+    """Counts rows of the gold ``fraud_signals`` table without scanning it.
+
+    Same contract as ``count_silver_contracts``: Trino ``count(*)`` in the
+    cluster, local scan with the offline SQLite catalog.
+
+    Returns:
+        Row count of the gold ``fraud_signals`` table.
+    """
+    if ICEBERG_CATALOG_URI.startswith("sqlite"):
+        return len(read_fraud_signals())
+    rows = trino.run_query(
+        f"SELECT count(*) AS n FROM {GOLD_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.fraud_signals"  # nosec: B608
+    )
+    return int(rows[0]["n"]) if rows else 0
 
 
 def write_fraud_signals(
