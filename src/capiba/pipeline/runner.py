@@ -546,7 +546,8 @@ def _dest_arangodb_graph(
     """Best-effort: contracts upserted into the ArangoDB graph.
 
     For the file_dump formula, loads the graph from the silver CNPJ entity
-    tables (companies/partners + partner_of edges) in batches instead.
+    tables (FtM companies/persons + ownership/directorship edges) in
+    batches instead.
     """
     if spec.formula == "file_dump":
         summary = persist_cnpj_entities(execution_date=execution_date.isoformat())

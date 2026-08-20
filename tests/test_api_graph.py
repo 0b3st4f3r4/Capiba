@@ -63,12 +63,12 @@ class TestOwnership:
         assert response.json()["max_depth"] == 5
         bind_vars = db.aql.execute.call_args.kwargs["bind_vars"]
         assert bind_vars["maxDepth"] == 5
-        assert bind_vars["cnpj"] == CNPJ
+        assert bind_vars["cnpj"] == "12345678"  # cnpj_basico (vertex key)
 
     def test_ownership_unknown_cnpj_returns_empty(
         self, client: TestClient, db: MagicMock
     ) -> None:
-        """A CNPJ without owns edges must return an empty path list."""
+        """A CNPJ without ownership edges must return an empty path list."""
         db.aql.execute.return_value = iter([])
 
         response = client.get(f"/v1/graph/ownership/{CNPJ}")
@@ -118,3 +118,114 @@ class TestOwnership:
         with pytest.raises(HTTPException) as exc_info:
             get_db()
         assert exc_info.value.status_code == 503
+
+
+class TestPartnersOfBuyer:
+    """Tests for GET /v1/graph/partners/{siafi_code}."""
+
+    def test_partners_served(self, client: TestClient, db: MagicMock) -> None:
+        """Rows returned by partners_of_buyer must be served as-is."""
+        rows = [
+            {
+                "supplier_cnpj": CNPJ,
+                "company": "12345678",
+                "edge": "ownership",
+                "partner_key": "p1",
+                "partner_schema": "Person",
+                "partner_name": "JOAO SILVA",
+            }
+        ]
+        db.aql.execute.return_value = iter(rows)
+
+        response = client.get("/v1/graph/partners/900000")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["siafi_code"] == "900000"
+        assert body["partners"] == rows
+        bind_vars = db.aql.execute.call_args.kwargs["bind_vars"]
+        assert bind_vars["siafiCode"] == "900000"
+
+    def test_invalid_siafi_code_returns_422(
+        self, client: TestClient, db: MagicMock
+    ) -> None:
+        """A non-numeric SIAFI code must return a validation error."""
+        response = client.get("/v1/graph/partners/ABC")
+
+        assert response.status_code == 422
+        db.aql.execute.assert_not_called()
+
+    def test_db_failure_returns_503(self, client: TestClient, db: MagicMock) -> None:
+        """A database failure during the traversal must return 503."""
+        db.aql.execute.side_effect = ConnectionError("arango down")
+
+        response = client.get("/v1/graph/partners/900000")
+
+        assert response.status_code == 503
+        assert "unavailable" in response.json()["detail"]
+
+
+class TestFtmExport:
+    """Tests for GET /v1/graph/ftm/{cnpj}."""
+
+    def test_ftm_entities_served(self, client: TestClient, db: MagicMock) -> None:
+        """The subgraph exports as FtM entities over HTTP."""
+        db.aql.execute.return_value = iter(
+            [
+                {
+                    "company": {
+                        "_id": "companies/12345678",
+                        "_key": "12345678",
+                        "razao_social": "ACME LTDA",
+                        "cnpj_basico": "12345678",
+                    },
+                    "inbound": [],
+                    "outbound": [],
+                }
+            ]
+        )
+
+        response = client.get(f"/v1/graph/ftm/{CNPJ}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["entity"] == CNPJ
+        assert body["entities"] == [
+            {
+                "id": "company-12345678",
+                "schema": "Company",
+                "properties": {
+                    "name": ["ACME LTDA"],
+                    "registrationNumber": ["12345678"],
+                },
+            }
+        ]
+
+    def test_unknown_cnpj_returns_empty_entities(
+        self, client: TestClient, db: MagicMock
+    ) -> None:
+        """A CNPJ absent from the graph exports an empty entity list."""
+        db.aql.execute.return_value = iter(
+            [{"company": None, "inbound": [], "outbound": []}]
+        )
+
+        response = client.get(f"/v1/graph/ftm/{CNPJ}")
+
+        assert response.status_code == 200
+        assert response.json()["entities"] == []
+
+    def test_invalid_cnpj_returns_422(self, client: TestClient, db: MagicMock) -> None:
+        """A malformed CNPJ must return a validation error."""
+        response = client.get("/v1/graph/ftm/123")
+
+        assert response.status_code == 422
+        db.aql.execute.assert_not_called()
+
+    def test_db_failure_returns_503(self, client: TestClient, db: MagicMock) -> None:
+        """A database failure during the export must return 503."""
+        db.aql.execute.side_effect = ConnectionError("arango down")
+
+        response = client.get(f"/v1/graph/ftm/{CNPJ}")
+
+        assert response.status_code == 503
+        assert "unavailable" in response.json()["detail"]

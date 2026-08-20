@@ -79,7 +79,7 @@ class TestGenerate:
         assert len(graph["won"]) == 36
         assert len(graph["suppliers"]) == 11  # 4 planted + 3 control + 4 solo
         assert len(graph["companies"]) == 7  # C-A..C-G
-        assert len(graph["owns"]) == 5  # 3 chain + 2 cycle
+        assert len(graph["ownership"]) == 5  # 3 chain + 2 cycle
 
     def test_wins_planted_as_registered(self) -> None:
         """Wins per (buyer, supplier) match the collusion spec."""
@@ -97,10 +97,10 @@ class TestGenerate:
         assert wins[("CTRL-B1", "92000000000001")] == 2
         assert wins[("SOLO-B4", "93000000000004")] == 4
 
-    def test_owns_structure(self) -> None:
-        """The owns edges are the chain plus the cycle; C-E is isolated."""
+    def test_ownership_structure(self) -> None:
+        """The ownership edges are the chain plus the cycle; C-E is isolated."""
         graph = battery_graphs.generate(CONFIG, seed=7)
-        edges = {(e["_from"], e["_to"]) for e in graph["owns"]}
+        edges = {(e["_from"], e["_to"]) for e in graph["ownership"]}
         assert edges == {
             ("companies/C-A", "companies/C-B"),
             ("companies/C-B", "companies/C-C"),

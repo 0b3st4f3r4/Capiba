@@ -34,10 +34,15 @@ VERTEX_COLLECTIONS = [
     "contracts",
     "buyers",
     "companies",
-    "partners",
+    "persons",
 ]
-EDGE_COLLECTIONS = ["participates", "won", "owns", "partner_of"]
+EDGE_COLLECTIONS = ["participates", "won", "ownership", "directorship"]
 
+# FtM vocabulary (O4): companies/persons are the FtM Company/Person
+# vertices; ownership ({persons,companies} -> companies) and directorship
+# (persons -> companies) are the FtM Ownership/Directorship edges. The
+# legacy ``partners``/``partner_of``/``owns`` collections were renamed away
+# (the graph data is reproducible from the silver layer).
 EDGE_DEFINITIONS: list[dict[str, Any]] = [
     {
         "edge_collection": "participates",
@@ -50,13 +55,13 @@ EDGE_DEFINITIONS: list[dict[str, Any]] = [
         "to_vertex_collections": ["bids", "contracts"],
     },
     {
-        "edge_collection": "owns",
-        "from_vertex_collections": ["companies"],
+        "edge_collection": "ownership",
+        "from_vertex_collections": ["persons", "companies"],
         "to_vertex_collections": ["companies"],
     },
     {
-        "edge_collection": "partner_of",
-        "from_vertex_collections": ["partners"],
+        "edge_collection": "directorship",
+        "from_vertex_collections": ["persons"],
         "to_vertex_collections": ["companies"],
     },
 ]
@@ -111,7 +116,7 @@ def ensure_graph(db: StandardDatabase) -> Graph:
 
     Idempotent for graphs created by older versions: edge definitions
     missing from an existing graph are added in place (clusters created
-    before ``partner_of`` keep working).
+    before the FtM vocabulary keep working).
     """
     if db.has_graph(ARANGODB_GRAPH_NAME):
         graph = db.graph(ARANGODB_GRAPH_NAME)

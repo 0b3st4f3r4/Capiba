@@ -218,7 +218,7 @@ class TestGraphs:
         # Test data for ownership chain
         upsert_vertex(db, "companies", "E001", {"name": "Holding"})
         upsert_vertex(db, "companies", "E002", {"name": "Subsidiary"})
-        upsert_edge(db, "owns", "companies/E001", "companies/E002")
+        upsert_edge(db, "ownership", "companies/E001", "companies/E002")
 
         return db
 

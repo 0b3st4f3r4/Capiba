@@ -158,17 +158,18 @@ def persist_cnpj_entities(execution_date: str | None = None) -> dict[str, Any]:
     """Persists the silver CNPJ entities in the ArangoDB graph, in batches.
 
     Reads the silver ``companies``/``partners`` tables batch by batch and
-    bulk-upserts the graph vertices and ``partner_of`` edges, so the large
-    dump tables never materialize in memory.
+    bulk-upserts the FtM graph vertices (``companies``/``persons``) and
+    ``ownership``/``directorship`` edges, so the large dump tables never
+    materialize in memory.
 
     Args:
         execution_date: Execution date (metadata only).
 
     Returns:
-        Persistence summary ``{companies, partners, edges, errors}``
+        Persistence summary ``{companies, persons, edges, errors}``
         (or ``{"error": ...}`` on failure).
     """
-    totals = {"companies": 0, "partners": 0, "edges": 0, "errors": 0}
+    totals = {"companies": 0, "persons": 0, "edges": 0, "errors": 0}
     try:
         db = get_capiba_db()
         for entity in ("companies", "partners"):

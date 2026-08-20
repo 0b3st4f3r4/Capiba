@@ -129,6 +129,42 @@ def partner_key(cnpj_basico: str, nome: str | None, qualificacao: str | None) ->
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+# RFB qualification codes (Qualificacoes table of the dump): management
+# roles map to an FtM Directorship edge, equity roles to FtM Ownership;
+# the managing-partner codes carry both semantics.
+DIRECTORSHIP_QUALIFICATIONS = frozenset(
+    {
+        "05",  # Administrador
+        "08",  # Conselheiro de Administração
+        "10",  # Diretor
+        "16",  # Presidente
+        "17",  # Procurador
+    }
+)
+DUAL_QUALIFICATIONS = frozenset(
+    {
+        "28",  # Sócio-Gerente
+        "49",  # Sócio-Administrador
+    }
+)
+
+
+def edge_kind_for_qualificacao(qualificacao: str | None) -> str:
+    """Classifies an RFB partner qualification as an FtM edge kind.
+
+    Returns:
+        ``"ownership"`` (equity), ``"directorship"`` (management) or
+        ``"both"`` (managing partner). Unknown/missing codes default to
+        ``"ownership"``, the common case in the dump.
+    """
+    code = (qualificacao or "").strip().zfill(2)
+    if code in DUAL_QUALIFICATIONS:
+        return "both"
+    if code in DIRECTORSHIP_QUALIFICATIONS:
+        return "directorship"
+    return "ownership"
+
+
 class Company(BaseModel):
     """One row of an Empresas* dump file (silver ``companies`` table)."""
 
@@ -194,6 +230,11 @@ class Partner(BaseModel):
     qualificacao: str | None = None
     data_entrada: date | None = None
     faixa_etaria: str | None = None
+    cnpj_cpf_socio: str | None = None
+    pais: str | None = None
+    representante_legal: str | None = None
+    nome_representante: str | None = None
+    qualificacao_representante_legal: str | None = None
 
     @model_validator(mode="before")
     @classmethod

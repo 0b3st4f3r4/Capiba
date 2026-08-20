@@ -149,8 +149,9 @@ enviados; sem filtro, usam a data atual.
 ### GET /v1/graph/ownership/{cnpj}
 
 Traça a cadeia de titularidade (beneficial ownership) de uma empresa,
-seguindo as arestas `owns` do grafo ArangoDB (`trace_ownership` em
-`detection/graphs.py`, semântica validada pela bateria D-02).
+seguindo as arestas FtM `ownership` do grafo ArangoDB (`trace_ownership`
+em `detection/graphs.py`, semântica validada pela bateria D-02). O CNPJ é
+normalizado para o `cnpj_basico` (8 dígitos), a chave real da coleção.
 
 **Path params:**
 
@@ -164,7 +165,7 @@ seguindo as arestas `owns` do grafo ArangoDB (`trace_ownership` em
 |---|---|---|
 | `max_depth` | integer, opcional | Profundidade máxima da travessia (default 3, mínimo 1, máximo 10) |
 
-Um CNPJ sem arestas `owns` retorna `200` com `paths: []`. Os caminhos são
+Um CNPJ sem arestas `ownership` retorna `200` com `paths: []`. Os caminhos são
 simples (sem vértice repetido, ciclos bloqueados) e ordenados
 deterministicamente, com o vértice inicial incluído. Se o ArangoDB estiver
 indisponível, o endpoint responde `503`.
@@ -176,8 +177,72 @@ indisponível, o endpoint responde `503`.
   "entity": "12345678000195",
   "max_depth": 3,
   "paths": [
-    ["12345678000195", "partner-cpf-1"],
-    ["12345678000195", "partner-cpf-1", "98765432000100"]
+    ["12345678", "partner-cpf-1"],
+    ["12345678", "partner-cpf-1", "98765432"]
+  ]
+}
+```
+
+### GET /v1/graph/partners/{siafi_code}
+
+Lista os sócios (Person/Company) dos fornecedores de um órgão, por
+traversal: contratos do órgão → CNPJ do fornecedor → vértice FtM
+`companies` (cnpj_basico) → arestas `ownership`/`directorship` inbound
+(`partners_of_buyer` em `detection/graphs.py`).
+
+**Path params:**
+
+| Parâmetro | Tipo | Descrição |
+|---|---|---|
+| `siafi_code` | string, obrigatório | Código SIAFI do órgão (somente dígitos); inválido retorna `422` |
+
+**Response:**
+
+```json
+{
+  "siafi_code": "900000",
+  "partners": [
+    {
+      "supplier_cnpj": "12345678000195",
+      "company": "12345678",
+      "edge": "ownership",
+      "partner_key": "p1",
+      "partner_schema": "Person",
+      "partner_name": "JOAO SILVA"
+    }
+  ]
+}
+```
+
+### GET /v1/graph/ftm/{cnpj}
+
+Exporta o subgrafo de uma empresa (ela própria, sócios e participações)
+como entidades FollowTheMoney JSON (`{id, schema, properties}`),
+interoperável com OpenSanctions/Aleph (`db/ftm.py`). Empresa ausente do
+grafo retorna `200` com `entities: []`.
+
+**Path params:**
+
+| Parâmetro | Tipo | Descrição |
+|---|---|---|
+| `cnpj` | string, obrigatório | CNPJ sem formatação (14 dígitos); formato inválido retorna `422` |
+
+**Response:**
+
+```json
+{
+  "entity": "12345678000195",
+  "entities": [
+    {
+      "id": "company-12345678",
+      "schema": "Company",
+      "properties": {"name": ["ACME LTDA"], "registrationNumber": ["12345678"]}
+    },
+    {
+      "id": "ownership-persons_p1__companies_12345678",
+      "schema": "Ownership",
+      "properties": {"owner": ["person-p1"], "asset": ["company-12345678"]}
+    }
   ]
 }
 ```

@@ -130,8 +130,8 @@ class TestArangoDBConnector:
         assert {d["edge_collection"] for d in edge_definitions} == {
             "participates",
             "won",
-            "owns",
-            "partner_of",
+            "ownership",
+            "directorship",
         }
         assert result is mock_db.create_graph.return_value
 
@@ -139,14 +139,14 @@ class TestArangoDBConnector:
         """Must add edge definitions missing from an existing graph."""
         mock_db.has_graph.return_value = True
         graph = mock_db.graph.return_value
-        graph.has_edge_definition.side_effect = lambda name: name != "partner_of"
+        graph.has_edge_definition.side_effect = lambda name: name != "ownership"
 
         result = arangodb.ensure_graph(mock_db)
 
         mock_db.create_graph.assert_not_called()
         graph.create_edge_definition.assert_called_once_with(
-            edge_collection="partner_of",
-            from_vertex_collections=["partners"],
+            edge_collection="ownership",
+            from_vertex_collections=["persons", "companies"],
             to_vertex_collections=["companies"],
         )
         assert result is graph
@@ -202,7 +202,7 @@ class TestArangoDBConnector:
 
     def test_upsert_edge_without_data(self, mock_db: MagicMock) -> None:
         """Must insert an edge without extra payload."""
-        arangodb.upsert_edge(mock_db, "owns", "companies/E1", "companies/E2")
+        arangodb.upsert_edge(mock_db, "ownership", "companies/E1", "companies/E2")
 
         doc = mock_db.collection.return_value.insert.call_args.args[0]
         assert doc == {

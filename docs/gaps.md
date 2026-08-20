@@ -178,9 +178,17 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    sobre o silver `sanctions`). CEAF fora do escopo (CPF mascarado na fonte,
    confirmado ao vivo); PEPs/OpenSanctions (`yente` self-hosted) e fuzzy por
    nome ficam para PRs próprios.
-6. (aberto) **Esquema FollowTheMoney no grafo (O4).**
-   Person/Company/Ownership/Directorship no ArangoDB; prepara o
-   `trace_ownership` e a exportação FtM JSON.
+6. (feito) **Esquema FollowTheMoney no grafo (O4).** Vocabulário FtM:
+   vértices `companies` (Company) e `persons` (Person), arestas
+   `ownership` ({persons,companies}→companies) e `directorship`
+   (persons→companies) conforme a qualificação RFB
+   (`cnpj.edge_kind_for_qualificacao`); sócio PJ vira Company com aresta
+   ownership real (alimenta o `trace_ownership`); silver `partners`
+   ampliado com CPF parcial e representante legal (Directorship);
+   traversal "sócios de fornecedores de um órgão" em
+   `GET /v1/graph/partners/{siafi}` e export FtM JSON básico em
+   `GET /v1/graph/ftm/{cnpj}` (`db/ftm.py`). Merge
+   suppliers↔companies fica para o O5 (entity resolution).
 7. (aberto) **Entity resolution (O5).** Deduplicação de fornecedores e sócios
    entre bases; benchmark OpenSanctions Pairs; merges só acima de limiar
    pré-registrado.

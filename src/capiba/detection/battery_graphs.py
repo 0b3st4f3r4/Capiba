@@ -43,7 +43,7 @@ _BASE = date(2026, 1, 1)
 # Collections the adapted operators read (plain collections, no graph):
 # documents and edges.
 _DOCUMENT_COLLECTIONS = ["contracts", "suppliers", "companies"]
-_EDGE_COLLECTIONS = ["won", "owns"]
+_EDGE_COLLECTIONS = ["won", "ownership"]
 
 
 def battery_database_name(config: dict[str, Any]) -> str:
@@ -83,7 +83,7 @@ def generate(config: dict[str, Any], seed: int) -> dict[str, Any]:
 
     Returns:
         Dict with the ``suppliers``/``companies``/``contracts`` vertex
-        documents and the ``won``/``owns`` edge documents.
+        documents and the ``won``/``ownership`` edge documents.
     """
     rng = random.Random(seed)  # deterministic synthetic data, not cryptographic  # nosec B311
     suppliers: dict[str, dict[str, Any]] = {}
@@ -130,19 +130,19 @@ def generate(config: dict[str, Any], seed: int) -> dict[str, Any]:
         {"_key": key, "legal_name": f"Empresa {key} {rng.randint(100, 999)}"}
         for key in dict.fromkeys(company_keys)
     ]
-    owns = [
+    ownership_edges = [
         {"_from": f"companies/{src}", "_to": f"companies/{dst}"}
         for src, dst in pairwise(chain)
     ]
-    owns.append({"_from": f"companies/{cycle[0]}", "_to": f"companies/{cycle[1]}"})
-    owns.append({"_from": f"companies/{cycle[1]}", "_to": f"companies/{cycle[0]}"})
+    ownership_edges.append({"_from": f"companies/{cycle[0]}", "_to": f"companies/{cycle[1]}"})
+    ownership_edges.append({"_from": f"companies/{cycle[1]}", "_to": f"companies/{cycle[0]}"})
 
     return {
         "suppliers": list(suppliers.values()),
         "companies": companies,
         "contracts": contracts,
         "won": won,
-        "owns": owns,
+        "ownership": ownership_edges,
     }
 
 
@@ -157,8 +157,8 @@ def plant(db: StandardDatabase, graph: dict[str, Any]) -> None:
         upsert_vertex(db, "contracts", doc["_key"], data)
     for edge in graph["won"]:
         upsert_edge(db, "won", edge["_from"], edge["_to"])
-    for edge in graph["owns"]:
-        upsert_edge(db, "owns", edge["_from"], edge["_to"])
+    for edge in graph["ownership"]:
+        upsert_edge(db, "ownership", edge["_from"], edge["_to"])
 
 
 def _clear_collections(db: StandardDatabase) -> None:

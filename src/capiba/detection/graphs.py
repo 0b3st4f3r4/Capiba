@@ -148,11 +148,13 @@ def trace_ownership(
 
     Adapted semantics (PR-D-02, section 3): simple paths (no repeated
     vertex, cycles blocked via ``uniqueVertices: "path"``) OUTBOUND from
-    ``companies/<cnpj>`` over the ``owns`` edge collection, depth
-    1..``max_depth``.
+    ``companies/<cnpj_basico>`` over the FtM ``ownership`` edge collection
+    (O4 — fed with real corporate partners since then), depth
+    1..``max_depth``. A 14-digit CNPJ is normalized to its ``cnpj_basico``
+    (the vertex key).
 
     Args:
-        cnpj: Input CNPJ (unformatted).
+        cnpj: Input CNPJ (unformatted, 8 or 14 digits).
         max_depth: Maximum search depth.
         db: ArangoDB connection. If None, creates a new one.
 
@@ -164,13 +166,13 @@ def trace_ownership(
         db = get_capiba_db()
 
     query = """
-        FOR v, e, p IN 1..@maxDepth OUTBOUND CONCAT("companies/", @cnpj) owns
+        FOR v, e, p IN 1..@maxDepth OUTBOUND CONCAT("companies/", @cnpj) ownership
             OPTIONS {uniqueVertices: "path"}
             RETURN p.vertices[*]._key
     """
 
     bind_vars = {
-        "cnpj": cnpj,
+        "cnpj": cnpj[:8],
         "maxDepth": max_depth,
     }
 
@@ -179,6 +181,52 @@ def trace_ownership(
     paths = sorted(cast(list[list[str]], [list(row) for row in rows]))
     logger.info("Ownership paths found: %d", len(paths))
     return paths
+
+
+def partners_of_buyer(
+    siafi_code: str,
+    db: StandardDatabase | None = None,
+) -> list[dict[str, Any]]:
+    """Lists the partners (sócios) of the suppliers of a buyer.
+
+    O4 acceptance criterion ("sócios de fornecedores de um órgão"):
+    contracts of the buyer → supplier CNPJ (14d) → FtM ``companies``
+    vertex (``cnpj_basico``) → INBOUND ``ownership``/``directorship``
+    → persons/companies.
+
+    Args:
+        siafi_code: SIAFI code of the buying agency.
+        db: ArangoDB connection. If None, creates a new one.
+
+    Returns:
+        List of ``{supplier_cnpj, company, edge, partner_key,
+        partner_schema, partner_name}``, deduplicated and sorted
+        deterministically.
+    """
+    if db is None:
+        db = get_capiba_db()
+
+    query = """
+        FOR c IN contracts
+            FILTER c.buyer.siafi_code == @siafiCode
+            LET supplierCnpj = c.supplier.cnpj
+            FILTER supplierCnpj != null
+            FOR v, e IN 1..1 INBOUND CONCAT("companies/", LEFT(supplierCnpj, 8))
+                ownership, directorship
+                RETURN DISTINCT {
+                    supplier_cnpj: supplierCnpj,
+                    company: LEFT(supplierCnpj, 8),
+                    edge: PARSE_IDENTIFIER(e._id).collection,
+                    partner_key: v._key,
+                    partner_schema: v.schema,
+                    partner_name: v.nome != null ? v.nome : v.razao_social
+                }
+    """
+
+    rows = execute_aql(db, query, {"siafiCode": siafi_code})
+    rows.sort(key=lambda r: (r["supplier_cnpj"], r["partner_key"], r["edge"]))
+    logger.info("Partners of buyer %s: %d", siafi_code, len(rows))
+    return rows
 
 
 def anomalous_geography(

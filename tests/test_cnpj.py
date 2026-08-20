@@ -20,6 +20,7 @@ from capiba.ingestion.cnpj import (
     Company,
     Establishment,
     Partner,
+    edge_kind_for_qualificacao,
     entity_for_zip,
     parse_cnpj_zip,
     partner_key,
@@ -120,6 +121,47 @@ class TestModels:
         )
         assert partner.partner_id == partner_key("12345678", "JOAO SILVA", "22")
         assert len(partner.partner_id) == 32
+        assert partner.cnpj_cpf_socio == "***123456**"
+
+    def test_partner_keeps_representante_legal(self) -> None:
+        """The legal representative columns survive into the silver row."""
+        partner = Partner.model_validate(
+            {
+                "cnpj_basico": "12345678",
+                "identificador_socio": "2",
+                "nome_socio_razao_social": "MARIA SOUZA",
+                "cnpj_cpf_socio": "***987654**",
+                "qualificacao_socio": "22",
+                "pais": "076",
+                "representante_legal": "00000000000",
+                "nome_representante": "JOAO SILVA",
+                "qualificacao_representante_legal": "05",
+            }
+        )
+        assert partner.pais == "076"
+        assert partner.representante_legal == "00000000000"
+        assert partner.nome_representante == "JOAO SILVA"
+        assert partner.qualificacao_representante_legal == "05"
+
+
+class TestEdgeKindForQualificacao:
+    """Tests for the RFB qualification -> FtM edge classification."""
+
+    @pytest.mark.parametrize(
+        ("qualificacao", "expected"),
+        [
+            ("22", "ownership"),  # Sócio
+            ("48", "ownership"),  # Sócio PJ Domiciliado no Brasil
+            (None, "ownership"),  # missing defaults to equity
+            ("05", "directorship"),  # Administrador
+            ("10", "directorship"),  # Diretor
+            ("16", "directorship"),  # Presidente
+            ("49", "both"),  # Sócio-Administrador
+            ("28", "both"),  # Sócio-Gerente
+        ],
+    )
+    def test_classification(self, qualificacao: str | None, expected: str) -> None:
+        assert edge_kind_for_qualificacao(qualificacao) == expected
 
     def test_models_revalidate_silver_rows(self) -> None:
         """JSON-mode dumps (silver rows) round-trip through the models."""
@@ -201,6 +243,7 @@ class TestParseCnpjZip:
         assert records[0]["nome"] == "JOAO SILVA"
         assert records[0]["data_entrada"] == "2015-01-01"
         assert records[0]["faixa_etaria"] == "5"
+        assert records[0]["cnpj_cpf_socio"] == "***123456**"
 
     def test_reference_zip_is_rejected(self, tmp_path: Path) -> None:
         """Non-entity files (Cnaes.zip etc.) are not parseable."""

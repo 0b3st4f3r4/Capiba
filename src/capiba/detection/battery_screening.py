@@ -51,7 +51,7 @@ def generate_population(config: dict[str, Any], seed: int) -> dict[str, Any]:
     sanctions: list[dict[str, Any]] = []
     meta: dict[str, str] = {}
 
-    for index, spec in enumerate(config["cases"]):
+    for spec in config["cases"]:
         base = _BASE + timedelta(days=rng.randint(0, 60))
         doc_type = spec["doc_type"]
         cnpj = _document(rng, 14) if doc_type == "cnpj" else None

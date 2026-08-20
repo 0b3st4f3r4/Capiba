@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +18,10 @@ from capiba.detection.signals import SignalType
 __all__ = [
     "EvidenceItem",
     "EvidenceStored",
+    "FtmExportResponse",
     "OwnershipResponse",
+    "PartnerOfBuyer",
+    "PartnersResponse",
     "RankingItem",
     "RankingResponse",
     "Signal",
@@ -96,6 +100,31 @@ class OwnershipResponse(BaseModel):
     entity: str = Field(..., pattern=r"^\d{14}$")
     max_depth: int
     paths: list[list[str]]
+
+
+class PartnerOfBuyer(BaseModel):
+    """One partner row of GET /v1/graph/partners/{siafi_code}."""
+
+    supplier_cnpj: str
+    company: str
+    edge: str
+    partner_key: str
+    partner_schema: str | None = None
+    partner_name: str | None = None
+
+
+class PartnersResponse(BaseModel):
+    """Response of the GET /v1/graph/partners/{siafi_code} endpoint."""
+
+    siafi_code: str
+    partners: list[PartnerOfBuyer]
+
+
+class FtmExportResponse(BaseModel):
+    """Response of the GET /v1/graph/ftm/{cnpj} endpoint."""
+
+    entity: str = Field(..., pattern=r"^\d{14}$")
+    entities: list[dict[str, Any]]
 
 
 class SignalReview(BaseModel):

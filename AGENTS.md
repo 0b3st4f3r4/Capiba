@@ -96,8 +96,13 @@ e a fonte tem parser em `DUMP_PARSER_REGISTRY` (ex.: `federal_revenue` →
 streaming: parse chunked dos ZIPs Empresas/Estabelecimentos/Socios para as
 tabelas silver Iceberg `companies`/`establishments`/`partners`
 (opt-in via `FEDERAL_REVENUE_FILES`), e o destino `arangodb_graph` carrega
-os vértices `companies`/`partners` e arestas `partner_of` no grafo
-(`bulk_upsert_cnpj`, em lote, a partir do silver). O download da fórmula
+o grafo em vocabulário FtM (O4): vértices `companies` (Company) e
+`persons` (Person — sócios PF/estrangeiros e representantes legais) e
+arestas `ownership` ({persons,companies}→companies — sócio PJ vira
+Company e alimenta o `trace_ownership` com dados reais) e `directorship`
+(persons→companies), classificadas pela qualificação RFB
+(`cnpj.edge_kind_for_qualificacao`), via `bulk_upsert_cnpj` em lote a
+partir do silver. O download da fórmula
 (`task_download_source`) sobe cada arquivo ao bronze assim que termina e o
 remove do tempdir; num retry, os arquivos já presentes no bronze
 (`lake.list_bronze_files`) são pulados (`skip`/`on_file` em
@@ -129,7 +134,10 @@ um backfill, já que os post steps são pulados em backfill). A escrita no
 silver `contracts` (`lake.write_silver`) é **upsert-por-id**: DELETE via
 Trino dos ids do lote + append (falha no DELETE aborta sem append; falha no
 append é restaurada pelo re-run); no catálogo sqlite offline degrada para
-append puro. Transformações nomeadas ficam em
+append puro. Como o DELETE+append não é atômico, as DAGs da factory usam
+`max_active_runs=1`: runs sobrepostas do mesmo pipeline (agendada + manual/
+backfill) corriam o DELETE e duplicavam linhas no silver (observado em
+dt=2026-08-18/19; dedup manual via Trino em 2026-08-20). Transformações nomeadas ficam em
 `src/capiba/transformations/` (um módulo por transformação, expondo
 `transform(records, **params)`).
 Post steps (`dbt_run`, `detect`) são **pulados em runs de backfill**
@@ -158,7 +166,11 @@ co-ocorrência entre compradores (PR-D-03b, executado em
 `docs/results/R-D-03b.md`) também foi **inconclusivo** — redução ~28×,
 mas o menor backlog da grade {3,4,5} × {2,3} (1.397 pares em (5,3)) segue
 acima do orçamento de 500; próximo refinamento em PR-D-03c) e score binário 1.0;
-a cadeia de titularidade é exposta na API em `GET /v1/graph/ownership/{cnpj}`.
+a cadeia de titularidade é exposta na API em `GET /v1/graph/ownership/{cnpj}`
+(aresta FtM `ownership`; CNPJ de 14 dígitos normalizado para o
+`cnpj_basico`), os sócios dos fornecedores de um órgão em
+`GET /v1/graph/partners/{siafi_code}` (`partners_of_buyer`) e o subgrafo
+de uma empresa em FtM JSON em `GET /v1/graph/ftm/{cnpj}` (`db/ftm.py`).
 O `task_validate_pipeline` também alimenta o `QualityMonitor`
 (`record_batch`, best-effort) e o `NotificationScheduler` (relatórios
 periódicos com as métricas reais do monitor) é iniciado no lifespan da API

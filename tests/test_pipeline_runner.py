@@ -563,11 +563,11 @@ class TestFileDumpNormalize:
 
         assert report.success is True
         graph = report.outputs["destination_arangodb_graph"]
-        assert graph == {"companies": 2, "partners": 1, "edges": 1, "errors": 0}
+        assert graph == {"companies": 2, "persons": 1, "edges": 1, "errors": 0}
         collections: dict[str, MagicMock] = db._capiba_collections
         company_docs = collections["companies"].import_bulk.call_args.args[0]
         assert {d["_key"] for d in company_docs} == {"12345678", "87654321"}
-        edge_docs = collections["partner_of"].import_bulk.call_args.args[0]
+        edge_docs = collections["ownership"].import_bulk.call_args.args[0]
         assert edge_docs[0]["_to"] == "companies/12345678"
 
     def test_graph_destination_best_effort(

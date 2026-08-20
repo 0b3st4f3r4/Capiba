@@ -56,7 +56,8 @@ Receita Federal (pipeline mensal `monthly_federal_revenue`, que baixa o dump
 CNPJ para o bronze e, quando os arquivos Empresas/Estabelecimentos/Socios
 estão habilitados via `FEDERAL_REVENUE_FILES`, normaliza em streaming para
 as tabelas silver `companies`/`establishments`/`partners` e carrega o grafo
-ArangoDB com vértices `companies`/`partners` e arestas `partner_of`). As
+ArangoDB com vértices FtM `companies`/`persons` e arestas
+`ownership`/`directorship`). As
 listas de sanções CEIS/CNEP do Portal da Transparência entram pelo pipeline
 semanal `weekly_sanctions` (fórmula `entities_collect`, tabela silver
 `sanctions`). TSE e dados privados via LGPD/DP são visão de longo prazo, sem

@@ -91,6 +91,8 @@ O crawler `crawler_federal_revenue.py` baixa os múltiplos ZIPs do compartilhame
 | `GET /v1/signals/{cnpj}` | Consulta o ArangoDB e roda os operadores de detecção |
 | `GET /v1/ranking/municipalities` | Agregação AQL por município |
 | `GET /v1/graph/ownership/{cnpj}` | Cadeia de titularidade a partir do grafo |
+| `GET /v1/graph/partners/{siafi_code}` | Sócios dos fornecedores de um órgão (traversal FtM) |
+| `GET /v1/graph/ftm/{cnpj}` | Export do subgrafo da empresa em FtM JSON |
 | `POST /v1/evidence` | Upload multipart de evidência |
 | `GET /v1/evidence/contract/{contract_id}` | Lista as evidências de um contrato |
 | `GET /v1/evidence/{sha256}` | Download de evidência pelo hash |

@@ -677,7 +677,7 @@ class TestPersistenceBulk:
 
 
 class TestBulkUpsertCnpj:
-    """Tests for the CNPJ graph bulk load (companies/partners/partner_of)."""
+    """Tests for the CNPJ graph bulk load (FtM companies/persons + edges)."""
 
     def _db(self) -> tuple[MagicMock, dict[str, MagicMock]]:
         """A mocked db whose collections are stable per-name mocks."""
@@ -701,16 +701,17 @@ class TestBulkUpsertCnpj:
             partners=[],
         )
 
-        assert summary == {"companies": 2, "partners": 0, "edges": 0, "errors": 0}
+        assert summary == {"companies": 2, "persons": 0, "edges": 0, "errors": 0}
         import_bulk = collections["companies"].import_bulk
         docs = import_bulk.call_args.args[0]
         assert [d["_key"] for d in docs] == ["12345678", "87654321"]
         assert docs[0]["razao_social"] == "ACME"
+        assert docs[0]["schema"] == "Company"
         assert "dt" not in docs[0]  # lake metadata stays out of the vertex
         assert import_bulk.call_args.kwargs == {"on_duplicate": "replace"}
 
-    def test_partner_vertices_and_edges(self) -> None:
-        """Partner vertices yield partner_of edges into their companies."""
+    def test_individual_partner_is_person_with_ownership_edge(self) -> None:
+        """A sócio PF (qualificação 22) yields a Person + Ownership edge."""
         db, collections = self._db()
 
         summary = bulk_upsert_cnpj(
@@ -720,20 +721,132 @@ class TestBulkUpsertCnpj:
                 {
                     "partner_id": "p1" * 16,
                     "cnpj_basico": "12345678",
+                    "identificador": "2",
                     "nome": "JOAO SILVA",
                     "qualificacao": "22",
+                    "cnpj_cpf_socio": "***123456**",
                 }
             ],
         )
 
-        assert summary == {"companies": 0, "partners": 1, "edges": 1, "errors": 0}
-        partner_doc = collections["partners"].import_bulk.call_args.args[0][0]
-        assert partner_doc["_key"] == "p1" * 16
-        assert partner_doc["nome"] == "JOAO SILVA"
-        edge_doc = collections["partner_of"].import_bulk.call_args.args[0][0]
-        assert edge_doc["_from"] == f"partners/{'p1' * 16}"
+        assert summary == {"companies": 0, "persons": 1, "edges": 1, "errors": 0}
+        person_doc = collections["persons"].import_bulk.call_args.args[0][0]
+        assert person_doc["_key"] == "p1" * 16
+        assert person_doc["nome"] == "JOAO SILVA"
+        assert person_doc["schema"] == "Person"
+        assert person_doc["cnpj_cpf_socio"] == "***123456**"
+        edge_doc = collections["ownership"].import_bulk.call_args.args[0][0]
+        assert edge_doc["_from"] == f"persons/{'p1' * 16}"
         assert edge_doc["_to"] == "companies/12345678"
+        assert edge_doc["schema"] == "Ownership"
         assert edge_doc["qualificacao"] == "22"
+
+    def test_management_qualification_yields_directorship(self) -> None:
+        """An Administrador (05) yields a Directorship edge, not Ownership."""
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[],
+            partners=[
+                {
+                    "partner_id": "p2" * 16,
+                    "cnpj_basico": "12345678",
+                    "identificador": "2",
+                    "nome": "MARIA SOUZA",
+                    "qualificacao": "05",
+                }
+            ],
+        )
+
+        assert summary == {"companies": 0, "persons": 1, "edges": 1, "errors": 0}
+        assert "ownership" not in collections
+        edge_doc = collections["directorship"].import_bulk.call_args.args[0][0]
+        assert edge_doc["_from"] == f"persons/{'p2' * 16}"
+        assert edge_doc["schema"] == "Directorship"
+
+    def test_managing_partner_yields_both_edges(self) -> None:
+        """A Sócio-Administrador (49) yields Ownership AND Directorship."""
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[],
+            partners=[
+                {
+                    "partner_id": "p3" * 16,
+                    "cnpj_basico": "12345678",
+                    "identificador": "2",
+                    "nome": "CARLOS LIMA",
+                    "qualificacao": "49",
+                }
+            ],
+        )
+
+        assert summary == {"companies": 0, "persons": 1, "edges": 2, "errors": 0}
+        assert collections["ownership"].import_bulk.call_count == 1
+        assert collections["directorship"].import_bulk.call_count == 1
+
+    def test_corporate_partner_becomes_company_with_ownership(self) -> None:
+        """A sócio PJ yields a Company vertex keyed by its own CNPJ básico."""
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[],
+            partners=[
+                {
+                    "partner_id": "p4" * 16,
+                    "cnpj_basico": "12345678",
+                    "identificador": "1",
+                    "nome": "HOLDING TESTE SA",
+                    "qualificacao": "48",
+                    "cnpj_cpf_socio": "99888777000166",
+                }
+            ],
+        )
+
+        assert summary == {"companies": 1, "persons": 0, "edges": 1, "errors": 0}
+        holder_doc = collections["companies"].import_bulk.call_args.args[0][0]
+        assert holder_doc["_key"] == "99888777"
+        assert holder_doc["razao_social"] == "HOLDING TESTE SA"
+        assert holder_doc["schema"] == "Company"
+        edge_doc = collections["ownership"].import_bulk.call_args.args[0][0]
+        assert edge_doc["_from"] == "companies/99888777"
+        assert edge_doc["_to"] == "companies/12345678"
+
+    def test_legal_representative_yields_directorship(self) -> None:
+        """A named legal representative is a Person + Directorship edge."""
+        db, collections = self._db()
+
+        summary = bulk_upsert_cnpj(
+            db,
+            companies=[],
+            partners=[
+                {
+                    "partner_id": "p5" * 16,
+                    "cnpj_basico": "12345678",
+                    "identificador": "2",
+                    "nome": "ANA PEREIRA",
+                    "qualificacao": "22",
+                    "nome_representante": "JOAO SILVA",
+                    "representante_legal": "***123456**",
+                    "qualificacao_representante_legal": "05",
+                }
+            ],
+        )
+
+        assert summary == {"companies": 0, "persons": 2, "edges": 2, "errors": 0}
+        person_docs = collections["persons"].import_bulk.call_args.args[0]
+        rep_doc = next(d for d in person_docs if d["nome"] == "JOAO SILVA")
+        assert rep_doc["schema"] == "Person"
+        rep_edge = next(
+            d
+            for d in collections["directorship"].import_bulk.call_args.args[0]
+            if d["_from"] == f"persons/{rep_doc['_key']}"
+        )
+        assert rep_edge["_to"] == "companies/12345678"
+        assert rep_edge["qualificacao"] == "05"
 
     def test_partner_key_fallback_without_partner_id(self) -> None:
         """Rows without partner_id get the hash key (never the masked doc)."""
@@ -749,8 +862,8 @@ class TestBulkUpsertCnpj:
             ],
         )
 
-        partner_doc = collections["partners"].import_bulk.call_args.args[0][0]
-        assert partner_doc["_key"] == partner_key("12345678", "JOAO", "22")
+        person_doc = collections["persons"].import_bulk.call_args.args[0][0]
+        assert person_doc["_key"] == partner_key("12345678", "JOAO", "22")
 
     def test_batch_failures_are_counted(self) -> None:
         """A failed import_bulk is an error count, not an exception."""
@@ -761,7 +874,7 @@ class TestBulkUpsertCnpj:
             db, companies=[{"cnpj_basico": "12345678"}], partners=[]
         )
 
-        assert summary == {"companies": 0, "partners": 0, "edges": 0, "errors": 1}
+        assert summary == {"companies": 0, "persons": 0, "edges": 0, "errors": 1}
 
     def test_batching_splits_imports(self) -> None:
         """Items larger than batch_size are split into multiple imports."""
@@ -798,11 +911,10 @@ class TestBulkUpsertCnpj:
         assert summary["errors"] == 0
         company_doc = collections["companies"].import_bulk.call_args.args[0][0]
         assert company_doc["capital_social"] == 1000.50
-        partner_doc = collections["partners"].import_bulk.call_args.args[0][0]
-        assert partner_doc["data_entrada"] == "2015-01-01"
-        edge_doc = collections["partner_of"].import_bulk.call_args.args[0][0]
+        person_doc = collections["persons"].import_bulk.call_args.args[0][0]
+        edge_doc = collections["ownership"].import_bulk.call_args.args[0][0]
         assert edge_doc["data_entrada"] == "2015-01-01"
         # The docs must serialize with the standard JSON encoder.
         json.dumps(company_doc)
-        json.dumps(partner_doc)
+        json.dumps(person_doc)
         json.dumps(edge_doc)

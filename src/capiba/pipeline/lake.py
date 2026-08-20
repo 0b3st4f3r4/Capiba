@@ -191,6 +191,11 @@ PARTNERS_SCHEMA = Schema(
     NestedField(7, "faixa_etaria", StringType(), required=False),
     NestedField(8, "dt", DateType(), required=False),
     NestedField(9, "ingested_at", TimestamptzType(), required=False),
+    NestedField(10, "cnpj_cpf_socio", StringType(), required=False),
+    NestedField(11, "pais", StringType(), required=False),
+    NestedField(12, "representante_legal", StringType(), required=False),
+    NestedField(13, "nome_representante", StringType(), required=False),
+    NestedField(14, "qualificacao_representante_legal", StringType(), required=False),
 )
 
 PARTNERS_PARTITION_SPEC = PartitionSpec(

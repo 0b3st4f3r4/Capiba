@@ -15,6 +15,7 @@ from capiba.detection.graphs import (
     detect_collusion,
     pair_buyers_from_eligibility,
     pairs_from_eligibility,
+    partners_of_buyer,
     trace_ownership,
 )
 
@@ -212,7 +213,7 @@ class TestDetectCollusion:
 
 
 class TestTraceOwnership:
-    """Tests for trace_ownership (adapted semantics: simple owns paths)."""
+    """Tests for trace_ownership (adapted semantics: simple ownership paths)."""
 
     def test_returns_sorted_paths(self, monkeypatch) -> None:
         """AQL results must be returned as sorted lists of vertex keys."""
@@ -228,8 +229,18 @@ class TestTraceOwnership:
         bind_vars = execute.call_args.args[2]
         assert bind_vars == {"cnpj": "E001", "maxDepth": 2}
 
-    def test_query_blocks_cycles_and_uses_owns_collection(self, monkeypatch) -> None:
-        """The AQL traverses the owns collection with uniqueVertices path."""
+    def test_full_cnpj_is_normalized_to_cnpj_basico(self, monkeypatch) -> None:
+        """A 14-digit CNPJ is keyed by its cnpj_basico (8 digits)."""
+        db = _fake_db()
+        execute = MagicMock(return_value=[])
+        monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
+
+        trace_ownership("12345678000195", max_depth=3, db=db)
+
+        assert execute.call_args.args[2]["cnpj"] == "12345678"
+
+    def test_query_blocks_cycles_and_uses_ownership_collection(self, monkeypatch) -> None:
+        """The AQL traverses the ownership collection with uniqueVertices path."""
         db = _fake_db()
         execute = MagicMock(return_value=[])
         monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
@@ -238,12 +249,12 @@ class TestTraceOwnership:
 
         query = execute.call_args.args[1]
         assert "OUTBOUND" in query
-        assert 'CONCAT("companies/", @cnpj) owns' in query
+        assert 'CONCAT("companies/", @cnpj) ownership' in query
         assert 'uniqueVertices: "path"' in query
         assert "GRAPH" not in query
 
     def test_isolated_vertex_returns_empty(self, monkeypatch) -> None:
-        """A vertex with no outbound owns edges yields no paths."""
+        """A vertex with no outbound ownership edges yields no paths."""
         db = _fake_db()
         execute = MagicMock(return_value=[])
         monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
@@ -261,6 +272,57 @@ class TestTraceOwnership:
 
         assert trace_ownership("E001") == []
         get_db.assert_called_once_with()
+
+
+class TestPartnersOfBuyer:
+    """Tests for partners_of_buyer (O4 acceptance: sócios de fornecedores)."""
+
+    def test_returns_sorted_rows(self, monkeypatch) -> None:
+        """Rows are deduplicated by AQL and sorted deterministically."""
+        db = _fake_db()
+        execute = MagicMock(
+            return_value=[
+                {
+                    "supplier_cnpj": "99888777000166",
+                    "company": "99888777",
+                    "edge": "ownership",
+                    "partner_key": "p2",
+                    "partner_schema": "Person",
+                    "partner_name": "MARIA",
+                },
+                {
+                    "supplier_cnpj": "11222333000144",
+                    "company": "11222333",
+                    "edge": "directorship",
+                    "partner_key": "p1",
+                    "partner_schema": "Person",
+                    "partner_name": "JOAO",
+                },
+            ]
+        )
+        monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
+
+        rows = partners_of_buyer("900000", db=db)
+
+        assert [r["supplier_cnpj"] for r in rows] == [
+            "11222333000144",
+            "99888777000166",
+        ]
+        assert execute.call_args.args[2] == {"siafiCode": "900000"}
+
+    def test_query_traverses_ownership_and_directorship_inbound(self, monkeypatch) -> None:
+        """The AQL goes contract → supplier cnpj_basico → inbound FtM edges."""
+        db = _fake_db()
+        execute = MagicMock(return_value=[])
+        monkeypatch.setattr("capiba.detection.graphs.execute_aql", execute)
+
+        assert partners_of_buyer("900000", db=db) == []
+
+        query = execute.call_args.args[1]
+        assert "c.buyer.siafi_code == @siafiCode" in query
+        assert "INBOUND" in query
+        assert "ownership, directorship" in query
+        assert 'CONCAT("companies/", LEFT(supplierCnpj, 8))' in query
 
 
 class TestAnomalousGeography:

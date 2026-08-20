@@ -219,8 +219,8 @@ são materializados em memória) para as tabelas silver
 `companies`/`establishments`/`partners`; arquivos de referência (Cnaes.zip
 etc.) são pulados. Nesse caso o destino `lake_silver` apenas reporta as
 contagens (a escrita já ocorreu no normalize) e `arangodb_graph` carrega o
-grafo a partir do silver (vértices `companies`/`partners`, arestas
-`partner_of`).
+grafo a partir do silver (vértices FtM `companies`/`persons`, arestas
+`ownership`/`directorship`).
 
 **`metrics_collect`** tira um snapshot pontual de métricas (ex.:
 `pod_usage`) direto para os destinos, sem normalização nem validação; a
@@ -344,9 +344,10 @@ bronze/silver/gold, via Trino.
 
 Contratos são salvos na collection `contracts`. Fornecedores são salvos em
 `suppliers` e conectados via aresta `won`. Compradores são salvos em
-`buyers`. Empresas e sócios do dump CNPJ são salvos em `companies` e
-`partners` (carga em lote por `bulk_upsert_cnpj`, a partir das tabelas
-silver) e conectados via aresta `partner_of`.
+`buyers`. Empresas e sócios do dump CNPJ seguem o vocabulário FtM (O4):
+vértices `companies`/`persons` (carga em lote por `bulk_upsert_cnpj`, a
+partir das tabelas silver) conectados via arestas
+`ownership`/`directorship`, classificadas pela qualificação RFB.
 
 ## Ciclo de vida de um contrato
 
