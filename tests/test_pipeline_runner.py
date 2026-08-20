@@ -752,6 +752,48 @@ destinations: [lake_silver]
             key="entities_federal_revenue", value=summary
         )
 
+    def test_deletes_entity_partitions_before_parsing(
+        self, tmp_path: Path, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retries re-parse from scratch: partitions are deleted first."""
+        from capiba.pipeline.tasks import task_normalize_dump
+
+        zip_path = _cnpj_zip(
+            tmp_path / "Empresas0.zip",
+            "K3241.K03200Y0.D50610.EMPRECSV",
+            ["12345678;EMPRESA A;2062;49;1000,00;05;PE"],
+        )
+        monkeypatch.setattr(
+            lake, "read_bronze_file", MagicMock(return_value=zip_path.read_bytes())
+        )
+        mock_delete = MagicMock()
+        monkeypatch.setattr(lake, "delete_silver_entities_partition", mock_delete)
+
+        ti = MagicMock()
+        ti.xcom_pull.return_value = {
+            "reference_month": "2026-01",
+            "files": [
+                {
+                    "file": "Empresas0.zip",
+                    "bytes": 1,
+                    "sha256": "x",
+                    "lake_key": "federal_revenue/files/dt=2026-02-02/Empresas0.zip",
+                },
+                {"file": "Cnaes.zip", "bytes": 1, "sha256": "y", "lake_key": "ref"},
+            ],
+        }
+
+        summary = task_normalize_dump(
+            "federal_revenue",
+            str(self._spec_file(tmp_path, "lake_silver")),
+            ti=ti,
+            ds="2026-02-02",
+        )
+
+        # Only entity files get a partition delete (Cnaes.zip is skipped).
+        mock_delete.assert_called_once_with("companies", date(2026, 2, 2))
+        assert summary["entities"] == {"companies": 1}
+
 
 class TestTaskDestinationFileDump:
     """Tests for the file_dump branches of task_destination."""

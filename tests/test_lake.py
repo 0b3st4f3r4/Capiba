@@ -409,6 +409,60 @@ def test_write_silver_entities_unknown_entity(local_catalog: Path) -> None:
         lake.write_silver_entities("cnaes", [{}], run_date=RUN_DATE)
 
 
+class TestDeleteSilverEntitiesPartition:
+    """Tests for the idempotency delete-half of the dump normalization."""
+
+    def test_unknown_entity(self, local_catalog: Path) -> None:
+        """An unknown entity name is a config error, not a silent no-op."""
+        with pytest.raises(ValueError, match="Unknown silver entity"):
+            lake.delete_silver_entities_partition("cnaes", RUN_DATE)
+
+    def test_offline_catalog_is_noop(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The SQLite catalog has no Trino; the delete degrades to a no-op."""
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        lake.delete_silver_entities_partition("companies", RUN_DATE)
+
+        mock_query.assert_not_called()
+
+    def test_deletes_partition_via_trino(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cluster path: existing table gets its partition day DELETEd."""
+        monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+        mock_catalog = MagicMock()
+        monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        lake.delete_silver_entities_partition("companies", RUN_DATE)
+
+        mock_query.assert_called_once_with(
+            "DELETE FROM silver.capiba.companies"
+            f" WHERE dt = DATE '{RUN_DATE.isoformat()}'"
+        )
+
+    def test_missing_table_is_noop(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A table that does not exist yet (first load) has nothing to delete."""
+        from pyiceberg.exceptions import NoSuchTableError
+
+        monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+        mock_catalog = MagicMock()
+        mock_catalog.load_table.side_effect = NoSuchTableError("nope")
+        monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        lake.delete_silver_entities_partition("companies", RUN_DATE)
+
+        mock_query.assert_not_called()
+
+
 def test_read_silver_entities_roundtrip_in_batches(local_catalog: Path) -> None:
     """Reads back every typed row written to a silver entity table."""
     lake.write_silver_entities(

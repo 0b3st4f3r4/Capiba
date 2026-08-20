@@ -533,10 +533,12 @@ def task_normalize_dump(source_name: str, spec_path: str, **context: Any) -> dic
     Streaming counterpart of the runner's ``normalize_<source>`` step of the
     file_dump formula: the download tempdir is gone in another worker, so
     the bronze files of the manifest are read back, parsed in chunks and
-    appended to the silver tables chunk by chunk. Non-entity files
-    (Cnaes.zip etc.) are skipped; sources without a registered dump parser
-    or specs without the lake_silver/arangodb_graph destinations are a
-    no-op.
+    appended to the silver tables chunk by chunk. The partition day of each
+    entity in the manifest is deleted before parsing (Trino, cluster only),
+    so a retried run re-parses from scratch without duplicating rows.
+    Non-entity files (Cnaes.zip etc.) are skipped; sources without a
+    registered dump parser or specs without the lake_silver/arangodb_graph
+    destinations are a no-op.
 
     Args:
         source_name: Name of the dump source to normalize.
@@ -566,6 +568,19 @@ def task_normalize_dump(source_name: str, spec_path: str, **context: Any) -> dic
         ti.xcom_pull(task_ids=f"download_{source_name}", key=f"manifest_{source_name}")
         or {}
     )
+
+    # Idempotency: a retry re-parses the whole dump from scratch, so the
+    # partition day of every entity in the manifest is deleted first —
+    # otherwise a pod restart mid-dump duplicates the rows already appended
+    # (OOMKill loop of 2026-08-20). A delete failure aborts before any
+    # append, so rows are never duplicated.
+    entities = {
+        entity
+        for entry in manifest.get("files", [])
+        if (entity := entity_for_zip(entry["file"])) is not None
+    }
+    for entity in sorted(entities):
+        lake.delete_silver_entities_partition(entity, run_date)
 
     counts: dict[str, int] = {}
     errors = 0

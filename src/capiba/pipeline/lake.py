@@ -670,6 +670,46 @@ def read_silver_contracts() -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], rows)
 
 
+def delete_silver_entities_partition(entity: str, run_date: date) -> None:
+    """Deletes the entity's silver rows of one partition day through Trino.
+
+    Idempotency half of the dump normalization (``task_normalize_dump``):
+    a pod restart mid-dump re-runs the parse from scratch, and without
+    this delete each retry would re-append the rows parsed so far (seen
+    2026-08-20: repeated OOMKills duplicated the ``dt=2026-08-02`` entity
+    partitions). Deleting the partition before parsing makes every retry
+    start clean. A failure here propagates — no append is attempted, so
+    rows are never duplicated.
+
+    No-op with the offline SQLite catalog (no Trino to DELETE through)
+    and when the table does not exist yet (first load of the entity).
+
+    Args:
+        entity: Entity name (``companies``/``establishments``/``partners``/
+            ``sanctions``); validated against ``ENTITY_TABLES``.
+        run_date: Partition day to delete.
+    """
+    if entity not in ENTITY_TABLES:
+        raise ValueError(f"Unknown silver entity '{entity}'")
+    if ICEBERG_CATALOG_URI.startswith("sqlite"):
+        logger.info("Offline catalog; skipping %s partition delete", entity)
+        return
+    catalog = get_catalog(ICEBERG_WAREHOUSE_SILVER)
+    try:
+        catalog.load_table(f"{ICEBERG_NAMESPACE}.{entity}")
+    except NoSuchTableError:
+        logger.info("Silver %s table not found; nothing to delete", entity)
+        return
+    partition = _partition_day(run_date)
+    # The entity name is whitelisted against ENTITY_TABLES above; SQL
+    # literals cannot be parameterized over the HTTP API.
+    trino.run_query(
+        f"DELETE FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.{entity}"  # nosec: B608
+        f" WHERE dt = DATE '{partition.isoformat()}'"
+    )
+    logger.info("Silver %s partition dt=%s deleted", entity, partition)
+
+
 def write_silver_entities(
     entity: str, rows: list[dict[str, Any]], run_date: date | None = None
 ) -> str:

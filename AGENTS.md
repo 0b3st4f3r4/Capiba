@@ -102,7 +102,12 @@ os vértices `companies`/`partners` e arestas `partner_of` no grafo
 remove do tempdir; num retry, os arquivos já presentes no bronze
 (`lake.list_bronze_files`) são pulados (`skip`/`on_file` em
 `download_cnpj_dump`) e reentram no manifesto — um restart de pod não
-recomeça um dump multi-GB do zero.
+recomeça um dump multi-GB do zero. O normalize (`task_normalize_dump`) é
+append-por-chunk no silver; antes de parsear ele DELETA a partição
+`dt=<run_date>` de cada entidade do manifesto via Trino
+(`lake.delete_silver_entities_partition`, falha aborta sem append), então
+um retry reprocessa o dump do zero sem duplicar linhas (o loop de
+OOMKill de 2026-08-20 duplicava a partição a cada restart do pod).
 A fórmula `entities_collect` cobre listas de entidades snapshot (fontes
 `ceis`/`cnep` do Portal da Transparência — crawler `fetch_sanctions`,
 modelo `Sanction` em `src/capiba/ingestion/sanctions.py`): etapa
