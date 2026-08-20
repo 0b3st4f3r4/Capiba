@@ -69,6 +69,67 @@ sources:
             tests:
               - not_null
 
+      - name: campaign_donations
+        description: >-
+          Campaign donations from the TSE election accounts dump
+          (receitas_candidatos), keyed by a hash of the prestador/receita
+          sequentials. Written monthly by the monthly_tse pipeline with the
+          full donor documents — personal data under LGPD, kept complete in
+          the silver for the deterministic match (PR-D-08 §2); masking is
+          the publishable marts' concern.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 32, period: day}
+          error_after: {count: 62, period: day}
+        columns:
+          - name: id
+            description: Stable donation identifier (hash, 32 chars)
+            tests:
+              - not_null
+
+      - name: candidacies
+        description: >-
+          Candidacies from the TSE consulta_cand dump, with the
+          totalization status that gates the elected mayors of the
+          political_connection signal (PR-D-08). Written monthly by the
+          monthly_tse pipeline.
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 32, period: day}
+          error_after: {count: 62, period: day}
+        columns:
+          - name: id
+            description: Stable candidacy identifier (hash, 32 chars)
+            tests:
+              - not_null
+
+  - name: lake_gold
+    # Trino catalog of the gold warehouse (Lakekeeper Iceberg REST)
+    database: gold
+    schema: capiba
+    tables:
+      - name: fraud_signals
+        description: >-
+          Fraud signals computed by the detect task over the silver tables
+          (one row per entity and signal, appended per detect run; dt is
+          the run date). details is a JSON string with the values that
+          motivate the signal.
+        # Freshness: the gold_detection DAG runs daily; alert when the
+        # latest computed_at gets stale.
+        loaded_at_field: computed_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: entity_id
+            description: Identifier of the flagged entity
+            tests:
+              - not_null
+          - name: signal_type
+            description: Signal type (e.g. political_connection)
+            tests:
+              - not_null
+
   - name: lake_bronze
     # Trino catalog of the bronze warehouse (Lakekeeper Iceberg REST)
     database: bronze

@@ -260,3 +260,21 @@ fórmula `file_dump`; sanções = `entities_collect`):
   (cidade, UF) normalizado (maiúsculas, sem acentos); o de-para UE↔SIAFI
   via seed dbt fica para o mart da fatia 3. A janela do mandato deriva de
   `TSE_ELECTION_YEAR` (posse em 1º de janeiro do ano seguinte, 4 anos).
+- 2026-08-20: mart gold `political_connections` (fatia 3), sem alterar
+  predições. Fontes: sinais `political_connection` do gold `fraud_signals`
+  (última run por doador×eleito) enriquecidos com as silvers
+  `campaign_donations`/`candidacies` (partição mais recente — são snapshots
+  mensais) e com a seed de-para UE↔SIAFI (`dbt/seeds/ue_siafi_crosswalk.csv`,
+  incremental: hoje só o piloto Recife — UE TSE 25313 confirmada pelo
+  portal eleitoral do TCU e pelas URLs do divulgacandcontas; SIAFI 2531 da
+  lista oficial MDR/gov.br; IBGE 2611606). **Classificação LGPD do mart**:
+  documento completo nunca sai do mart — CPF (11 dígitos, dado pessoal) é
+  mascarado no padrão CEAF (`***123456**`); CNPJ (14 dígitos) identifica
+  empresa, cujas doações são públicas nas fontes TSE/RFB, e é mantido; a
+  chave estável é o `signal_id` (sha256 de ano|sequencial|documento),
+  compatível com a chave de triagem sem expor o documento. O silver segue
+  com documentos completos (decisão da seção 2). Invariantes P8 e de
+  mascaramento viraram testes singulares dbt
+  (`dbt/tests/political_connections_*.sql`); a âncora de validação offline
+  é o `dbt parse` + parsing sqlglot do SQL renderizado (Trino indisponível
+  offline nesta máquina).

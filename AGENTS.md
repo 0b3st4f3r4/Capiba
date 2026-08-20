@@ -159,6 +159,12 @@ fornecedor do município na janela do mandato (posse + 4 anos, derivada de
 0,05) e score `min(1.0, share / DETECTION_POLITICAL_SCORE_REFERENCE)`
 (default 0,25) — placeholders pré-registrados (mudança exige PR-D-08b);
 município da urna casado com o comprador por (cidade, UF) normalizados.
+O mart gold `political_connections` (`dbt/models/marts/`) publica os sinais
+enriquecidos com as silvers TSE (última partição — snapshots mensais) e com
+o de-para UE↔SIAFI da seed `dbt/seeds/ue_siafi_crosswalk.csv` (incremental,
+piloto Recife: UE 25313, SIAFI 2531); LGPD no mart: CPF mascarado no padrão
+CEAF, CNPJ completo (dado público), chave `signal_id` sha256 — o silver
+mantém documentos completos (PR-D-08 §2).
 A fórmula `documents_collect` cobre fontes de documentos datados com janela
 (fonte `querido_diario` — crawler `fetch_gazettes` em
 `src/capiba/ingestion/crawler_querido_diario.py`): etapa `crawl_<fonte>`

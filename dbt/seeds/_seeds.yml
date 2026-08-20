@@ -24,3 +24,41 @@ seeds:
       - name: request_memory_bytes
         tests:
           - not_null
+
+  - name: ue_siafi_crosswalk
+    description: >-
+      Crosswalk between the TSE electoral unit (UE) code of a municipality
+      and its SIAFI code (the buyer identifier of the silver contracts),
+      for the political_connections mart (PR-D-08). INCREMENTAL: today it
+      covers only the pilot municipality Recife — TSE UE 25313 (confirmed
+      via the TCU election portal and the TSE divulgacandcontas URLs), SIAFI
+      2531 (official MDR/gov.br SIAFI municipality list), IBGE 2611606.
+      EXTEND this seed as new municipalities enter the silver coverage, and
+      rerun `dbt seed`.
+    config:
+      column_types:
+        ue_code: varchar
+        siafi_code: varchar
+        ibge_code: varchar
+    columns:
+      - name: ue_code
+        description: TSE electoral unit (UE) code of the municipality
+        tests:
+          - not_null
+          - unique
+      - name: municipality
+        description: Municipality name (TSE spelling, uppercase)
+        tests:
+          - not_null
+      - name: uf
+        tests:
+          - not_null
+      - name: siafi_code
+        description: SIAFI code of the municipality (ente)
+        tests:
+          - not_null
+      - name: ibge_code
+        description: IBGE municipality code
+        tests:
+          - not_null
+          - unique

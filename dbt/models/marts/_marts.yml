@@ -136,3 +136,41 @@ models:
         description: Pod name
         tests:
           - not_null
+
+  - name: political_connections
+    description: >-
+      Publishable view of the political_connection signals (O8, PR-D-08):
+      campaign donors of elected mayors who became suppliers of the
+      municipality inside the mandate window. LGPD: donor CPFs are masked
+      CEAF-style (donor_document_masked); the stable key is the SHA-256
+      signal_id, never the full document. Real-data invariants are
+      enforced by the singular tests in dbt/tests/political_connections_*.sql.
+    columns:
+      - name: signal_id
+        description: >-
+          SHA-256 of (election_year, candidate sequential, full donor
+          document) — stable editorial key, matches the triage key without
+          exposing the document
+        tests:
+          - not_null
+          - unique
+      - name: donor_document_masked
+        description: >-
+          Donor document with CPFs masked CEAF-style (***123456**); CNPJs
+          (public company data) are kept complete
+        tests:
+          - not_null
+      - name: donor_document_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['PF', 'PJ']
+      - name: share
+        description: Supplier share of the buyer's contracted value in the
+          mandate window
+        tests:
+          - not_null
+      - name: score
+        tests:
+          - not_null
