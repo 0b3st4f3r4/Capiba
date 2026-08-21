@@ -76,6 +76,10 @@ _TSE_COLUMN_MAP = {
 }
 
 # TSE consulta_cand header -> silver field (the elected-candidates gate).
+# The TSE republished the dumps in 2026 with a renamed layout
+# (``DS_SITUACAO_TOTALIZACAO_TURNO`` -> ``DS_SIT_TOT_TURNO`` and ``CD_UE``
+# dropped in favour of ``SG_UE``); both variants are accepted, and when
+# both are present the newer name wins (later dict entries overwrite).
 _CANDIDACIES_COLUMN_MAP = {
     "SQ_CANDIDATO": "candidate_sequential",
     "NM_CANDIDATO": "candidate_name",
@@ -85,6 +89,9 @@ _CANDIDACIES_COLUMN_MAP = {
     "NM_UE": "ue_name",
     "SG_UF": "uf",
     "DS_SITUACAO_TOTALIZACAO_TURNO": "totalization_status",
+    # Post-2026 layout aliases.
+    "SG_UE": "ue_code",
+    "DS_SIT_TOT_TURNO": "totalization_status",
 }
 
 _TSE_DATE_FORMATS = (
@@ -246,10 +253,13 @@ class Candidacy(BaseModel):
     def _reshape(cls, data: Any) -> Any:
         """Flattens the raw TSE columns and computes the candidacy id.
 
-        Rows already in silver shape (no ``DS_SITUACAO_TOTALIZACAO_TURNO``
-        key) pass through unchanged, so silver rows revalidate cleanly.
+        Rows already in silver shape (no ``SQ_CANDIDATO`` key) pass
+        through unchanged, so silver rows revalidate cleanly.
+        ``SQ_CANDIDATO`` is the marker because it is stable across the
+        pre- and post-2026 TSE layouts (the totalization columns were
+        renamed between them).
         """
-        if not isinstance(data, dict) or "DS_SITUACAO_TOTALIZACAO_TURNO" not in data:
+        if not isinstance(data, dict) or "SQ_CANDIDATO" not in data:
             return data
         flat = {
             target: data.get(source)

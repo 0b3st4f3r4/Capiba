@@ -68,6 +68,11 @@ CAND_HEADER = (
     "SQ_CANDIDATO;NM_CANDIDATO;SG_PARTIDO;DS_CARGO;CD_UE;NM_UE;SG_UF;"
     "DS_SITUACAO_TOTALIZACAO_TURNO"
 )
+# Post-2026 republished layout: DS_SIT_TOT_TURNO and SG_UE (no CD_UE).
+CAND_HEADER_2026 = (
+    "SQ_CANDIDATO;NM_CANDIDATO;SG_PARTIDO;DS_CARGO;SG_UE;NM_UE;SG_UF;"
+    "DS_SIT_TOT_TURNO"
+)
 ELECTED_MAYOR_ROW = "9001;JOANA CANDIDATA;XX;Prefeito;25313;RECIFE;PE;Eleito"
 DEFEATED_MAYOR_ROW = "9002;ZE DERROTADO;YY;Prefeito;25313;RECIFE;PE;Não eleito"
 ELECTED_COUNCILLOR_ROW = (
@@ -290,6 +295,16 @@ class TestCandidacyModel:
         row = self._parse_row(DEFEATED_MAYOR_ROW).model_dump()
 
         assert Candidacy.model_validate(row) == Candidacy(**row)
+
+    def test_post_2026_layout_row(self) -> None:
+        """The republished dumps (DS_SIT_TOT_TURNO / SG_UE) parse the same."""
+        columns = CAND_HEADER_2026.split(";")
+        row = dict(zip(columns, ELECTED_MAYOR_ROW.split(";"), strict=True))
+        candidacy = Candidacy.model_validate({**row, "election_year": 2024})
+
+        assert candidacy.ue_code == "25313"
+        assert candidacy.totalization_status == "Eleito"
+        assert candidacy.id == self._parse_row(ELECTED_MAYOR_ROW).id
 
 
 class TestParseCandidaciesZip:
