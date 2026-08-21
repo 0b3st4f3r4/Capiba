@@ -1,5 +1,15 @@
 # Ingestão de Dados
 
+> **Propósito:** arquitetura da camada de ingestão — crawlers, normalizers,
+> validação e persistência no lago medallion e no grafo.
+> **Quando consultar:** ao criar ou alterar uma fonte de dados, pipeline
+> declarativo ou schema de ingestão.
+> **Relacionados:** `docs/apis_fontes.md` (referência das APIs-fonte),
+> `docs/operacao_lake.md` (idempotência e retry), `AGENTS.md` (fórmulas do
+> runner).
+> **Sincronizado com:** `src/capiba/ingestion/` + `dags/pipelines/` —
+> 2026-08-21.
+
 ## Visão geral
 
 A camada de ingestão sai ao mundo e busca os dados públicos: extrai

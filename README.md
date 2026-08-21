@@ -55,7 +55,7 @@ Os sinais passam por triagem editorial (`/v1/triage`, página `/triage` do porta
 
 ## Documentação
 
-A documentação vive em `docs/` e conta a plataforma de vários ângulos: o método editorial em `jornalismo_dados.md`, o backlog de evolução em `oportunidades.md`, a arquitetura do sistema em `arquitetura.md`, o catálogo de operadores de detecção em `operadores.md`, a especificação da API de sinais em `api.md`, o pipeline de ingestão em `ingestao.md`, a análise das APIs de fontes externas em `apis_fontes.md`, a governança de dados em `governanca.md` e as lacunas conhecidas em `gaps.md`. Os experimentos de detecção seguem doutrina de pré-registro em `docs/preregistrations/` e publicam seus resultados, inclusive os negativos, em `docs/results/`.
+A documentação vive em `docs/` e conta a plataforma de vários ângulos — arquitetura, ingestão, detecção, API, operação, governança, método editorial e backlogs. Os experimentos de detecção seguem doutrina de pré-registro em `docs/preregistrations/` e publicam seus resultados, inclusive os negativos, em `docs/results/`. O mapa completo, com público, roteamento por tarefa e regras de frescor, está em [`docs/README.md`](docs/README.md).
 
 ## Licença
 

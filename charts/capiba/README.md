@@ -151,8 +151,8 @@ controlador Traefik (instalado como DaemonSet pelo `make cluster-start`,
 hostPorts 8088/8443 — a porta 80 do host pertence ao Apache). Mapeados no
 `/etc/hosts` pelo `scripts/setup.sh`, os serviços ficam acessíveis em
 `https://<serviço>.capiba.local:8443` (`api`, `grafana`, `marquez`,
-`iceberg`, `minio`, `s3`, `trino`, `airflow`; o Keycloak fica em HTTP plano
-`http://keycloak.capiba.local:8088` — ver "SSO" abaixo). Com `ingress.tls.enabled`
+`iceberg`, `minio`, `s3`, `trino`, `airflow`, `keycloak` — ver "SSO"
+abaixo). Com `ingress.tls.enabled`
 (padrão), o TLS usa o secret `capiba-tls` (cert self-signed wildcard
 gerado por `scripts/gen-certs.sh` — o browser pede exceção). HTTP na 8088
 segue respondendo, sem redirect automático. Os port-forwards
@@ -178,10 +178,11 @@ novo ou edição manual no admin console. Clientes de máquina (Trino, pyiceberg
 `scripts/init_buckets.py`) autenticam com o client `capiba-services`
 (client_credentials, `keycloak.clientSecrets`).
 
-O issuer OIDC é **HTTP plano** em `http://keycloak.capiba.local:8088` (o
+O issuer OIDC é **HTTPS** em `https://keycloak.capiba.local:8443` (o
 Traefik expõe as hostPorts 8088/8443 também no Service, com ClusterIP fixo
 — pinado na instalação e reutilizado nos upgrades, já que o clusterIP é
-imutável), porque os pods não confiam no cert self-signed do ingress. Um
+imutável); os pods confiam no cert self-signed do ingress via CA
+`capiba-tls` montada como `SSL_CERT_FILE`. Um
 rewrite de CoreDNS (`coredns-custom`, aplicado pelo `scripts/cluster.sh`)
 resolve `keycloak.capiba.local` para esse ClusterIP dentro do cluster;
 backchannels de máquina usam o DNS de serviço `capiba-keycloak:8080`.

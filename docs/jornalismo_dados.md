@@ -1,5 +1,14 @@
 # Jornalismo de Dados no Capiba
 
+> **Propósito:** descrever o processo editorial ponta a ponta — de obter a
+> publicar — e como ele se apoia nos componentes da plataforma.
+> **Quando consultar:** ao conectar um sinal de risco à apuração humana e
+> à publicação de interesse público.
+> **Relacionados:** `docs/api.md` (triagem e evidência),
+> `docs/oportunidades.md` (backlog editorial), `docs/governanca.md`.
+> **Sincronizado com:** `src/capiba/db/triage.py` + `src/capiba/api/` —
+> 2026-08-21.
+
 O Capiba existe para produzir **jornalismo de dados a serviço da
 comunidade**: transformar bases abertas em investigações de interesse
 público, com método reproduzível, verificação rigorosa e publicação que o

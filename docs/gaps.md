@@ -1,5 +1,13 @@
 # Checklist de gaps
 
+> **Propósito:** tracker de gaps técnicos de curto prazo, do mais crítico
+> ao menos crítico, com evidências (caminhos e linhas).
+> **Quando consultar:** para saber o que falta fazer agora e onde começar
+> cada item.
+> **Relacionados:** `docs/oportunidades.md` (backlog de médio prazo),
+> `docs/governanca.md` (lacunas de governança).
+> **Sincronizado com:** revisão do código — 2026-08-21.
+
 Gerado na revisão de 2026-08-18 e revalidado em 2026-08-21, ordenado do
 mais crítico ao menos crítico, com os detalhes (caminhos, linhas,
 evidências) dentro de cada item.

@@ -1,5 +1,10 @@
 # Análise de APIs de fontes de dados
 
+> **Propósito:** mapear as APIs públicas que alimentam o lago — endpoints, exigências técnicas e estado atual da integração de cada fonte no Capiba.
+> **Quando consultar:** antes de adicionar uma fonte nova, ajustar um crawler ou diagnosticar falha de ingestão.
+> **Relacionados:** `docs/ingestao.md`, `docs/api.md`, `docs/arquitetura.md`.
+> **Sincronizado com:** specs em `dags/pipelines/*.yaml` e módulos de `src/capiba/ingestion/` — 2026-08-21.
+
 Este documento mapeia as portas de entrada do mundo exterior: as APIs públicas de onde saem os contratos, as sanções e os cadastros que alimentam o lago. Para cada fonte, os endpoints úteis, as exigências técnicas e o estado atual da integração no Capiba.
 
 ## 1. PNCP (Portal Nacional de Contratações Públicas)
@@ -24,9 +29,9 @@ A consulta pública não pede autenticação. As datas viajam no formato `yyyyMM
 
 ### Estado no Capiba
 
-O crawler `crawler_pncp.py` bate em `/v1/contratos` paginando até a última página, com retry e backoff exponencial centralizados no helper `fetch_page` de `src/capiba/ingestion/_http.py`, que trata o `204` como página vazia e o `429` como sinal de espera. A execução manual da DAG `daily_pncp` confirmou que o endpoint devolve contratos com fornecedor e valores. O crawler também cobre `GET /v1/contratos/atualizacao` (`fetch_contract_updates`), consumido pela DAG bronze-only `daily_pncp_updates` para capturar contratos aditivados após a publicação original. Não há credenciais a configurar.
+O crawler `crawler_pncp.py` bate em `/v1/contratos` paginando até a última página, com retry e backoff exponencial centralizados no helper `fetch_page` de `src/capiba/ingestion/_http.py`, que trata o `204` como página vazia e o `429` como sinal de espera. A execução manual da DAG `daily_pncp` confirmou que o endpoint devolve contratos com fornecedor e valores. Estado atual: a DAG **diária** `daily_pncp` (spec `dags/pipelines/daily_pncp.yaml`, 06:00 UTC, janela `previous_day`, fórmula `contracts_default`, destinos bronze/silver/grafo) está **ativa** em produção. O crawler também cobre `GET /v1/contratos/atualizacao` (`fetch_contract_updates`), consumido pela DAG **bronze-only** `daily_pncp_updates` (06:41 UTC, mesma fórmula e janela, destino só `lake_bronze`) para capturar contratos aditivados após a publicação original — as flags de aditivo do PR-D-05 leem esse bronze; o silver não é tocado. Não há credenciais a configurar.
 
-Os termos contratuais (aditivos) ficam **fora** do grupo `consulta`: `GET /v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos` vive no grupo transacional `pncp` (URL base `https://pncp.gov.br/api/pncp`, config `PNCP_TERMS_API_URL`), é público (verificado ao vivo em 2026-08-21) e lista apenas os termos vigentes — `204` quando o contrato não tem termos. É a fonte autoritativa do plano B de PR-D-05b ("houve aditivo formal?"), consumida por `fetch_contract_terms` com checkpoint por contrato no bronze (`persist_contract_terms`).
+Os termos contratuais (aditivos) ficam **fora** do grupo `consulta`: `GET /v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos` vive no grupo transacional `pncp` (URL base `https://pncp.gov.br/api/pncp`, config `PNCP_TERMS_API_URL`), é público (verificado ao vivo em 2026-08-21) e lista apenas os termos vigentes — `204` quando o contrato não tem termos. É a fonte autoritativa do plano B de PR-D-05b ("houve aditivo formal?"), consumida por `fetch_contract_terms` com checkpoint por contrato no bronze (`persist_contract_terms`). Estado: **piloto** — a DAG `pilot_pncp_terms` (spec `dags/pipelines/pilot_pncp_terms.yaml`, fórmula `terms_collect`, bronze-only + relatório gold) **não tem schedule**: é uma sonda de disparo manual sobre uma coorte dirigida por parâmetros (`include_flagged` lê os `f_value_amendment = 1` do mart `contract_amendments`; `siafi_codes` restringe ao município-piloto Recife, SIAFI 2531).
 
 ## 2. Portal da Transparência (CGU)
 
@@ -54,7 +59,7 @@ Aqui a porta tem chave: a autenticação é obrigatória, feita por token gratui
 
 ### Estado no Capiba
 
-O crawler `crawler_transparency.py` envia o header `chave-api-dados` a partir da variável `TRANSPARENCY_API_KEY`, que mora no `.env` e é injetada no chart pelo `scripts/helm-upgrade.sh` (via `--set global.transparencyApiKey`, secret `capiba-secrets`) a cada `make helm-upgrade`; sem ela, o pipeline falha com log claro. Os endpoints `GET /ceis`, `GET /cnep` e `GET /ceaf` já têm pipeline próprio: a DAG `weekly_sanctions` (spec `dags/pipelines/weekly_sanctions.yaml`, fórmula `entities_collect`) coleta as três listas semanalmente com `fetch_sanctions`, paginando até a primeira página vazia, grava os payloads brutos nas tabelas bronze `raw_ceis`/`raw_cnep`/`raw_ceaf` e os registros normalizados (modelo `Sanction`) na tabela silver `sanctions`.
+O crawler `crawler_transparency.py` envia o header `chave-api-dados` a partir da variável `TRANSPARENCY_API_KEY`, que mora no `.env` e é injetada no chart pelo `scripts/helm-upgrade.sh` (via `--set global.transparencyApiKey`, secret `capiba-secrets`) a cada `make helm-upgrade`; sem ela, o pipeline falha com log claro. Dois pipelines ativos consomem a fonte: a DAG **mensal** `monthly_transparency` (spec `dags/pipelines/monthly_transparency.yaml`, dia 2 às 07:00 UTC, janela `previous_month`, fórmula `contracts_default`, destinos bronze/silver/grafo) coleta os contratos federais; e a DAG **semanal** `weekly_sanctions` (spec `dags/pipelines/weekly_sanctions.yaml`, terças 03:22 UTC, janela `all` — snapshot completo, fórmula `entities_collect`) coleta `GET /ceis`, `GET /cnep` e `GET /ceaf` com `fetch_sanctions`, paginando até a primeira página vazia, grava os payloads brutos nas tabelas bronze `raw_ceis`/`raw_cnep`/`raw_ceaf` (checkpoint por página — o retry retoma da próxima) e os registros normalizados (modelo `Sanction`) na tabela silver `sanctions`.
 
 ## 3. Receita Federal / Dados Abertos de CNPJ
 
@@ -101,11 +106,11 @@ https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand
 
 ### Requisitos técnicos
 
-Não pede autenticação. O dump é um snapshot fixo por ciclo eleitoral, republicado ao longo do julgamento das contas — não é indexado por mês; o ano do ciclo é configurável (`TSE_ELECTION_YEAR`, default 2024).
+Não pede autenticação, mas **o CDN bloqueia clientes CLI** via Akamai Bot Manager (403, confirmado em 2026-08-21) — os dumps só são obtidos via browser, com IP brasileiro. O dump é um snapshot fixo por ciclo eleitoral, republicado ao longo do julgamento das contas — não é indexado por mês; o ano do ciclo é configurável (`params.year` da run ou `TSE_ELECTION_YEAR`, default 2024).
 
 ### Estado no Capiba
 
-A DAG `monthly_tse` (spec `dags/pipelines/monthly_tse.yaml`, fórmula `file_dump`) baixa os ZIPs para o bronze (`tse/files/`, manifesto na tabela `raw_tse`) e normaliza em streaming (downloader `crawler_tse.py`, parser `src/capiba/ingestion/tse.py`) para as silvers `campaign_donations` e `candidacies` — insumo do sinal `political_connection`. Os documentos dos doadores ficam completos no silver; o mascaramento é preocupação do mart gold (LGPD).
+**Sem download automático.** Os dumps vivem como **âncora congelada** no bronze, em `capiba-bronze/tse/reference/` (upload único e manual, por ano eleitoral; sha256 registrado no R-D-08b). A DAG mensal `monthly_tse` (spec `dags/pipelines/monthly_tse.yaml`, dia 3 às 06:37 UTC, fórmula `file_dump`) resolve a âncora do ano da run (`download_tse_dump` em `crawler_tse.py`) — falha com instruções de upload se a âncora não existir —, copia os ZIPs para a partição da run (`tse/files/dt=<run>/`, manifesto na tabela `raw_tse`) e normaliza em streaming (parser `src/capiba/ingestion/tse.py`) para as silvers `campaign_donations` e `candidacies` — insumo do sinal `political_connection`. O `reference_month` é aceito mas ignorado pelo resolver. Os documentos dos doadores ficam completos no silver; o mascaramento é preocupação do mart gold (LGPD).
 
 ## 5. Querido Diário (OKBR)
 
@@ -127,9 +132,13 @@ Não pede autenticação. A raspagem dos diários roda de madrugada (~03:50 UTC)
 
 ### Estado no Capiba
 
-O crawler `crawler_querido_diario.py` (`fetch_gazettes`, `download_gazette_text`, `text_file_name`) alimenta a DAG `daily_querido_diario` (spec `dags/pipelines/daily_querido_diario.yaml`, fórmula `documents_collect`): município-piloto Recife (IBGE 2611606), metadados no bronze (`raw_querido_diario`) + texto extraído de cada diário como arquivo bronze (nome determinístico, skip-existing no retry), validação declarada `gazette_rules`. O corpus é matéria-prima para os sinais de NLP (`semantic_gap`, `detect_clone`).
+O crawler `crawler_querido_diario.py` (`fetch_gazettes`, `download_gazette_text`, `text_file_name`) alimenta a DAG diária `daily_querido_diario` (spec `dags/pipelines/daily_querido_diario.yaml`, 04:41 UTC — após a raspagem noturna —, janela `previous_day`, fórmula `documents_collect`): município-piloto Recife (IBGE 2611606), metadados no bronze (`raw_querido_diario`) + texto extraído de cada diário como arquivo bronze (nome determinístico, skip-existing no retry, falhas de download best-effort), validação declarada `gazette_rules`. O corpus é matéria-prima para os sinais de NLP (`semantic_gap`, `detect_clone`).
 
-## 6. API interna do Capiba
+## 6. Telemetria da plataforma (pod_usage)
+
+Fonte interna — não é API pública. A fonte `pod_usage` (`src/capiba/ingestion/pod_usage.py`) lê o uso de CPU/memória dos pods do namespace `capiba` pela API do metrics-server no cluster (ou `kubectl top` fora dele, via `fetch_pod_usage`). A DAG **horária** `hourly_pod_usage` (spec `dags/pipelines/hourly_pod_usage.yaml`, minuto 7, fórmula `metrics_collect`) grava o snapshot pontual na tabela bronze `raw_pod_usage` e, como post step, roda o `dbt_run` seletivo dos marts `pod_usage_hourly`/`platform_cost_daily` (requests na seed `dbt/seeds/requests.csv`) — dogfood do framework declarativo e base dos dashboards de custo da plataforma. Telemetria interna: esses marts constam do `EXCLUDED_MARTS` do export público.
+
+## 7. API interna do Capiba
 
 ### Estado atual
 
@@ -157,7 +166,7 @@ O crawler `crawler_querido_diario.py` (`fetch_gazettes`, `download_gazette_text`
 
 O portal capiba-dashboard (`GET /`, com a página de triagem `/triage`) e o fluxo SSO (`/auth/login`, `/auth/callback`, `/auth/logout`) completam a superfície. Contratos, scores, pesos e códigos de erro estão documentados em `docs/api.md`.
 
-## 7. Resumo de gaps e próximos passos recomendados
+## 8. Resumo de gaps e próximos passos recomendados
 
 As fontes estão ligadas e o lago recebe água de todas elas; o que falta é apertar a torneira.
 

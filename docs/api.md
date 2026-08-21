@@ -1,5 +1,12 @@
 # API do Capiba
 
+> **Propósito:** referência rota a rota da API REST (`/v1/*`, `/health`)
+> e do portal SSO embutido.
+> **Quando consultar:** ao consumir ou alterar qualquer endpoint da API.
+> **Relacionados:** `docs/portal.md` (portal editorial e fluxo SSO em
+> detalhe), `docs/jornalismo_dados.md` (fluxo editorial ponta a ponta).
+> **Sincronizado com:** `src/capiba/api/` — 2026-08-21.
+
 A API FastAPI é a voz da plataforma: consulta o ArangoDB, executa os
 operadores de detecção em tempo real (`detection/signals.py` sobre
 `detection/statistical.py` e `detection/ml_models.py`) e devolve os sinais
@@ -253,7 +260,8 @@ grafo retorna `200` com `entities: []`.
 
 ## Portal (SSO via Keycloak)
 
-O portal é servido pela própria API (`src/capiba/api/portal.py`) e usa SSO
+Detalhe completo do portal (estatísticas da landing, sessão, guardas):
+`docs/portal.md`. O portal é servido pela própria API (`src/capiba/api/portal.py`) e usa SSO
 OIDC contra o Keycloak (realm `capiba`, issuer público
 `https://keycloak.capiba.local:8443/realms/capiba`). A sessão é um cookie
 assinado (`SessionMiddleware`); com `SSO_ENABLED=false` (default local) o
@@ -265,7 +273,7 @@ portal abre sem login. As rotas do portal e do fluxo de autenticação:
 | `GET /auth/login` | Inicia o fluxo OIDC (redirect para o Keycloak); com SSO desabilitado, redireciona de volta para `/` |
 | `GET /auth/callback` | Callback do fluxo OIDC: valida o token (issuer público), grava o `userinfo` na sessão e redireciona para `/` |
 | `GET /auth/logout` | Limpa a sessão e redireciona para `/` |
-| `GET /triage` | Página de triagem editorial: fila de sinais com filtros (`?status=`, `?signal_type=`, `?min_score=`), paginação server-side (`offset`/`limit`, ordenação score desc), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
+| `GET /triage` | Página de triagem editorial: fila de sinais com filtros (`?status=`, `?signal_type=`, `?min_score=`), paginação server-side (`?page=`, page size fixo de 100, ordenação score desc, com total filtrado real), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
 | `POST /triage/review` | Aplica a transição editorial vinda do formulário da página (revisor do campo ou da sessão SSO); erros de validação voltam como banner na fila (redirect 303), nunca como página 4xx |
 
 ## Evidências
@@ -432,6 +440,23 @@ Relatório de precisão por operador derivado dos rótulos humanos:
 contagens por status e `precision = confirmed / (confirmed + rejected)`
 (`null` sem rótulos).
 
+**Response:**
+
+```json
+[
+  {
+    "signal_type": "single_bid",
+    "pending_review": 120,
+    "confirmed": 30,
+    "rejected": 10,
+    "published": 5,
+    "precision": 0.75
+  }
+]
+```
+
+**Erros:** `503` (ArangoDB indisponível).
+
 ## Saída pública
 
 Rotas abertas (sem autenticação) de acesso ao export batch dos marts gold:
@@ -445,6 +470,21 @@ bucket MinIO `capiba-public`, em CSV e Parquet versionados por data da run
 
 Lista os marts exportados, as datas disponíveis por mart e a justificativa
 da classificação LGPD.
+
+**Response:**
+
+```json
+{
+  "bucket": "capiba-public",
+  "marts": [
+    {
+      "name": "ranking_municipalities",
+      "dates": ["2026-08-21", "2026-08-20"],
+      "lgpd_classification": "agregado municipal, sem dados pessoais"
+    }
+  ]
+}
+```
 
 **Erros:** `503` (MinIO indisponível).
 
@@ -486,7 +526,17 @@ Registra uma assinatura pendente e envia o e-mail de confirmação.
 ```
 
 A resposta (201) é sempre genérica — o endpoint nunca revela se o e-mail
-já tem assinatura (anti-enumeração).
+já tem assinatura (anti-enumeração). Par já confirmado não recebe novo
+e-mail (o token só é reenviado quando a assinatura ainda está pendente).
+
+**Response (201):**
+
+```json
+{
+  "status": "pending",
+  "detail": "Se o endereço for válido, um e-mail de confirmação será enviado."
+}
+```
 
 **Erros:** `422` (código IBGE desconhecido), `503` (ArangoDB indisponível).
 
@@ -494,9 +544,28 @@ já tem assinatura (anti-enumeração).
 
 Confirma uma assinatura pendente via token de gerenciamento.
 
+**Query params:**
+
+| Parâmetro | Tipo | Descrição |
+|---|---|---|
+| `token` | string, obrigatório | Token opaco do e-mail (mínimo 20 caracteres; mais curto retorna `422`) |
+
+**Response (200):**
+
+```json
+{ "status": "confirmed", "detail": "Assinatura confirmada. Você receberá os alertas do município." }
+```
+
 ### GET /v1/subscriptions/unsubscribe?token=...
 
 Cancela a assinatura via token de gerenciamento (o mesmo do e-mail de
-confirmação).
+confirmação). Mesmo parâmetro `token` e mesma validação da confirmação.
 
-**Erros (ambas):** `404` (token inválido), `503` (ArangoDB indisponível).
+**Response (200):**
+
+```json
+{ "status": "unsubscribed", "detail": "Assinatura cancelada. Você não receberá mais alertas." }
+```
+
+**Erros (ambas):** `404` (token inválido), `422` (token com menos de 20
+caracteres), `503` (ArangoDB indisponível).

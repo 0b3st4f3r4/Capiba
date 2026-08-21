@@ -139,7 +139,8 @@ Detalhe operacional completo (lições de volume real, 2026-08):
 ## Geografia
 
 Referência em `ingestion/geography.py`: CSV vendored
-`ingestion/reference/municipios.csv` (kelvins/Municipios-Brasileiros, MIT),
+`ingestion/reference/municipios.csv` (kelvins/Municipios-Brasileiros, MIT;
+proveniência em `src/capiba/ingestion/reference/README.md`),
 lookups puros por (nome, UF) normalizado e por IBGE. Silver `municipalities`
 carregada por `lake.load_municipalities` (idempotente por conteúdo). Na
 persistência, `buyers` ganha ibge/lat/long via (city, uf) e `suppliers` via
@@ -270,31 +271,29 @@ README.md. Convenção: os códigos `O*` do backlog (O1..O12) são exclusivos do
 trackers de processo (`docs/oportunidades.md`, `docs/gaps.md`) — não citar em
 código nem em documentação permanente.
 
-Acesso às UIs sem port-forward: ingress Traefik (DaemonSet, hostPorts
-8088/8443 — a porta 80 é do Apache do host) em
-`https://<serviço>.capiba.local:8443` (api, grafana, marquez, iceberg, minio,
-s3, trino, airflow); `scripts/setup.sh` mapeia os hosts no `/etc/hosts`.
-Certificado self-signed (wildcard `*.capiba.local`, `scripts/gen-certs.sh`,
-secret `capiba-tls`) — o browser pede exceção. HTTP na 8088 segue respondendo
-(sem redirect). CI em `.github/workflows/ci.yml` (isort, ruff, mypy, pytest com
-piso de 85% — também aplicado pelo hook `pytest-cov` do pre-commit — e bandit).
+Convenções de documentação: o índice único é `docs/README.md` — doc novo ou
+alterado entra nele no mesmo commit (regra de frescor). Todo doc da raiz de
+`docs/` carrega o cabeçalho-padrão (blockquote com Propósito / Quando
+consultar / Relacionados / Sincronizado com); `docs/preregistrations/*.md` e
+`docs/results/*.md` têm formato próprio e ficam de fora.
 
-SSO: Keycloak é o IdP OIDC de todas as UIs — portal capiba-dashboard na API
-(`/`, `api/portal.py`), Grafana, Airflow (FAB OAuth), MinIO Console, Lakekeeper
-UI e Headlamp. Usuário dev: `capiba`/`capiba-sso` (`keycloak.devUser`),
-ressincronizado a cada `make helm-upgrade` pelo hook
-`templates/keycloak/job-sync-user.yaml`, que também lhe concede
-`realm-management/realm-admin` — o console do realm
-(`https://keycloak.capiba.local:8443/admin/capiba/console`) abre com ele; o
-console master (`/admin/master/console`) continua restrito ao admin bootstrap
-(`keycloak.admin`). Issuer HTTPS em `https://keycloak.capiba.local:8443` (pods
-confiam no cert via CA `capiba-tls` como `SSL_CERT_FILE`); rewrite de CoreDNS
-(`scripts/cluster.sh`, passo 4) resolve esse host para o ClusterIP do Traefik
-(pinado — clusterIP é imutável); backchannels de máquina usam
-`capiba-keycloak:8080`. Clientes de máquina do lake (Trino, pyiceberg,
-`init_buckets.py`) usam o client `capiba-services` (client_credentials).
-Fallbacks locais: MinIO root, Grafana admin (`grafana.auth`) e token do
-Headlamp (`make dashboard-token`).
+Acesso às UIs: ingress Traefik (DaemonSet, hostPorts 8088/8443) em
+`https://<serviço>.capiba.local:8443`, com `/etc/hosts` mapeado por
+`scripts/setup.sh` e cert self-signed `capiba-tls` (browser pede exceção) —
+**não dependa de port-forward** para UIs; port-forwards (`make port-forward`)
+são só para clientes de máquina (pyiceberg, dbt, `init_buckets.py`). CI em
+`.github/workflows/ci.yml` (isort, ruff, mypy, pytest com piso de 85% — também
+aplicado pelo hook `pytest-cov` do pre-commit — e bandit).
+
+SSO: Keycloak é o IdP OIDC de todas as UIs, realm `capiba`; usuário dev
+`capiba`/`capiba-sso` (`keycloak.devUser`, ressincronizado a cada
+`make helm-upgrade`). Regras: issuer OIDC é HTTPS
+(`https://keycloak.capiba.local:8443` — pods confiam via CA `capiba-tls` como
+`SSL_CERT_FILE`; backchannels de máquina usam `capiba-keycloak:8080`);
+clientes de máquina do lake (Trino, pyiceberg, `init_buckets.py`) usam o
+client `capiba-services` (client_credentials). Detalhes operacionais e
+runbook (ciclo de vida do cluster, clients, hooks, backup, troubleshooting):
+`docs/operacao.md`.
 
 ## Processo de desenvolvimento
 

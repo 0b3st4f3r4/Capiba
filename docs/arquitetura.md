@@ -1,5 +1,10 @@
 # Arquitetura do Capiba
 
+> **Propósito:** visão de alto nível da plataforma — camadas, stack técnica, deploy no k3s, SSO e persistência.
+> **Quando consultar:** para entender onde cada componente mora e como se conecta antes de mexer em infra, pipeline ou API.
+> **Relacionados:** `docs/apis_fontes.md`, `docs/ingestao.md`, `docs/governanca.md`.
+> **Sincronizado com:** `AGENTS.md` (seção Stack), `charts/capiba/values.yaml` e specs em `dags/pipelines/` — 2026-08-21.
+
 ## Visão geral
 
 Capiba é um motor de detecção de farsa institucional que transforma
@@ -63,10 +68,15 @@ ArangoDB com vértices FtM `companies`/`persons` e arestas
 listas de sanções CEIS/CNEP/CEAF do Portal da Transparência entram pelo pipeline
 semanal `weekly_sanctions` (fórmula `entities_collect`, tabela silver
 `sanctions`). O TSE entra pelo pipeline mensal `monthly_tse` (fórmula
-`file_dump`, tabelas silver `campaign_donations` e `candidacies`) e os
-diários oficiais de Recife pelo diário `daily_querido_diario` (fórmula
-`documents_collect`, via Querido Diário/OKBR). Dados privados via LGPD/DP
-seguem visão de longo prazo, sem implementação.
+`file_dump`, tabelas silver `campaign_donations` e `candidacies`) a partir
+de uma âncora congelada no bronze (`tse/reference/`, upload manual — o CDN
+do TSE bloqueia clientes CLI) e os diários oficiais de Recife pelo diário
+`daily_querido_diario` (fórmula `documents_collect`, via Querido
+Diário/OKBR). Completam o quadro a telemetria interna `hourly_pod_usage`
+(fórmula `metrics_collect`, uso de CPU/memória dos pods) e a sonda-piloto
+`pilot_pncp_terms` (fórmula `terms_collect`, sem schedule — disparo manual
+sobre coorte por parâmetros). Dados privados via LGPD/DP seguem visão de
+longo prazo, sem implementação.
 
 ## Protocolos de compartilhamento (roadmap)
 
@@ -96,8 +106,9 @@ backfill. O storage mora no ArangoDB (multi-modelo, banco de grafos e
 documentos da aplicação) e no MinIO, com o Redis segurando o cache do monitor de
 qualidade e dos hot paths da API: habilitado por padrão, e tudo degrada
 graciosamente quando ele sai de cena. O ML é scikit-learn com spaCy, a API
-é FastAPI e a visualização é Grafana, com SSO via Keycloak e datasource
-Trino provisionado.
+é FastAPI — e serve também o portal editorial capiba-dashboard (`/`, com a
+página de triagem `/triage`, protegidos pelo SSO) — e a visualização é
+Grafana, com SSO via Keycloak e datasource Trino provisionado.
 
 O coração é um lago Apache Iceberg, tabelas Parquet no MinIO com catálogo
 REST Lakekeeper sobre PostgreSQL. O Trino pergunta em SQL sobre o catálogo

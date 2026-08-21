@@ -39,24 +39,24 @@ este diretório não substitui testes, governa *alegações empíricas*.
 
 | Ciclo | Pré-registro | Veredito | Resultado | Objeto |
 |---|---|---|---|---|
-| D-01 | PR-D-01.md | refutado (P2, P3) | R-D-01.md | Semântica dos sinais estatísticos no regime sintético |
-| D-01b | PR-D-01b.md | success | R-D-01b.md | Forma corrigida da D-01 (reconciliação pipeline↔API) |
-| D-02 | PR-D-02.md | success | R-D-02.md | Validação de `detect_collusion` e `trace_ownership` |
-| D-03 | PR-D-03.md | inconclusivo | R-D-03.md | Calibração do `collusion_network` em volume real |
-| D-03b | PR-D-03b.md | inconclusivo | R-D-03b.md | Refinamento por co-ocorrência entre compradores |
-| D-03c | PR-D-03c.md | refutado (hipótese de escala) | R-D-03c.md | Blocking de recall exato do `collusion_network` |
-| D-03d | PR-D-03d.md | success | R-D-03d.md | Emissão ranqueada top-K com orçamento editorial |
-| D-04 | PR-D-04.md | success | R-D-04.md | CRI de Fazekas & Kocsis por contrato |
-| D-05 | PR-D-05.md | success | R-D-05.md | Red flags de aditivos contratuais |
+| D-01 | PR-D-01.md | refutado (P2, P3) | ../results/R-D-01.md | Semântica dos sinais estatísticos no regime sintético |
+| D-01b | PR-D-01b.md | success | ../results/R-D-01b.md | Forma corrigida da D-01 (reconciliação pipeline↔API) |
+| D-02 | PR-D-02.md | success | ../results/R-D-02.md | Validação de `detect_collusion` e `trace_ownership` |
+| D-03 | PR-D-03.md | inconclusivo | ../results/R-D-03.md | Calibração do `collusion_network` em volume real |
+| D-03b | PR-D-03b.md | inconclusivo | ../results/R-D-03b.md | Refinamento por co-ocorrência entre compradores |
+| D-03c | PR-D-03c.md | refutado (hipótese de escala) | ../results/R-D-03c.md | Blocking de recall exato do `collusion_network` |
+| D-03d | PR-D-03d.md | success | ../results/R-D-03d.md | Emissão ranqueada top-K com orçamento editorial |
+| D-04 | PR-D-04.md | success | ../results/R-D-04.md | CRI de Fazekas & Kocsis por contrato |
+| D-05 | PR-D-05.md | success | ../results/R-D-05.md | Red flags de aditivos contratuais |
 | D-05b | PR-D-05b.md | em aberto (piloto ativo) | — | Plano B: termos contratuais PNCP por contrato |
-| D-06 | PR-D-06.md | success | R-D-06.md | `sanctioned_supplier` (match exato por documento) |
-| D-06b | PR-D-06b.md | success | R-D-06b.md | Screening fuzzy nome + documento mascarado |
-| D-07 | PR-D-07.md | refutado (banda de revocação) | R-D-07.md | Entity resolution de sócios e fornecedores |
-| D-07b | PR-D-07b.md | success | R-D-07b.md | Recalibração da banda de revocação da D-07 |
-| D-08 | PR-D-08.md | success | R-D-08.md | `political_connection` (doações TSE × contratos) |
+| D-06 | PR-D-06.md | success | ../results/R-D-06.md | `sanctioned_supplier` (match exato por documento) |
+| D-06b | PR-D-06b.md | success | ../results/R-D-06b.md | Screening fuzzy nome + documento mascarado |
+| D-07 | PR-D-07.md | refutado (banda de revocação) | ../results/R-D-07.md | Entity resolution de sócios e fornecedores |
+| D-07b | PR-D-07b.md | success | ../results/R-D-07b.md | Recalibração da banda de revocação da D-07 |
+| D-08 | PR-D-08.md | success | ../results/R-D-08.md | `political_connection` (doações TSE × contratos) |
 | D-08b | PR-D-08b.md | em aberto | — | Migração da fonte TSE para a Base dos Dados (paridade `tse_parity`) |
-| D-09 | PR-D-09.md | success | R-D-09.md | `anomalous_geography` (distância fornecedor × comprador) |
+| D-09 | PR-D-09.md | success | ../results/R-D-09.md | `anomalous_geography` (distância fornecedor × comprador) |
 | D-10 | PR-D-10.md | exploratório | — | `notice_clone` sobre o corpus do Querido Diário (sem R-D-10; P2 refutada no exploratório) |
-| D-10b | PR-D-10b.md | success | R-D-10b.md | Forma corrigida da P2 (rank ≤ 4) do `notice_clone` |
+| D-10b | PR-D-10b.md | success | ../results/R-D-10b.md | Forma corrigida da P2 (rank ≤ 4) do `notice_clone` |
 | D-11 | PR-D-11.md | em aberto (sem bateria) | — | ML supervisionado sobre os rótulos de triagem |
-| D-12 | PR-D-12.md | refutado | R-D-12.md | Piloto de screening de PEPs via yente/OpenSanctions |
+| D-12 | PR-D-12.md | refutado | ../results/R-D-12.md | Piloto de screening de PEPs via yente/OpenSanctions |

@@ -1,5 +1,13 @@
 # Operadores de detecção
 
+> **Propósito:** catálogo único dos operadores de detecção — scores,
+> limiares, validações e status de conexão à API e ao pipeline.
+> **Quando consultar:** ao criar, calibrar ou conectar um sinal de
+> detecção.
+> **Relacionados:** `docs/preregistrations/README.md` (índice de baterias),
+> `docs/ingestao.md` (dados de entrada).
+> **Sincronizado com:** `src/capiba/detection/` — 2026-08-21.
+
 Catálogo único dos operadores de detecção da plataforma. Cada operador é uma
 lente sobre os mesmos contratos: uns leem a estatística dos números, outros
 aprendem o formato da anomalia, outros seguem os fios do grafo ou o

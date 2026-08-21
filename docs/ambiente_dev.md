@@ -1,5 +1,13 @@
 # Ambiente de desenvolvimento — ferramentas do agente
 
+> **Propósito:** documentar as ferramentas do ambiente do desenvolvedor
+> (RTK, DeepSeek Harness) que não são componentes do produto.
+> **Quando consultar:** ao configurar ou depurar o ambiente local de
+> desenvolvimento com agentes.
+> **Relacionados:** `AGENTS.md` (ponteiro), `docs/operacao.md` (cluster
+> local).
+> **Sincronizado com:** `.kimi/` — 2026-08-21.
+
 Ferramentas do ambiente do desenvolvedor (não são componentes do produto).
 Extraído do AGENTS.md em 2026-08-21.
 

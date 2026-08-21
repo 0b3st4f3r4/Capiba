@@ -1,5 +1,13 @@
 # Oportunidades de evolução: jornalismo de dados comunitário
 
+> **Propósito:** backlog de médio prazo orientado pela missão editorial,
+> com ponto de partida no código e critério de aceitação por item.
+> **Quando consultar:** para escolher evoluções de capacidade editorial e
+> analítica após os gaps de curto prazo.
+> **Relacionados:** `docs/gaps.md` (curto prazo), `docs/jornalismo_dados.md`
+> (método editorial).
+> **Sincronizado com:** pesquisa de 2026-08-18, revalidada em 2026-08-21.
+
 Pesquisa de 2026-08-18. Este documento é o backlog de médio prazo do
 Capiba orientado pela missão de produzir **jornalismo de dados a serviço
 da comunidade** (método em `docs/jornalismo_dados.md`). Cada oportunidade

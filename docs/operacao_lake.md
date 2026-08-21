@@ -1,5 +1,13 @@
 # Operação do lake — idempotência, retry e memória
 
+> **Propósito:** detalhe operacional das regras duras de idempotência,
+> retry e memória do lake, com o contexto dos incidentes reais.
+> **Quando consultar:** antes de alterar download, normalize, destinos do
+> lake ou concorrência de tasks pesadas.
+> **Relacionados:** `AGENTS.md` (regras duras), `docs/operacao.md`
+> (runbook do cluster), `docs/ingestao.md` (arquitetura da ingestão).
+> **Sincronizado com:** `src/capiba/pipeline/` — 2026-08-21.
+
 Lições de volume real (2026-08). Extraído do AGENTS.md em 2026-08-21; lá ficam
 apenas as regras duras. Este documento guarda o detalhe operacional e o
 contexto dos incidentes.

@@ -1,5 +1,13 @@
 # Governança de Dados
 
+> **Propósito:** mapear a governança de dados do Capiba na régua do
+> DAMA-DMBOK, com componentes concretos e lacunas explícitas.
+> **Quando consultar:** decisões de qualidade, catálogo, segurança, LGPD e
+> ciclo de vida dos dados.
+> **Relacionados:** `docs/gaps.md` (lacunas priorizadas), `README.md`
+> (missão), `docs/jornalismo_dados.md` (prática editorial).
+> **Sincronizado com:** `src/capiba` + `charts/capiba` — 2026-08-21.
+
 Este documento descreve como a plataforma Capiba operacionaliza governança
 de dados, usando o **DAMA-DMBOK** (Data Management Body of Knowledge) como
 régua de referência. O objetivo não é burocratizar: cada área de
