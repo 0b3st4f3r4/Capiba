@@ -43,19 +43,14 @@ repos:
         types: [python]
         pass_filenames: false
 
-  # Type checking (mypy + basedpyright).
-  # Runs only when Python files change; requires the local .venv (make install).
+  # Type checking. Pre-commit runs mypy only; basedpyright also runs via
+  # `make typecheck` and CI (both typecheckers stay enforced there).
+  # Requires the local .venv (make install).
   - repo: local
     hooks:
       - id: mypy
         name: mypy type check
         entry: .venv/bin/mypy src/
-        language: system
-        types: [python]
-        pass_filenames: false
-      - id: basedpyright
-        name: basedpyright type check
-        entry: .venv/bin/basedpyright
         language: system
         types: [python]
         pass_filenames: false
