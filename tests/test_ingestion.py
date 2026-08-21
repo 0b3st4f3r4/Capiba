@@ -520,31 +520,27 @@ class TestGeoEnrichment:
         """The default wiring chains establishments -> TOM -> coordinates."""
         from capiba.ingestion.persistence import _default_supplier_geo
 
-        batches = {
-            "rfb_municipalities": [[{"tom_code": "2531", "name": "RECIFE"}]],
-            "establishments": [
-                [
-                    {
-                        "cnpj": "98765432000196",
-                        "municipio": "2531",
-                        "uf": "PE",
-                        "is_matriz": True,
-                    },
-                    {  # not in the batch CNPJ set: filtered out
-                        "cnpj": "11111111000111",
-                        "municipio": "2531",
-                        "uf": "PE",
-                        "is_matriz": True,
-                    },
-                ]
-            ],
-        }
-        with patch(
-            "capiba.pipeline.lake.read_silver_entities",
-            side_effect=lambda entity: iter(batches[entity]),
+        establishments = [
+            {
+                "cnpj": "98765432000196",
+                "municipio": "2531",
+                "uf": "PE",
+                "is_matriz": True,
+            },
+        ]
+        with (
+            patch(
+                "capiba.pipeline.lake.read_silver_entities",
+                return_value=iter([[{"tom_code": "2531", "name": "RECIFE"}]]),
+            ),
+            patch(
+                "capiba.pipeline.lake.read_establishments_for_cnpjs",
+                return_value=establishments,
+            ) as mock_selective,
         ):
             index = _default_supplier_geo({"98765432000196"})
 
+        mock_selective.assert_called_once_with({"98765432000196"})
         assert index is not None
         assert set(index) == {"98765432000196"}
         assert index["98765432000196"]["latitude"] == pytest.approx(-8.04666)

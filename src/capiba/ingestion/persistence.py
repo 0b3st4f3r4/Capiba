@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 def _default_supplier_geo(cnpjs: set[str]) -> dict[str, dict[str, Any]] | None:
     """Builds the CNPJ -> lat/long supplier index from the silver (best-effort).
 
-    Streams the silver ``establishments``/``rfb_municipalities`` tables once
-    per bulk load, keeping only the establishments of the batch's CNPJs —
-    the same full-scan trade-off accepted by ``persist_cnpj_entities``. Any
+    Reads only the silver ``establishments`` rows of the batch's CNPJs
+    (``lake.read_establishments_for_cnpjs`` — selective via Trino in the
+    cluster); the full table has tens of millions of rows and its pyiceberg
+    scan OOMKilled the Airflow pod on the May backfills (2026-08-21). Any
     failure (missing tables, offline catalog) degrades to no enrichment:
     geography never fails a persistence run.
     """
@@ -49,12 +50,7 @@ def _default_supplier_geo(cnpjs: set[str]) -> dict[str, dict[str, Any]] | None:
         ]
         if not rfb_rows:
             return None
-        establishments = (
-            row
-            for batch in lake.read_silver_entities("establishments")
-            for row in batch
-            if str(row.get("cnpj") or "") in cnpjs
-        )
+        establishments = lake.read_establishments_for_cnpjs(cnpjs)
         return geography.build_supplier_geo_index(establishments, rfb_rows)
     except Exception as exc:
         logger.warning("Supplier geo enrichment unavailable: %s", exc)
@@ -181,7 +177,7 @@ def bulk_upsert_contracts(
     When ``supplier_geo`` is not given, the CNPJ -> lat/long index is built
     once from the silver ``establishments``/``rfb_municipalities`` tables
     (``_default_supplier_geo``, best-effort); pass an explicit mapping to
-    skip the silver scan (tests, offline runs).
+    skip the silver read (tests, offline runs).
 
     Args:
         db: Connection to the Capiba database.
