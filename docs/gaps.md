@@ -126,8 +126,11 @@ evidências) dentro de cada item.
    perderam); o run completo do `dbt_run` excluindo os marts horários
    (`_HOURLY_OWNED_MARTS` — commits concorrentes na mesma tabela Iceberg
    com o pipeline horário eram rejeitados); e evidência tolerante a
-   falha transitória por manifesto (`evidence/packages.py` — um
-   `SignatureDoesNotMatch` na rajada de PUTs abortava o loop inteiro).
+   falha por manifesto (`evidence/packages.py` — um
+   `SignatureDoesNotMatch` abortava o loop inteiro de manifestos; a causa
+   raiz é determinística, não transitória: metadados S3 não-ASCII vindos
+   de `entity_id` sujo da fonte, ex.: siafi_code `´01` — ver item 7; na
+   run seguinte 78.013/78.014 manifestos gravados, exatamente 1 erro).
    A run agendada `scheduled__2026-08-21T08:00` completou verde: 78.014
    sinais gravados (66.485 `anomalous_geography`, 866
    `sanctioned_supplier`, 5.428 `concentration`, 2.706
@@ -137,17 +140,23 @@ evidências) dentro de cada item.
    marcados failed na limpeza de TIs zumbis — esses dias podem ter ficado
    incompletos no silver; re-rodar o backfill da janela se o recorte
    temporal importar.
-7. (aberto) **`register_signals` aborta com `_key` ilegal (ERR 1221).** A
-   chave de triagem `{entity_type}:{entity_id}:{signal_type}`
-   (`db/triage.py`) vira `_key` ArangoDB sem sanitização; um sinal cujo
-   `entity_id` contém caractere ilegal (espaço, acento, `/`, `|`...)
-   levanta "illegal document key" e aborta o registro **inteiro** — na
-   run de 2026-08-21 nenhum dos 78.014 sinais entrou na fila editorial
-   (o erro foi engolido pelo catch do bloco de colusão, com mensagem
-   enganosa "Collusion detection unavailable"). A correção (sanitizar ou
-   hashear a `_key` preservando a chave legível em campo próprio, +
-   tolerância por sinal) mexe na identidade estável usada por API e
-   evidências — decidir a semântica antes de implementar.
+7. (aberto) **`entity_id` sujo quebra triagem e evidência (ERR 1221 /
+   SignatureDoesNotMatch).** A fonte entrega ids inválidos (ex.:
+   siafi_code `´01`, observado em 2026-08-21), e dois consumidores quebram
+   neles: a chave de triagem `{entity_type}:{entity_id}:{signal_type}`
+   (`db/triage.py`) vira `_key` ArangoDB sem sanitização — caractere
+   ilegal levanta "illegal document key" e aborta o registro **inteiro**
+   (na run de 2026-08-21 nenhum dos 78.014 sinais entrou na fila
+   editorial; o erro foi engolido pelo catch do bloco de colusão, com
+   mensagem enganosa "Collusion detection unavailable"); e os metadados
+   S3 do pacote de evidências (`entity_cnpj`) com caracteres não-ASCII
+   falham a assinatura do PUT (após o fix de tolerância por manifesto,
+   resta 1 manifesto perdido por run — o do id sujo). A correção
+   (sanitizar/hashear a `_key` preservando a chave legível em campo
+   próprio, normalizar metadados para ASCII, + tolerância por sinal no
+   registro) mexe na identidade estável usada por API e evidências —
+   decidir a semântica antes de implementar; avaliar também validar o
+   `siafi_code` na normalização do contrato.
 
 ## Médio: qualidade e observabilidade
 
