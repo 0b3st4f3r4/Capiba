@@ -143,6 +143,36 @@ class TestStoreSignalPackages:
         assert manifest["reproducible"] is True
         assert manifests[0][1]["batch_sha256"] == result["batch_sha256"]
 
+    def test_manifest_store_failure_is_tolerated(
+        self, contracts: list[dict[str, Any]]
+    ) -> None:
+        """A transient error on one manifest does not abort the rest.
+
+        A single SignatureDoesNotMatch in a MinIO burst aborted the whole
+        manifest loop of the 2026-08-21 detect run; failures are counted
+        in the summary instead.
+        """
+
+        class FlakyStorage(FakeStorage):
+            def store(self, data, filename, metadata, content_type=None):  # type: ignore[no-untyped-def]
+                if filename.startswith("signal-manifest-") and (
+                    metadata["entity_cnpj"] == SIGNAL["entity_id"]
+                ):
+                    raise RuntimeError("SignatureDoesNotMatch")
+                return super().store(data, filename, metadata, content_type)
+
+        other = {
+            **SIGNAL,
+            "entity_id": "99999999000100",
+            "signal_type": "concentration",
+        }
+        result = packages.store_signal_packages(
+            FlakyStorage(), [SIGNAL, other], contracts, date(2026, 1, 1)
+        )
+
+        assert result["manifests"] == 1
+        assert result["manifest_errors"] == 1
+
     def test_collusion_manifest_is_not_reproducible(self) -> None:
         """Graph-derived signals without a snapshot stay non-reproducible."""
         storage = FakeStorage()

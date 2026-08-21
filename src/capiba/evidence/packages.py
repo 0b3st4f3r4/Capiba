@@ -208,8 +208,10 @@ def store_signal_packages(
 
     Returns:
         Summary ``{"batch_sha256": str, "graph_sha256": str | None,
-        "manifests": int}``; ``batch_sha256`` is None when there are no
-        signals.
+        "manifests": int, "manifest_errors": int}``; ``batch_sha256`` is
+        None when there are no signals. Per-manifest storage failures are
+        tolerated (counted in ``manifest_errors``) so one transient error
+        does not drop the rest of the run's manifests.
     """
     if not signals:
         return {"batch_sha256": None, "graph_sha256": None, "manifests": 0}
@@ -264,6 +266,7 @@ def store_signal_packages(
         )
         graph_sha256 = graph_result["sha256"]
 
+    manifest_errors = 0
     for signal in signals:
         manifest = build_signal_manifest(
             signal,
@@ -272,32 +275,49 @@ def store_signal_packages(
             if str(signal["signal_type"]) in GRAPH_DERIVED
             else None,
         )
-        storage.store(
-            _canonical(manifest),
-            f"signal-manifest-{manifest['signal_key']}.json",
-            {
-                "signal_key": manifest["signal_key"],
-                "entity_cnpj": str(signal["entity_id"]),
-                "evidence_type": "signal_package",
-                "captured_at": captured_at,
-                "source": _METADATA_SOURCE,
-                "hash_sha256": batch_sha256,
-                "captured_by": _METADATA_CAPTURED_BY,
-                "batch_sha256": batch_sha256,
-            },
-            "application/json",
-        )
+        try:
+            storage.store(
+                _canonical(manifest),
+                f"signal-manifest-{manifest['signal_key']}.json",
+                {
+                    "signal_key": manifest["signal_key"],
+                    "entity_cnpj": str(signal["entity_id"]),
+                    "evidence_type": "signal_package",
+                    "captured_at": captured_at,
+                    "source": _METADATA_SOURCE,
+                    "hash_sha256": batch_sha256,
+                    "captured_by": _METADATA_CAPTURED_BY,
+                    "batch_sha256": batch_sha256,
+                },
+                "application/json",
+            )
+        except Exception as exc:
+            # Transient storage failures must not abort the remaining
+            # manifests — a single SignatureDoesNotMatch in a MinIO burst
+            # dropped most of the run's manifests on 2026-08-21. Only the
+            # first failures are logged individually (a down MinIO would
+            # otherwise flood the log with one line per signal).
+            manifest_errors += 1
+            if manifest_errors <= 3:
+                logger.warning(
+                    "Failed to store signal manifest %s: %s",
+                    manifest["signal_key"],
+                    exc,
+                )
 
     logger.info(
-        "Signal evidence packages stored: batch %s + graph %s + %d manifests",
+        "Signal evidence packages stored: batch %s + graph %s + %d manifests"
+        " (%d errors)",
         batch_sha256,
         graph_sha256,
-        len(signals),
+        len(signals) - manifest_errors,
+        manifest_errors,
     )
     return {
         "batch_sha256": batch_sha256,
         "graph_sha256": graph_sha256,
-        "manifests": len(signals),
+        "manifests": len(signals) - manifest_errors,
+        "manifest_errors": manifest_errors,
     }
 
 
