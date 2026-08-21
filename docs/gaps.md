@@ -56,7 +56,10 @@ evidências) dentro de cada item.
 5. (aberto) **Conectar os operadores NLP.** `semantic_gap` e `detect_clone`
    (`src/capiba/detection/nlp_operators.py`), junto com `db/vectors.py` e
    `db/search.py`, seguem sem consumidor; `SignalType.SEMANTIC_GAP` não tem
-   produtor.
+   produtor. Rascunho de pré-registro do sinal `notice_clone` sobre o
+   corpus do Querido Diário em `docs/preregistrations/PR-D-10.md`
+   (2026-08-21 — aguarda revisão humana; `semantic_gap` fica
+   explicitamente fora por falta de fonte).
 6. (feito) **Ativar `notification/`.** O `NotificationDispatcher` foi ligado ao
    pipeline via `src/capiba/notification/alerts.py`: o `task_detect` alerta
    sinais ≥ `NOTIFICATION_ALERT_SCORE` e o `task_validate_pipeline` alerta
@@ -250,8 +253,9 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    executada em 2026-08-20** (sucesso; janela de 19/08 legitimamente
    vazia — o diário de 18/08 é o mais recente raspado pelo QD; run com
    janela de 18/08 disparada para exercitar o download de textos).
-   Pendente: alimentar os sinais de NLP (`semantic_gap`, `detect_clone`)
-   com o corpus — depende de pré-registro (NLP segue sem PR).
+   Pendente: alimentar os sinais de NLP com o corpus — rascunho de
+   pré-registro `docs/preregistrations/PR-D-10.md` (`notice_clone`)
+   aguardando revisão humana.
 9. (em andamento) **TSE: doações × contratos (O8).** Pré-registrado e
    validado no regime sintético (PR-D-08/R-D-08): pipeline mensal
    `monthly_tse` (snapshot da prestação de contas, silvers
@@ -296,4 +300,5 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    laço automático de requests/limits.
 5. Baterias pré-registradas de validação empírica para grafos, NLP e ML:
    grafos feitos (PR-D-02 aprovado, bateria D-02 executada com sucesso,
-   `docs/results/R-D-02.md`); NLP e ML seguem sem PR.
+   `docs/results/R-D-02.md`); NLP com rascunho de PR (`PR-D-10`,
+   `notice_clone`, aguardando revisão humana); ML segue sem PR.
