@@ -357,6 +357,48 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
     pacote de evidências (O9).
 12. (aberto) **Modo leve de onboarding.** Execução local sem k3s (sqlite/duckdb)
     para o jornalista solo ou a redação comunitária.
+13. (aberto) **A fábrica de rótulos não produz (2026-08-21).** O mecanismo do
+    item 1 existe e está íntegro (página `/triage` acessível via SSO, API
+    `/v1/triage` sem auth, transições válidas), mas a coleção
+    `signal_reviews` tem 816.405 documentos, **100% `pending_review`**,
+    zero `reviewed_by` em três dias de produção (AQL de leitura,
+    2026-08-21: `first_seen` 19/08 = 313.161, 20/08 = 491.314, 21/08 =
+    11.930 — os 78.014 sinais da run de 21/08 entraram só em parte pelo
+    ERR 1221 do item Alto 7). Causas identificadas:
+    (a) **dominação de um signal_type sem eixo de prioridade** —
+    `collusion_network` é 99,1% da fila (809.220 entradas, uma por par de
+    fornecedores, chave `supplier:<cnpj1>+<cnpj2>:collusion_network`),
+    todas com score binário 1.0 e `details` contendo apenas
+    `{min_wins, suppliers}` (a anotação de compradores distintos da D-03b
+    não é persistida): os 809 mil pares são indistinguíveis entre si na
+    fila, e a guarda `DETECTION_COLLUSION_MAX_PAIRS` (1M) protege a
+    memória do pod, não a capacidade editorial — abaixo dela, cada par
+    vira uma entrada (`register_signals`, `db/triage.py`, não tem teto nem
+    amostragem; a deduplicação por chave só impede duplicata);
+    (b) **fila sem priorização e com varredura completa** —
+    `list_reviews` (`db/triage.py:114-134`) lê a coleção INTEIRA para a
+    memória do pod da API (`_all_reviews`), filtra e ordena em Python só
+    por `last_seen` desc (sem ordenação por score, sem paginação por
+    offset, limite máximo 1.000, default 100); a página `/triage` filtra
+    apenas por status — sem filtro por signal_type nem por score, o
+    revisor vê os 100 pares de colusão re-observados mais recentemente,
+    e cada carga de página materializa 816 mil documentos (o portal já
+    OOMKillou o pod da API com full scans — `api/portal.py:159`);
+    (c) **alerta por score inoperante** — `NOTIFICATION_RECIPIENTS` tem
+    default vazio (`config.py:329`), vazio no `.env.example` e sem wiring
+    no chart → `notify_fraud_signals` é no-op; e mesmo configurado, os
+    809 mil sinais de colusão têm score 1.0 ≥ `NOTIFICATION_ALERT_SCORE`
+    (0,7), o que geraria UM e-mail com 809 mil sinais embutidos no
+    metadata — o design do alerta também não escala com a dominação.
+    Encaminhamento proposto (tarefa de engenharia, BDD/TDD normal — não é
+    alegação empírica, dispensa pré-registro): fila priorizada com
+    filtro/ordenação/paginação no AQL (SORT score DESC, OFFSET/LIMIT,
+    filtro por signal_type também na página), teto diário de revisão por
+    operador, amostragem declarada e determinística dos pares de colusão
+    no registro (ex.: hash da chave) ou agregação por fornecedor em vez de
+    por par (mudança de semântica do sinal fica com o PR-D-03c), e cap no
+    payload do alerta (top-K por run). O destrave da fábrica de rótulos é
+    pré-condição do ML supervisionado (item Alto 2, PR-D-11).
 
 ## Roadmap de longo prazo (declarado, fora da fase)
 

@@ -1,0 +1,82 @@
+{
+  "id": "D-10b",
+  "runner": "notice_clone",
+  "refines": "D-10",
+  "description": "Refinamento da bateria D-10 (PR-D-10b, 2026-08-21): P2 recalibrada para o regime real do encoder — P2b: todo par N1 sinaliza (score > 0.85, inalterado) e rank <= 4 entre os historicos candidatos; componente score >= 0.95 removido. Semantica do sinal intocada (limiar estrito 0.85, veto de reedicao, disciplina de nulos). D-10.json preservado como registro historico da forma refutada. Ver docs/preregistrations/PR-D-10b.md.",
+  "seeds": [13, 29, 41, 59, 71],
+  "encoder": {
+    "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "device": "cpu"
+  },
+  "thresholds": {
+    "notice_clone_threshold": 0.85,
+    "comparison": "strict",
+    "min_notice_chars": 200,
+    "max_unit_bytes": 51200,
+    "window_days": 365,
+    "score_decimals": 4,
+    "anchor_tolerance": 1e-9
+  },
+  "territory_id": "2611606",
+  "segmentation_markers": ["EDITAL", "AVISO DE LICITACAO", "EXTRATO", "PROCESSO"],
+  "synthetic": {
+    "base_notices": 60,
+    "cases": [
+      {
+        "id": "N0",
+        "count": 2,
+        "description": "Copia exata (bit a bit) do aviso-base -> sinal, score exato 1.0, rank 1 (ancora)",
+        "expected": {"signal": true, "score": 1.0, "rank": 1}
+      },
+      {
+        "id": "N1",
+        "count": 8,
+        "description": "Clone verbal (troca apenas de slots: entidade, empresa, datas, valores) -> sinal (score > 0.85) e rank <= 4 entre os historicos (P2b, banda recalibrada para o regime real do encoder; ancorada no maximo observado nas 5 seeds)",
+        "expected": {"signal": true, "rank_max": 4}
+      },
+      {
+        "id": "N2",
+        "count": 8,
+        "description": "Clone parafraseado (reordenacao de paragrafos + sinonimos + abreviacoes) -> sinal; revocacao >= banda exploratoria (P3)",
+        "expected": {"signal": true}
+      },
+      {
+        "id": "N3",
+        "count": 8,
+        "description": "Par de minuta padronizada (mesma estrutura formal, objeto e valores distintos) -> controle de falso positivo estrutural",
+        "expected": {"signal": false}
+      },
+      {
+        "id": "N4",
+        "count": 4,
+        "description": "Reedicao (mesmo numero de processo, texto alterado) -> veto, nunca sinaliza",
+        "expected": {"signal": false}
+      },
+      {
+        "id": "N5",
+        "count": "remaining",
+        "description": "Avisos de dominios distintos (saude x obras x TI), restante do corpus base -> controle de ausencia de sinal",
+        "expected": {"signal": false}
+      },
+      {
+        "id": "N6",
+        "count": 1,
+        "description": "Edicao sintetica montada com 12 avisos plantados e marcadores -> segmentacao recupera exatamente 12 unidades (ancora exata)",
+        "expected": {"units": 12}
+      }
+    ]
+  },
+  "real_sample": {
+    "source": "bronze querido_diario/files/ (piloto Recife, acumulo desde 2026-08-18)",
+    "sampling_seed": 97,
+    "max_editions": 30,
+    "min_coverage": 0.9,
+    "annotation": "rubrica binaria editorial sobre todos os pares sinalizados; banda de precisao (P8) fixada por exploratorio documentado"
+  },
+  "bands": {
+    "p2_max_rank": 4,
+    "p3_min_recall": 0.75,
+    "p4_max_fp_rate": 0.1,
+    "fixed_by": "P2b: exploratorio seed 13 (results/detect/D-10/exploratory_seed_13.json — scores N1 exatos min 0.8893, ranks max 3) + verificacao de desenvolvimento das 5 seeds (scores 0.86-0.998, rank max 4; Revisoes do PR-D-10, 2026-08-21) -> banda rank <= 4 ancorada exatamente no maximo observado (execucao oficial reproduz as mesmas seeds bit a bit, P7 verde). P3/P4: exploratorio seed 13, 2026-08-21 (inalteradas do D-10). Bandas de P6b/P8 pendentes (amostra real + anotacao editorial)"
+  }
+}

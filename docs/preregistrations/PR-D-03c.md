@@ -277,3 +277,11 @@ Após a aprovação humana deste registro, com TDD/BDD usual:
   documentados como alternativas **não adotadas** nesta rodada
   (seção 2). A ordenação determinística de emissão é adotada apenas como
   descriptor de prioridade de triagem.
+- 2026-08-21: **encaminhamento após o veredito** — bateria executada e
+  refutada como hipótese de escala (R8) em `docs/results/R-D-03c.md`:
+  o blocking está correto (R1–R7, R9 success) mas não basta nos pontos
+  (3,2)/(3,3). O refinamento seguinte é `PR-D-03d.md` (config
+  `experiments/detect/D-03d.json`), que adota a direção combinada:
+  blocking + emissão ranqueada com orçamento editorial explícito
+  (top-K = 500 declarado), com a justificativa da reintrodução do
+  truncamento contra a objeção da seção 2 deste registro.
