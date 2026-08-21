@@ -17,7 +17,11 @@ import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
-from capiba.config import NOTIFICATION_ALERT_SCORE, NOTIFICATION_RECIPIENTS
+from capiba.config import (
+    NOTIFICATION_ALERT_MAX_SIGNALS,
+    NOTIFICATION_ALERT_SCORE,
+    NOTIFICATION_RECIPIENTS,
+)
 from capiba.notification.dispatcher import (
     NotificationAlert,
     NotificationChannel,
@@ -86,18 +90,23 @@ def _notify_fraud_signals(signals: list[dict[str, Any]], run_date: date | None) 
         logger.debug("No signal above the alert threshold (%.2f)", NOTIFICATION_ALERT_SCORE)
         return False
 
-    max_score = max(float(s["score"]) for s in flagged)
+    flagged.sort(key=lambda s: float(s.get("score") or 0), reverse=True)
+    max_score = float(flagged[0]["score"])
     priority = Priority.CRITICAL if max_score >= CRITICAL_SCORE else Priority.HIGH
 
+    # Top-K by score: the e-mail payload stays sendable even when a run
+    # flags hundreds of thousands of signals; the full count is kept in
+    # the title/message and in ``flagged_total``.
+    top = flagged[:NOTIFICATION_ALERT_MAX_SIGNALS]
     adapted = [
         {
             "type": str(s.get("signal_type")),
             "score": s.get("score"),
             "evidence": s.get("details"),
         }
-        for s in flagged
+        for s in top
     ]
-    entities = sorted({f"{s.get('entity_type')}:{s.get('entity_id')}" for s in flagged})
+    entities = sorted({f"{s.get('entity_type')}:{s.get('entity_id')}" for s in top})
 
     alert = NotificationAlert(
         title=f"Detection: {len(flagged)} fraud signals >= {NOTIFICATION_ALERT_SCORE}",
@@ -110,6 +119,7 @@ def _notify_fraud_signals(signals: list[dict[str, Any]], run_date: date | None) 
         recipients=NOTIFICATION_RECIPIENTS,
         metadata={
             "signals": adapted,
+            "flagged_total": len(flagged),
             "entity": ", ".join(entities),
             "risk_index": max_score,
             "run_date": run_date.isoformat() if run_date else None,

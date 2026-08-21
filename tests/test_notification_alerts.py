@@ -86,6 +86,32 @@ class TestNotifyFraudSignals:
         with patch.object(alerts, "_dispatch", side_effect=RuntimeError("boom")):
             assert notify_fraud_signals([_signal(0.99)], None) is False
 
+    def test_payload_is_capped_to_top_k_by_score(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The e-mail embeds only the top-K signals (score desc)."""
+        monkeypatch.setattr(alerts, "NOTIFICATION_ALERT_MAX_SIGNALS", 2)
+        signals = [_signal(0.71), _signal(0.99), _signal(0.8)]
+
+        with patch.object(alerts, "_dispatch", return_value=True) as mock_dispatch:
+            assert notify_fraud_signals(signals, date(2026, 1, 1)) is True
+
+        alert = mock_dispatch.call_args.args[0]
+        scores = [s["score"] for s in alert.metadata["signals"]]
+        assert scores == [0.99, 0.8]
+        assert alert.metadata["flagged_total"] == 3
+        # The title/message still count every flagged signal.
+        assert "3 fraud signals" in alert.title
+
+    def test_payload_below_cap_is_untouched(self) -> None:
+        """With fewer flagged signals than K the payload keeps them all."""
+        with patch.object(alerts, "_dispatch", return_value=True) as mock_dispatch:
+            notify_fraud_signals([_signal(0.8), _signal(0.9)], None)
+
+        alert = mock_dispatch.call_args.args[0]
+        assert len(alert.metadata["signals"]) == 2
+        assert alert.metadata["flagged_total"] == 2
+
     def test_detection_template_renders_adapted_signals(self) -> None:
         """The adapted payload must render in the detection e-mail template."""
         with patch(

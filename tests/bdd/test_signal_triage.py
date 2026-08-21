@@ -56,13 +56,25 @@ def context() -> dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
-def _fake_aql(monkeypatch: pytest.MonkeyPatch, context: dict[str, Any]) -> None:
+def _patch_aql(monkeypatch: pytest.MonkeyPatch, context: dict[str, Any]) -> None:
     """Routes the triage AQL reads to the fake collection."""
-    monkeypatch.setattr(
-        triage,
-        "execute_aql",
-        lambda db, query, bind_vars=None: list(db.col.docs.values()),
-    )
+    def _fake_aql(
+        db: FakeDb, query: str, bind_vars: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """Applies the AQL filter semantics to the fake collection."""
+        bind_vars = bind_vars or {}
+        docs = list(db.col.docs.values())
+        if "status" in bind_vars:
+            docs = [d for d in docs if d.get("status") == bind_vars["status"]]
+        if "signal_type" in bind_vars:
+            docs = [d for d in docs if d.get("signal_type") == bind_vars["signal_type"]]
+        if "min_score" in bind_vars:
+            docs = [d for d in docs if (d.get("score") or 0) >= bind_vars["min_score"]]
+        if "COLLECT WITH COUNT" in query:
+            return [len(docs)]
+        return docs
+
+    monkeypatch.setattr(triage, "execute_aql", _fake_aql)
 
 
 def _signal(signal_type: str, entity_id: str, score: float) -> dict[str, Any]:

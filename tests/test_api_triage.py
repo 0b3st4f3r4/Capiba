@@ -61,15 +61,35 @@ SIGNAL = {
 KEY = "supplier:12345678000199:single_bid"
 
 
+def _fake_aql(
+    db: FakeDb, query: str, bind_vars: dict[str, Any] | None = None
+) -> list[Any]:
+    """Applies the listing/count AQL semantics (filters, sort, limit) to
+    the fake collection, mirroring what ArangoDB would do server-side."""
+    bind_vars = bind_vars or {}
+    docs = list(db.col.docs.values())
+    if "status" in bind_vars:
+        docs = [d for d in docs if d.get("status") == bind_vars["status"]]
+    if "signal_type" in bind_vars:
+        docs = [d for d in docs if d.get("signal_type") == bind_vars["signal_type"]]
+    if "min_score" in bind_vars:
+        docs = [d for d in docs if (d.get("score") or 0) >= bind_vars["min_score"]]
+    if "COLLECT WITH COUNT" in query:
+        return [len(docs)]
+    docs.sort(
+        key=lambda d: (d.get("score") or 0, str(d.get("last_seen") or "")),
+        reverse=True,
+    )
+    offset = bind_vars.get("offset", 0)
+    limit = bind_vars.get("limit", len(docs))
+    return docs[offset : offset + limit]
+
+
 @pytest.fixture
 def db(monkeypatch: pytest.MonkeyPatch) -> FakeDb:
     """Fixture: fake db injected via services.get_db and triage AQL reads."""
     fake = FakeDb()
-    monkeypatch.setattr(
-        triage,
-        "execute_aql",
-        lambda db_, query, bind_vars=None: list(db_.col.docs.values()),
-    )
+    monkeypatch.setattr(triage, "execute_aql", _fake_aql)
     monkeypatch.setattr("capiba.api.services.get_db", lambda: fake)
     return fake
 
@@ -116,6 +136,53 @@ class TestListTriageSignals:
             side_effect=HTTPException(status_code=503, detail="ArangoDB database unavailable"),
         ):
             assert client.get("/v1/triage/signals").status_code == 503
+
+    def test_score_first_ordering(self, client: TestClient, db: FakeDb) -> None:
+        """The listing answers the highest scores first."""
+        triage.register_signals(
+            db,
+            [
+                {**SIGNAL, "entity_id": "1", "score": 0.5},
+                {**SIGNAL, "entity_id": "2", "score": 0.95},
+            ],
+        )
+        data = client.get("/v1/triage/signals").json()
+        assert [s["entity_id"] for s in data] == ["2", "1"]
+
+    def test_filters_by_signal_type_and_min_score(
+        self, client: TestClient, db: FakeDb
+    ) -> None:
+        """The new filters narrow the listing server-side."""
+        triage.register_signals(
+            db,
+            [
+                {**SIGNAL, "entity_id": "1", "score": 0.9},
+                {
+                    **SIGNAL,
+                    "signal_type": "concentration",
+                    "entity_id": "2",
+                    "score": 0.5,
+                },
+            ],
+        )
+        data = client.get(
+            "/v1/triage/signals?signal_type=single_bid&min_score=0.8"
+        ).json()
+        assert [s["entity_id"] for s in data] == ["1"]
+
+    def test_offset_paginates(self, client: TestClient, db: FakeDb) -> None:
+        """Offset + limit page over the score-sorted listing."""
+        triage.register_signals(
+            db,
+            [{**SIGNAL, "entity_id": str(i), "score": 0.5 + i / 10} for i in range(3)],
+        )
+        page1 = client.get("/v1/triage/signals?limit=1").json()
+        page2 = client.get("/v1/triage/signals?limit=1&offset=1").json()
+        assert [page1[0]["entity_id"], page2[0]["entity_id"]] == ["2", "1"]
+
+    def test_invalid_min_score_is_422(self, client: TestClient, db: FakeDb) -> None:
+        """A min_score outside [0, 1] fails schema validation."""
+        assert client.get("/v1/triage/signals?min_score=1.5").status_code == 422
 
 
 class TestReviewSignal:

@@ -26,6 +26,7 @@ from capiba.api import services
 from capiba.db import triage as triage_db
 from capiba.db.arangodb import execute_aql
 from capiba.db.triage import TriageError, TriageStatus
+from capiba.detection.signals import SignalType
 from capiba.pipeline import lake, trino
 
 logger = logging.getLogger(__name__)
@@ -315,24 +316,44 @@ def _reviewer_of(user: dict[str, Any] | None, form_reviewer: str) -> str:
 
 @router.get("/triage")
 async def triage_page(
-    request: Request, status: TriageStatus = TriageStatus.PENDING_REVIEW
+    request: Request,
+    status: TriageStatus = TriageStatus.PENDING_REVIEW,
+    signal_type: str | None = None,
+    min_score: float | None = None,
+    page: int = 1,
 ) -> Response:
     """Editorial triage queue: signals under review + precision report.
 
-    Degrades gracefully: with ArangoDB down the page renders with an
-    "indisponível" notice instead of failing.
+    The queue is filtered, sorted (highest score first) and paginated
+    server-side; the template gets the real filtered total to render the
+    page navigation. Degrades gracefully: with ArangoDB down the page
+    renders with an "indisponível" notice instead of failing.
     """
     user = request.session.get("user")
     if config.SSO_ENABLED and user is None:
         return RedirectResponse("/auth/login", status_code=302)
+    page = max(page, 1)
+    page_size = 100
     entries: list[dict[str, Any]] | None = None
     metrics: list[dict[str, Any]] | None = None
+    total: int | None = None
     try:
         db = services.get_db()
-        entries = triage_db.list_reviews(db, status=status)
+        entries = triage_db.list_reviews(
+            db,
+            status=status,
+            signal_type=signal_type or None,
+            min_score=min_score,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+        )
+        total = triage_db.count_reviews(
+            db, status=status, signal_type=signal_type or None, min_score=min_score
+        )
         metrics = triage_db.precision_report(db)
     except Exception as exc:
         logger.warning("Triage page data unavailable: %s", exc)
+    pages = max(1, -(-total // page_size)) if total is not None else 1
     return templates.TemplateResponse(
         request,
         "triage.html",
@@ -341,6 +362,12 @@ async def triage_page(
             "reviewer": _reviewer_of(user, ""),
             "status": str(status),
             "statuses": [str(s) for s in TriageStatus],
+            "signal_type": signal_type or "",
+            "signal_types": [str(s) for s in SignalType],
+            "min_score": min_score,
+            "page": page,
+            "pages": pages,
+            "total": total,
             "entries": entries,
             "metrics": metrics,
             "error": request.query_params.get("error"),

@@ -45,12 +45,27 @@
     {% endif %}
 
     <section>
-      <h2>Sinais — {{ status }}</h2>
+      <h2>Sinais — {{ status }}{% if total is not none %} ({{ total }}){% endif %}</h2>
       <nav class="triage-nav" aria-label="Filtrar por estado">
         {% for s in statuses %}
-        <a href="/triage?status={{ s }}" class="{{ 'active' if s == status else '' }}">{{ s }}</a>
+        <a href="/triage?status={{ s }}&signal_type={{ signal_type }}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}" class="{{ 'active' if s == status else '' }}">{{ s }}</a>
         {% endfor %}
       </nav>
+
+      <form class="reviewer-bar" method="get" action="/triage">
+        <input type="hidden" name="status" value="{{ status }}">
+        <label for="signal-type-input">Tipo de sinal:</label>
+        <select id="signal-type-input" name="signal_type">
+          <option value="">todos</option>
+          {% for t in signal_types %}
+          <option value="{{ t }}" {{ 'selected' if t == signal_type else '' }}>{{ t }}</option>
+          {% endfor %}
+        </select>
+        <label for="min-score-input">Score mínimo:</label>
+        <input id="min-score-input" name="min_score" type="number" min="0" max="1" step="0.05"
+               value="{{ min_score if min_score is not none else '' }}" placeholder="—">
+        <button type="submit" class="confirm">Filtrar</button>
+      </form>
 
       <div class="reviewer-bar">
         <label for="reviewer-input">Revisor(a):</label>
@@ -123,6 +138,17 @@
           {% endfor %}
         </tbody>
       </table>
+      {% if pages > 1 %}
+      <nav class="triage-nav" aria-label="Paginação">
+        {% if page > 1 %}
+        <a href="/triage?status={{ status }}&signal_type={{ signal_type }}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}&page={{ page - 1 }}">← Anterior</a>
+        {% endif %}
+        <span>Página {{ page }} de {{ pages }}</span>
+        {% if page < pages %}
+        <a href="/triage?status={{ status }}&signal_type={{ signal_type }}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}&page={{ page + 1 }}">Próxima →</a>
+        {% endif %}
+      </nav>
+      {% endif %}
       {% endif %}
     </section>
 

@@ -365,13 +365,20 @@ section { margin-bottom: 3.5rem; }
   font-size: 0.85rem;
   color: var(--muted);
 }
-.reviewer-bar input {
+.reviewer-bar input,
+.reviewer-bar select,
+.reviewer-bar button {
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   font-size: 0.85rem;
+}
+.triage-nav span {
+  align-self: center;
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 .triage-table {

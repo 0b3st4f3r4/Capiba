@@ -332,6 +332,10 @@ NOTIFICATION_RECIPIENTS = [
 # Minimum signal score that triggers a detection alert (same threshold as
 # _ALERT_THRESHOLD in capiba.api.services).
 NOTIFICATION_ALERT_SCORE = float(os.getenv("NOTIFICATION_ALERT_SCORE", "0.7"))
+# Maximum number of flagged signals embedded in the detection e-mail
+# (top-K by score, descending). The full count still goes in the
+# title/message; the payload is capped so a large run stays sendable.
+NOTIFICATION_ALERT_MAX_SIGNALS = int(os.getenv("NOTIFICATION_ALERT_MAX_SIGNALS", "50"))
 
 # =============================================================================
 # Portal dashboard (SSO via Keycloak)

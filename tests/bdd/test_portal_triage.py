@@ -77,12 +77,32 @@ def context(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Shared scenario state: fake db wired to the portal read/write paths."""
     db = FakeDb()
     monkeypatch.setattr(services, "get_db", lambda: db)
-    monkeypatch.setattr(
-        triage,
-        "execute_aql",
-        lambda db_, query, bind_vars=None: list(db_.col.docs.values()),
-    )
+    monkeypatch.setattr(triage, "execute_aql", _fake_aql)
     return {"db": db, "client": TestClient(app)}
+
+
+def _fake_aql(
+    db: FakeDb, query: str, bind_vars: dict[str, Any] | None = None
+) -> list[Any]:
+    """Applies the listing/count AQL semantics (filters, sort, limit) to
+    the fake collection, mirroring what ArangoDB would do server-side."""
+    bind_vars = bind_vars or {}
+    docs = list(db.col.docs.values())
+    if "status" in bind_vars:
+        docs = [d for d in docs if d.get("status") == bind_vars["status"]]
+    if "signal_type" in bind_vars:
+        docs = [d for d in docs if d.get("signal_type") == bind_vars["signal_type"]]
+    if "min_score" in bind_vars:
+        docs = [d for d in docs if (d.get("score") or 0) >= bind_vars["min_score"]]
+    if "COLLECT WITH COUNT" in query:
+        return [len(docs)]
+    docs.sort(
+        key=lambda d: (d.get("score") or 0, str(d.get("last_seen") or "")),
+        reverse=True,
+    )
+    offset = bind_vars.get("offset", 0)
+    limit = bind_vars.get("limit", len(docs))
+    return docs[offset : offset + limit]
 
 
 def _key(signal_type: str, cnpj: str) -> str:

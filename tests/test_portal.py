@@ -337,12 +337,32 @@ def triage_db(monkeypatch: pytest.MonkeyPatch) -> _FakeDb:
 
     db = _FakeDb()
     monkeypatch.setattr(services, "get_db", lambda: db)
-    monkeypatch.setattr(
-        triage,
-        "execute_aql",
-        lambda db_, query, bind_vars=None: list(db_.col.docs.values()),
-    )
+    monkeypatch.setattr(triage, "execute_aql", _fake_triage_aql)
     return db
+
+
+def _fake_triage_aql(
+    db: _FakeDb, query: str, bind_vars: dict[str, Any] | None = None
+) -> list[Any]:
+    """Applies the listing/count AQL semantics (filters, sort, limit) to
+    the fake collection, mirroring what ArangoDB would do server-side."""
+    bind_vars = bind_vars or {}
+    docs = list(db.col.docs.values())
+    if "status" in bind_vars:
+        docs = [d for d in docs if d.get("status") == bind_vars["status"]]
+    if "signal_type" in bind_vars:
+        docs = [d for d in docs if d.get("signal_type") == bind_vars["signal_type"]]
+    if "min_score" in bind_vars:
+        docs = [d for d in docs if (d.get("score") or 0) >= bind_vars["min_score"]]
+    if "COLLECT WITH COUNT" in query:
+        return [len(docs)]
+    docs.sort(
+        key=lambda d: (d.get("score") or 0, str(d.get("last_seen") or "")),
+        reverse=True,
+    )
+    offset = bind_vars.get("offset", 0)
+    limit = bind_vars.get("limit", len(docs))
+    return docs[offset : offset + limit]
 
 
 @pytest.mark.usefixtures("stats_ok")
@@ -378,6 +398,58 @@ class TestPortalTriage:
 
         assert response.status_code == 200
         assert "indisponível" in response.text
+
+    def test_triage_filters_by_signal_type_and_min_score(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """The UI filters must narrow the queue server-side."""
+        from capiba.db import triage
+
+        triage.register_signals(
+            triage_db,
+            [
+                _TRIAGE_SIGNAL,
+                {
+                    **_TRIAGE_SIGNAL,
+                    "signal_type": "concentration",
+                    "entity_id": "99999999000100",
+                    "score": 0.3,
+                },
+            ],
+        )
+
+        response = client.get(
+            "/triage?signal_type=concentration&min_score=0.2"
+        )
+
+        assert response.status_code == 200
+        assert "concentration" in response.text
+        assert "99999999000100" in response.text
+        assert "12345678000199" not in response.text
+
+    def test_triage_paginates_over_real_total(
+        self, client: TestClient, triage_db: _FakeDb
+    ) -> None:
+        """Page 2 must exist when the filtered total exceeds the page size."""
+        from capiba.db import triage
+
+        triage.register_signals(
+            triage_db,
+            [
+                {**_TRIAGE_SIGNAL, "entity_id": f"{i:014d}", "score": 0.5 + i / 1000}
+                for i in range(150)
+            ],
+        )
+
+        page1 = client.get("/triage")
+        page2 = client.get("/triage?page=2")
+
+        assert page1.status_code == 200
+        assert "(150)" in page1.text
+        assert "Próxima" in page1.text
+        assert page2.status_code == 200
+        assert "Página 2 de 2" in page2.text
+        assert "Anterior" in page2.text
 
     def test_review_uses_form_reviewer(
         self, client: TestClient, triage_db: _FakeDb

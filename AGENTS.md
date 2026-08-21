@@ -255,8 +255,9 @@ Sinais best-effort emitidos no `task_detect` (nunca derrubam a task):
   `DETECTION_NOTICE_CLONE_THRESHOLD` (default 0,85), veto de reedição por
   número de processo, encoder pinado. Exploratório D-10 executado: âncoras
   N0/N6 verdes, bandas P3/P4 fixadas, **P2 refutada** (troca de entidade/órgão
-  abaixo de 0,95) — adjudicação no PR-D-10b; sem produtor no `task_detect`
-  até o veredito.
+  abaixo de 0,95); **D-10b success 7/7** (P2b: rank ≤ 4,
+  `docs/results/R-D-10b.md`) — produtor best-effort no `task_detect`
+  (`notice_clone_bronze_signals`, textos bronze do Querido Diário) ativo.
 
 Grafo na API: `GET /v1/graph/ownership/{cnpj}` (aresta FtM `ownership`; CNPJ
 normalizado para `cnpj_basico`), `GET /v1/graph/partners/{siafi_code}`
@@ -280,9 +281,13 @@ rótulos para o ML). Interface humana: página `/triage` do portal (CSS em
 `api/static/portal.css`). **A fábrica de rótulos está parada** (medido em
 2026-08-21, gate do PR-D-11 refutado): 816.405 sinais na fila, 100%
 `pending_review`, zero revisões concluídas — 99,1% são `collusion_network`
-com score binário 1,0 indistinguível; a listagem faz full scan da coleção
-sem ordenação por score. Causas e proposta de destrave: `docs/gaps.md`
-item Editorial 13.
+com score binário 1,0 indistinguível. Destrave da listagem implementado:
+`list_reviews` ordena e pagina **server-side** (AQL `SORT score DESC,
+last_seen DESC` + `OFFSET/LIMIT`, filtros por status/signal_type/min_score,
+`count_reviews` para o total; índice recomendado no docstring, criação
+manual) e a página `/triage` ganhou filtros e paginação real; alertas
+internos ganharam cap top-K (`NOTIFICATION_ALERT_MAX_SIGNALS`, default 50).
+Causas e restante do destrave: `docs/gaps.md` item Editorial 13.
 
 Assinatura de alertas por município: dispara SOMENTE na transição para
 `published` (gancho best-effort em `api/routers/triage.py` →
@@ -352,8 +357,8 @@ regime/calibração: `@pytest.mark.slow` (`CAPIBA_SLOW=1` — CI e `make
 test-cov`/`make test-slow` habilitam). BDD (pytest-bdd) em `tests/bdd/`,
 features em `tests/bdd/features/*.feature`.
 
-Teto da suíte rápida (`make test`): **2 minutos** (referência 2026-08-21: ~55
-s, 1268 testes). Se estourar, há teste vazando para infra real — investigue.
+Teto da suíte rápida (`make test`): **2 minutos** (referência 2026-08-21: ~50
+s, 1325 testes). Se estourar, há teste vazando para infra real — investigue.
 Causa observada: testes de wiring do `task_detect` sem mock de
 `get_capiba_db`/`collusion_eligibility` executam o AQL de elegibilidade no
 ArangoDB real quando os port-forwards estão ativos, e a derivação de pares

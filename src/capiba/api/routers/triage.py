@@ -43,9 +43,16 @@ def _public(doc: dict[str, Any]) -> SignalReview:
 async def list_triage_signals(
     status: TriageStatus | None = None,
     signal_type: SignalType | None = None,
+    min_score: float | None = Query(default=None, ge=0, le=1),
     limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> list[SignalReview]:
-    """Lists signals under editorial review, newest first.
+    """Lists signals under editorial review, highest score first.
+
+    Sorting (``score DESC, last_seen DESC``), filtering (``status``,
+    ``signal_type``, ``min_score``) and pagination (``offset``/``limit``)
+    run server-side. The defaults preserve the previous contract except
+    for the ordering, which changed from newest-first to score-first.
 
     Raises:
         HTTPException 503: If the database is unavailable.
@@ -57,6 +64,8 @@ async def list_triage_signals(
             status=status,
             signal_type=str(signal_type) if signal_type else None,
             limit=limit,
+            offset=offset,
+            min_score=min_score,
         )
     except Exception as exc:
         logger.warning("Triage listing failed: %s", exc)

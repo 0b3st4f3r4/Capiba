@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
@@ -27,6 +27,12 @@ from capiba.db.arangodb import execute_aql
 logger = logging.getLogger(__name__)
 
 TRIAGE_COLLECTION = "signal_reviews"
+
+
+def _aql_count(db: StandardDatabase, query: str, bind_vars: dict[str, Any]) -> int:
+    """Executes a COLLECT WITH COUNT query and returns the total."""
+    rows = cast(list[int], execute_aql(db, query, bind_vars=bind_vars))
+    return int(rows[0]) if rows else 0
 
 
 class TriageStatus(StrEnum):
@@ -112,10 +118,35 @@ def register_signals(db: StandardDatabase, signals: list[dict[str, Any]]) -> int
 
 
 def _all_reviews(db: StandardDatabase) -> list[dict[str, Any]]:
-    """Reads every triage document (empty when the collection is missing)."""
+    """Reads every triage document (empty when the collection is missing).
+
+    Only the precision report uses this full scan (it aggregates every
+    label); the listing path goes through the server-side AQL filters of
+    :func:`list_reviews`.
+    """
     if not db.has_collection(TRIAGE_COLLECTION):
         return []
     return execute_aql(db, f"FOR r IN {TRIAGE_COLLECTION} RETURN r")
+
+
+def _review_filters(
+    status: TriageStatus | None,
+    signal_type: str | None,
+    min_score: float | None,
+) -> tuple[list[str], dict[str, Any]]:
+    """Builds the AQL FILTER clauses and bind vars of the listing."""
+    filters: list[str] = []
+    bind_vars: dict[str, Any] = {}
+    if status is not None:
+        filters.append("r.status == @status")
+        bind_vars["status"] = str(status)
+    if signal_type is not None:
+        filters.append("r.signal_type == @signal_type")
+        bind_vars["signal_type"] = str(signal_type)
+    if min_score is not None:
+        filters.append("r.score >= @min_score")
+        bind_vars["min_score"] = min_score
+    return filters, bind_vars
 
 
 def list_reviews(
@@ -123,15 +154,59 @@ def list_reviews(
     status: TriageStatus | None = None,
     signal_type: str | None = None,
     limit: int = 100,
+    offset: int = 0,
+    min_score: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Lists triage entries, newest first, with optional filters."""
-    docs = _all_reviews(db)
-    if status is not None:
-        docs = [d for d in docs if d.get("status") == str(status)]
-    if signal_type is not None:
-        docs = [d for d in docs if d.get("signal_type") == str(signal_type)]
-    docs.sort(key=lambda d: str(d.get("last_seen") or ""), reverse=True)
-    return docs[:limit]
+    """Lists triage entries, highest score first, with optional filters.
+
+    Filtering, sorting (``score DESC, last_seen DESC``) and pagination run
+    server-side in AQL — the collection (hundreds of thousands of
+    documents) is never pulled into the API pod's memory.
+
+    Recommended (manual) index, not created here: a persistent index on
+    ``["status", "score", "last_seen"]`` of ``signal_reviews``.
+    """
+    if not db.has_collection(TRIAGE_COLLECTION):
+        return []
+    filters, bind_vars = _review_filters(status, signal_type, min_score)
+    where = f"FILTER {' AND '.join(filters)}" if filters else ""
+    return execute_aql(
+        db,
+        f"""
+        FOR r IN {TRIAGE_COLLECTION}
+            {where}
+            SORT r.score DESC, r.last_seen DESC
+            LIMIT @offset, @limit
+            RETURN r
+        """,
+        bind_vars={**bind_vars, "offset": offset, "limit": limit},
+    )
+
+
+def count_reviews(
+    db: StandardDatabase,
+    status: TriageStatus | None = None,
+    signal_type: str | None = None,
+    min_score: float | None = None,
+) -> int:
+    """Counts triage entries matching the listing filters (server-side).
+
+    Feeds the pagination of the triage page over the real total.
+    """
+    if not db.has_collection(TRIAGE_COLLECTION):
+        return 0
+    filters, bind_vars = _review_filters(status, signal_type, min_score)
+    where = f"FILTER {' AND '.join(filters)}" if filters else ""
+    return _aql_count(
+        db,
+        f"""
+        FOR r IN {TRIAGE_COLLECTION}
+            {where}
+            COLLECT WITH COUNT INTO total
+            RETURN total
+        """,
+        bind_vars=bind_vars,
+    )
 
 
 def apply_review(

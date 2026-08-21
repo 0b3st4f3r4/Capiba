@@ -48,15 +48,35 @@ class FakeDb:
         return self.col
 
 
+def _fake_aql(
+    db: FakeDb, query: str, bind_vars: dict[str, Any] | None = None
+) -> list[Any]:
+    """Applies the listing/count AQL semantics (filters, sort, limit) to
+    the fake collection, mirroring what ArangoDB would do server-side."""
+    bind_vars = bind_vars or {}
+    docs = list(db.col.docs.values())
+    if "status" in bind_vars:
+        docs = [d for d in docs if d.get("status") == bind_vars["status"]]
+    if "signal_type" in bind_vars:
+        docs = [d for d in docs if d.get("signal_type") == bind_vars["signal_type"]]
+    if "min_score" in bind_vars:
+        docs = [d for d in docs if (d.get("score") or 0) >= bind_vars["min_score"]]
+    if "COLLECT WITH COUNT" in query:
+        return [len(docs)]
+    docs.sort(
+        key=lambda d: (d.get("score") or 0, str(d.get("last_seen") or "")),
+        reverse=True,
+    )
+    offset = bind_vars.get("offset", 0)
+    limit = bind_vars.get("limit", len(docs))
+    return docs[offset : offset + limit]
+
+
 @pytest.fixture
 def db(monkeypatch: pytest.MonkeyPatch) -> FakeDb:
     """Fixture: fake db with AQL reads routed to the fake collection."""
     fake = FakeDb()
-    monkeypatch.setattr(
-        triage,
-        "execute_aql",
-        lambda db_, query, bind_vars=None: list(db_.col.docs.values()),
-    )
+    monkeypatch.setattr(triage, "execute_aql", _fake_aql)
     return fake
 
 
@@ -207,6 +227,72 @@ class TestListReviews:
         """Without the collection the listing is empty."""
         monkeypatch.setattr(db, "has_collection", lambda name: False)
         assert triage.list_reviews(db) == []
+
+    def test_score_first_ordering(self, db: FakeDb) -> None:
+        """The listing is sorted by score desc, not insertion order."""
+        triage.register_signals(
+            db,
+            [
+                _signal(entity_id="1", score=0.5),
+                _signal(entity_id="2", score=0.9),
+                _signal(entity_id="3", score=0.7),
+            ],
+        )
+        docs = triage.list_reviews(db)
+        assert [d["entity_id"] for d in docs] == ["2", "3", "1"]
+
+    def test_filters_by_min_score(self, db: FakeDb) -> None:
+        """The min_score filter keeps only signals at or above it."""
+        triage.register_signals(
+            db,
+            [
+                _signal(entity_id="1", score=0.5),
+                _signal(entity_id="2", score=0.9),
+            ],
+        )
+        docs = triage.list_reviews(db, min_score=0.7)
+        assert [d["entity_id"] for d in docs] == ["2"]
+
+    def test_offset_paginates(self, db: FakeDb) -> None:
+        """Offset + limit page over the sorted listing."""
+        triage.register_signals(
+            db, [_signal(entity_id=str(i), score=0.1 * i) for i in range(5)]
+        )
+        page1 = triage.list_reviews(db, limit=2)
+        page2 = triage.list_reviews(db, limit=2, offset=2)
+        page3 = triage.list_reviews(db, limit=2, offset=4)
+        ids = [d["entity_id"] for d in page1 + page2 + page3]
+        assert ids == ["4", "3", "2", "1", "0"]
+
+    def test_defaults_preserve_previous_contract(self, db: FakeDb) -> None:
+        """Without the new parameters the listing returns up to 100 docs."""
+        triage.register_signals(db, [_signal(entity_id=str(i)) for i in range(120)])
+        assert len(triage.list_reviews(db)) == 100
+
+
+class TestCountReviews:
+    """Tests for the server-side triage count (pagination total)."""
+
+    def test_counts_with_filters(self, db: FakeDb) -> None:
+        """The count respects the same filters as the listing."""
+        triage.register_signals(
+            db,
+            [
+                _signal(signal_type="single_bid", entity_id="1", score=0.9),
+                _signal(signal_type="concentration", entity_id="2", score=0.5),
+            ],
+        )
+        assert triage.count_reviews(db) == 2
+        assert triage.count_reviews(db, signal_type="single_bid") == 1
+        assert triage.count_reviews(db, min_score=0.7) == 1
+        assert triage.count_reviews(db, status=TriageStatus.CONFIRMED) == 0
+
+    def test_zero_when_collection_missing(
+        self, db: FakeDb, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without the collection the count is zero."""
+        monkeypatch.setattr(db, "has_collection", lambda name: False)
+        assert triage.count_reviews(db) == 0
 
 
 class TestPrecisionReport:
