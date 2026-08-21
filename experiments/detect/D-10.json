@@ -1,0 +1,85 @@
+{
+  "id": "D-10",
+  "runner": "notice_clone",
+  "description": "Clonagem de editais (notice_clone): par de avisos segmentados do mesmo territorio (IBGE), janela movel de 365 dias, similaridade cosseno de embeddings estritamente acima do limiar. Veto de reedicao (mesmo numero de processo). Segmentacao de edicoes inteiras do diario em avisos como pre-condicao (min 200 chars, max 50 KB por unidade). Regimes: sintetico exato + amostra real anotada do piloto Recife (bronze querido_diario/files/). Bandas de P3/P4/P6b/P8 fixadas por exploratorio documentado antes da execucao oficial. Ver docs/preregistrations/PR-D-10.md (2026-08-21).",
+  "seeds": [13, 29, 41, 59, 71],
+  "encoder": {
+    "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "device": "cpu"
+  },
+  "thresholds": {
+    "notice_clone_threshold": 0.85,
+    "comparison": "strict",
+    "min_notice_chars": 200,
+    "max_unit_bytes": 51200,
+    "window_days": 365,
+    "score_decimals": 4,
+    "anchor_tolerance": 1e-9
+  },
+  "territory_id": "2611606",
+  "segmentation_markers": ["EDITAL", "AVISO DE LICITACAO", "EXTRATO", "PROCESSO"],
+  "synthetic": {
+    "base_notices": 60,
+    "cases": [
+      {
+        "id": "N0",
+        "count": 2,
+        "description": "Copia exata (bit a bit) do aviso-base -> sinal, score exato 1.0, rank 1 (ancora)",
+        "expected": {"signal": true, "score": 1.0, "rank": 1}
+      },
+      {
+        "id": "N1",
+        "count": 8,
+        "description": "Clone verbal (troca apenas de slots: entidade, empresa, datas, valores) -> sinal, score >= 0.95, rank 1",
+        "expected": {"signal": true, "min_score": 0.95, "rank": 1}
+      },
+      {
+        "id": "N2",
+        "count": 8,
+        "description": "Clone parafraseado (reordenacao de paragrafos + sinonimos + abreviacoes) -> sinal; revocacao >= banda exploratoria (P3)",
+        "expected": {"signal": true}
+      },
+      {
+        "id": "N3",
+        "count": 8,
+        "description": "Par de minuta padronizada (mesma estrutura formal, objeto e valores distintos) -> controle de falso positivo estrutural",
+        "expected": {"signal": false}
+      },
+      {
+        "id": "N4",
+        "count": 4,
+        "description": "Reedicao (mesmo numero de processo, texto alterado) -> veto, nunca sinaliza",
+        "expected": {"signal": false}
+      },
+      {
+        "id": "N5",
+        "count": "remaining",
+        "description": "Avisos de dominios distintos (saude x obras x TI), restante do corpus base -> controle de ausencia de sinal",
+        "expected": {"signal": false}
+      },
+      {
+        "id": "N6",
+        "count": 1,
+        "description": "Edicao sintetica montada com 12 avisos plantados e marcadores -> segmentacao recupera exatamente 12 unidades (ancora exata)",
+        "expected": {"units": 12}
+      }
+    ]
+  },
+  "real_sample": {
+    "source": "bronze querido_diario/files/ (piloto Recife, acumulo desde 2026-08-18)",
+    "sampling_seed": 97,
+    "max_editions": 30,
+    "min_coverage": 0.9,
+    "annotation": "rubrica binaria editorial sobre todos os pares sinalizados; banda de precisao (P8) fixada por exploratorio documentado"
+  },
+  "exploratory": {
+    "synthetic_seed": 13,
+    "measures": [
+      "curva revocacao x limiar sobre N2 (banda de P3)",
+      "taxa de falso positivo sobre N3/N5 (banda de P4)",
+      "cobertura de segmentacao e distribuicao de similaridades na amostra real cacheada (banda de P6b)",
+      "anotacao piloto dos ate 20 pares reais mais similares (banda de P8)"
+    ],
+    "documented_in": "docs/preregistrations/PR-D-10.md, secao Revisoes, antes da execucao oficial"
+  }
+}

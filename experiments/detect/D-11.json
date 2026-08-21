@@ -1,0 +1,65 @@
+{
+  "id": "D-11",
+  "description": "ML supervisionado sobre rotulos da triagem editorial (signal_reviews): Random Forest (train_rf, defaults declarados) vs. baseline do CRI deterministico do PR-D-04, metrica primaria balanced accuracy. Hipotese de refutacao explicita: RF nao supera o CRI deterministico. Ver docs/preregistrations/PR-D-11.md.",
+  "runner": "supervised",
+  "seeds": [7, 17, 27, 37, 47],
+  "dataset": {
+    "unit": "supplier",
+    "label_positive_statuses": ["confirmed", "published"],
+    "label_negative_status": "rejected",
+    "exclude_pending": true,
+    "features_mart": "red_flags_by_supplier",
+    "features": [
+      "contracts",
+      "contracts_with_cri",
+      "mean_cri",
+      "share_non_competitive",
+      "share_short_window",
+      "share_price_ratio"
+    ],
+    "signal_score_features": {
+      "source_mart": "fraud_signals",
+      "aggregation": "max_score_per_signal_type",
+      "absent_value": 0.0,
+      "presence_indicator": true
+    }
+  },
+  "volume_gate": {
+    "min_labeled_entities": 300,
+    "min_per_class": 100,
+    "min_reviews_per_signal_type": 30
+  },
+  "split": {
+    "strategy": "stratified_by_entity",
+    "test_size": 0.2,
+    "temporal_secondary": {
+      "enabled": true,
+      "min_coverage_days": 60,
+      "train_fraction_oldest": 0.8,
+      "date_field": "first_seen"
+    }
+  },
+  "model": {
+    "estimator": "random_forest",
+    "params": {
+      "n_estimators": 200,
+      "max_depth": 10,
+      "min_samples_split": 5,
+      "class_weight": "balanced",
+      "n_jobs": -1
+    },
+    "random_state_from_seed": true
+  },
+  "baseline": {
+    "name": "deterministic_cri",
+    "field": "mean_cri",
+    "threshold": 0.5,
+    "exclude_null": true
+  },
+  "metrics": {
+    "primary": "balanced_accuracy",
+    "success_margin_over_baseline": 0.05,
+    "min_rf_balanced_accuracy": 0.80,
+    "baseline_chance_floor": 0.5
+  }
+}

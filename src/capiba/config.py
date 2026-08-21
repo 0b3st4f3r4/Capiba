@@ -123,6 +123,12 @@ PNCP_API_URL = os.getenv(
     "PNCP_API_URL",
     "https://pncp.gov.br/api/consulta",
 )
+# Contract terms (aditivos) endpoint: transactional "pncp" API group, not
+# "consulta" (PR-D-05b).
+PNCP_TERMS_API_URL = os.getenv(
+    "PNCP_TERMS_API_URL",
+    "https://pncp.gov.br/api/pncp",
+)
 TRANSPARENCY_API_URL = os.getenv(
     "TRANSPARENCY_API_URL",
     "https://api.portaldatransparencia.gov.br/api-de-dados",

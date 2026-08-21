@@ -3,70 +3,117 @@
 - **Pré-registro**: bateria D-10
 - **Criado em**: 2026-08-21
 - **Última atualização**: 2026-08-21
-- **Status**: rascunho para revisão humana, não aprovado, não executado
-- **Alvo**: sinal `notice_clone` (clonagem de edital/aviso entre
-  publicações do mesmo território), computado sobre o corpus de diários
-  oficiais do piloto Recife (bronze `querido_diario/files/`), com
-  emissão best-effort no `task_detect`. Operador de referência:
-  `detect_clone` de `src/capiba/detection/nlp_operators.py` (cosseno
-  sobre embeddings `paraphrase-multilingual-MiniLM-L12-v2`).
-- **Configuração**: `experiments/detect/D-10.json` (declarativa, seeds
-  inclusas; a criar junto com a implementação, após aprovação)
+- **Status**: completo, aguardando aprovação humana; não executado
+- **Alvo**: sinal `notice_clone` (novo `SignalType` — **inexistente hoje**:
+  `signals.py` declara `SEMANTIC_GAP` mas não `NOTICE_CLONE`; a adição é
+  passo de implementação deste registro) — clonagem/direcionamento de
+  edital entre publicações do mesmo território, computado sobre o corpus
+  de diários oficiais do piloto Recife (bronze `querido_diario/files/`),
+  com emissão best-effort no `task_detect`. Semântica de referência a
+  implementar em `src/capiba/detection/notice_clone.py` (pura, encoder
+  injetável); o protótipo `detect_clone` de
+  `src/capiba/detection/nlp_operators.py` (cosseno sobre embeddings
+  `paraphrase-multilingual-MiniLM-L12-v2`, limiar default 0,85 com
+  comparação estrita `>`, sem disciplina de nulos nem veto de reedição) é
+  **substituído**, não reutilizado.
+- **Configuração**: `experiments/detect/D-10.json` (declarativa, seeds e
+  âncoras inclusas; esqueleto criado junto a este registro, sem execução)
 
 ## 1. Pergunta
 
-O operador `detect_clone` recupera clones plantados de avisos de
-licitação com precisão e revocação úteis no regime sintético, e mantém
-precisão editorialmente aceitável numa amostra real anotada do piloto?
+O operador `notice_clone`, na semântica declarada na seção 3 (segmentação,
+limiar estrito, veto de reedição e disciplina de nulos pré-registrados),
+(i) reproduz **exatamente** os clones plantados no regime sintético —
+inclusive as disciplinas "reedição nunca sinaliza" e "minuta padronizada
+não sinaliza" —, (ii) segmenta edições reais do piloto com cobertura útil,
+e (iii) sustenta precisão editorialmente aceitável numa amostra real
+anotada de pares sinalizados?
 
 ## 2. Regime medido e limitações (obrigatório)
 
-- Regime **sintético exato** (offline) para a semântica, mais **amostra
-  real anotada** do piloto Recife para precisão prática — a anotação
+- Dois regimes: **sintético exato** (offline, padrão D-01..D-09) para a
+  semântica e a segmentação, mais **amostra real anotada** do piloto
+  Recife para cobertura de segmentação e precisão prática. A anotação
   editorial de pares é verdade de terreno parcial (limitação declarada:
   mede concordância com o anotador, não clonagem comprovada).
-- **O texto bronze é a edição inteira do diário** (~150 KB), não o
-  aviso individual. A segmentação em unidades (avisos/editais/extratos)
-  por marcadores estruturais ("EDITAL", "AVISO DE LICITAÇÃO", número de
-  processo) é parte do desenho e sua taxa de erro é medida (P6); sinais
-  sobre edições inteiras não fazem sentido jornalístico.
+- **O texto bronze é a edição inteira do diário**, não o aviso individual.
+  É o que a fonte entrega (contrato confirmado em
+  `ingestion/crawler_querido_diario.py` e na spec
+  `dags/pipelines/daily_querido_diario.yaml`): metadados do endpoint
+  `/gazettes` (`territory_id`, `date`, `edition`, `is_extra_edition`,
+  `url` do PDF, `txt_url`) mais o **texto plano integral** extraído do
+  PDF, sem marcação estrutural, persistido com nome determinístico
+  `<territory_id>-<date>-<sha256(url)[:12]>.txt`. A segmentação em
+  unidades (avisos/editais/extratos) por marcadores estruturais
+  ("EDITAL", "AVISO DE LICITAÇÃO", "EXTRATO", número de processo) é parte
+  do desenho e sua taxa de erro é medida (P6); sinais sobre edições
+  inteiras não fazem sentido jornalístico. **Não há silver de
+  documentos** — a bateria lê os arquivos texto do bronze diretamente.
+- **Dependência de acúmulo temporal**: o bronze QD começou a acumular em
+  2026-08-18; a janela móvel de 365 dias (§ 3) só se preenche com meses de
+  ingestão. P6/P7 são medidos sobre o bronze acumulado na data da execução
+  (amostra pequena por desenho, declarada); em produção, a cobertura
+  histórica cresce com o acúmulo — limitação declarada, não refutável.
 - **Clonagem é indício, não evidência.** Minutas padronizadas (TCU,
-  modelos de secretaria) são clones legítimos — falso positivo
-  estrutural declarado e medido com controle próprio (§ 4). O sinal
-  alimenta triagem editorial, nunca acusação direta.
-- **`semantic_gap` fica fora deste registro**: exige termo de
-  referência × execução contratual, fontes que a plataforma não tem.
+  modelos de secretaria, atas de registro de preços) são clones
+  legítimos — falso positivo estrutural declarado e medido com controle
+  próprio (N3, § 4). O sinal alimenta triagem editorial, nunca acusação
+  direta.
+- **`semantic_gap` fica fora deste registro**: exige termo de referência ×
+  execução contratual, fontes que a plataforma não tem.
   `SignalType.SEMANTIC_GAP` segue sem produtor até que a fonte exista
   (gap crítico 5 de `docs/gaps.md` parcialmente endereçado aqui).
-- Custo computacional: encode em CPU no pod do Airflow; o corpus diário
-  do piloto é de unidades de edições/dia — viável; o backfill histórico
-  do QD fica fora deste registro.
+- **Custo computacional**: encode em CPU no pod do Airflow; o corpus
+  diário do piloto é de unidades de edições/dia — viável. O backfill
+  histórico do QD fica fora deste registro.
+- **LGPD**: editais são documentos públicos oficiais; o `details` do sinal
+  carrega ids de aviso, datas e similaridade — nenhum dado pessoal além do
+  já publicado no diário.
 
 ## 3. Semântica do sinal (declarada)
 
-- **Unidade de análise**: aviso segmentado da edição, com no mínimo 200
-  caracteres de texto corrido (abaixo disso, metadado puro — não
-  analisável).
+`notice_clone.py` puro e determinístico, sobre os arquivos texto do
+bronze, com encoder injetável (default
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, o mesmo do
+protótipo, pinado na config):
+
+- **Unidade de análise**: aviso segmentado da edição, com no mínimo
+  **200 caracteres** de texto corrido (abaixo disso, metadado puro — não
+  analisável, excluído e contado).
+- **Identidade do aviso**: id derivado deterministicamente de
+  (território, data da edição, edição, índice do segmento) — a chave de
+  triagem é o hash do par ordenado de ids.
 - **Par candidato**: aviso novo × avisos históricos do **mesmo
-  território** (IBGE), em janela móvel de 365 dias. Cross-território
-  fica fora: minutas estaduais/nacionais padronizadas dominariam.
+  território** (IBGE), em janela móvel de **365 dias**. Cross-território
+  fica fora do v1: minutas estaduais/nacionais padronizadas dominariam
+  (refinamento futuro exige PR próprio).
 - **Veto de reedição**: mesmo número de processo extraível nos dois
-  avisos → retificação/republicação, nunca sinaliza.
-- **Emissão**: `notice_clone` quando a similaridade cosseno máxima do
-  par ≥ `DETECTION_NOTICE_CLONE_THRESHOLD` (placeholder **0,85** —
-  mudança exige PR-D-10b); score = similaridade máxima (round 4 casos).
-  Chave de triagem: hash do par ordenado de ids dos avisos.
-- Semântica de referência a implementar em
-  `src/capiba/detection/notice_clone.py` (puro, injetável); o
-  `detect_clone` atual de `nlp_operators.py` é protótipo sem disciplina
-  de nulos nem veto — a referência nova o substitui.
+  avisos → retificação/republicação, **nunca sinaliza**. Extração por
+  padrões declarados ("Processo nº/n.", formato NUP
+  `NNNNN.NNNNNNNN/NNNN-NN` e variações pontuadas); processo ausente de um
+  dos lados não é veto nem evidência.
+- **Emissão**: `notice_clone` quando a similaridade cosseno máxima do par
+  é **estritamente maior** que `DETECTION_NOTICE_CLONE_THRESHOLD`
+  (placeholder **0,85** — comparação `>` alinhada ao protótipo e a D-09;
+  mudança de limiar ou de comparação exige PR-D-10b). Score =
+  `round(max_similarity, 4)`. Um sinal por par; `details` com ids dos
+  avisos, datas das edições e similaridade.
+- **Disciplina de nulos**: aviso abaixo do mínimo de caracteres, edição
+  sem segmento válido ou encoder indisponível → par não computável, nunca
+  sinaliza (o protótipo não tinha essa disciplina).
+- Limiares e parâmetros vivem na config (`D-10.json`), nunca só em código.
 
 ## 4. Desenho
 
-População sintética por seed (5 seeds; estrutura idêntica, seed
-randomiza campos neutros). Corpus base: 60 avisos gerados por templates
-com slots (órgão, objeto, valores, datas). Casos plantados:
+**Regime sintético** (por seed; estrutura idêntica nas 5 seeds, que só
+randomizam campos neutros). Corpus base: 60 avisos gerados por templates
+com slots (órgão, objeto, valores, datas), distribuídos em edições
+sintéticas com os marcadores estruturais declarados. Casos plantados
+(contagens na config):
 
+- **N0** — 2 pares de **cópia exata** (bit a bit): o aviso histórico é
+  idêntico ao novo → **âncora exata**: cosseno de um vetor consigo mesmo
+  é 1,0, score 1,0000, rank 1.
 - **N1** — 8 clones **verbais**: cópia do aviso-base com troca apenas de
   entidade/empresa/datas/valores (perturbação mínima).
 - **N2** — 8 clones **parafraseados**: reordenação de parágrafos +
@@ -75,79 +122,139 @@ com slots (órgão, objeto, valores, datas). Casos plantados:
   objeto e valores distintos (controle de falso positivo estrutural).
 - **N4** — 4 **reedições**: mesmo número de processo, texto alterado
   (veto — nunca sinalizam).
-- **N5** — restante: avisos de domínios distintos (saúde × obras × TI),
-  controle de ausência de sinal.
+- **N5** — restante do corpus: avisos de domínios distintos (saúde ×
+  obras × TI), controle de ausência de sinal.
+- **N6** — 1 edição sintética montada com **12 avisos plantados** e
+  marcadores → a segmentação deve recuperar **exatamente 12 unidades**
+  (âncora exata da segmentação).
 
-Exploratório declarado (mesma disciplina de PR-D-06b): as bandas de
-P2/P3/P6 são fixadas por medição exploratória sobre o corpus sintético
-gerado e uma amostra real cacheada de edições de Recife, documentadas
-na seção de Revisões **antes** da execução oficial da bateria.
+**Exploratório declarado** (mesma disciplina de PR-D-06b; procedimento
+fixado aqui, resultados documentados em Revisões **antes** da execução
+oficial): (i) sobre o corpus sintético da seed 13 — curva revocação ×
+limiar de N2 e taxa de falso positivo de N3/N5, fixando as bandas de
+P3/P4; (ii) sobre uma amostra real cacheada de edições do piloto (seed de
+amostragem 97, até 30 edições) — cobertura da segmentação e distribuição
+de similaridades, fixando/confirmando a banda de P6b; (iii) anotação
+piloto editorial dos até 20 pares reais mais similares, fixando a banda
+de P8. Scores dependentes do encoder não são computáveis a priori sem
+executar o modelo — por isso bandas por exploratório, não âncoras.
+
+**Amostra real (oficial)**: edições de Recife acumuladas no bronze até a
+data da execução (≥ a amostra do exploratório), amostradas com a seed 97
+declarada na config. **Todos** os pares sinalizados são anotados pelo
+editor com rubrica binária declarada: "clone" = o par compartilha
+estrutura **e** conteúdo substancial além dos campos padronizados de
+minuta (objeto, requisitos e prazos em redação quase literal); minuta
+legítima e demais casos = não-clone. Precisão = fração confirmada.
 
 ## 5. Predições (numéricas, falsificáveis)
 
-- **P1 — clones verbais (sintético, exato).** Todo par N1 é recuperado
-  com score ≥ 0,95 e rank 1 entre os históricos. *Refutada* com
-  qualquer falha (o encoder multilingue trata troca de entidades como
-  quase-identidade).
-- **P2 — clones parafraseados (sintético, banda).** Revocação de N2 no
-  limiar placeholder ≥ banda fixada pelo exploratório. *Refutada*
-  abaixo dela → PR-D-10b com a curva revocação×limiar publicada.
-- **P3 — disciplina de falsos positivos (sintético, banda).** Taxa de
+Veredito por seed no sintético; a predição falha se divergir em qualquer
+uma das 5 seeds. Âncoras exatas com desvio tolerado de 1e-9 (antes do
+arredondamento declarado do score).
+
+- **P1 — âncora de duplicata exata (sintético, exato).** Todo par N0
+  sinaliza com score **1,0000** e rank 1 entre os históricos. *Refutada*
+  com desvio > 1e-9 ou rank ≠ 1.
+- **P2 — clones verbais (sintético, banda declarada).** Todo par N1 é
+  recuperado com score ≥ 0,95 e rank 1 (o encoder multilingue trata troca
+  de entidades como quase-identidade). *Refutada* com qualquer falha.
+- **P3 — clones parafraseados (sintético, banda).** Revocação de N2 no
+  limiar placeholder ≥ banda fixada pelo exploratório. *Refutada* abaixo
+  dela → PR-D-10b com a curva revocação × limiar publicada.
+- **P4 — disciplina de falsos positivos (sintético, banda).** Taxa de
   pares N3/N5 sinalizados ≤ banda fixada pelo exploratório. *Refutada*
   acima dela (minutas dominam → o sinal exige filtro estrutural novo).
-- **P4 — veto de reedição (sintético, exato).** Zero sinais sobre os
+- **P5 — veto de reedição (sintético, exato).** Zero sinais sobre os
   pares N4. *Refutada* com qualquer sinal.
-- **P5 — determinismo (sintético, exato).** Mesma seed reproduz bit a
-  bit pares e scores; execuções distintas divergem em zero casos.
-  *Refutada* com qualquer divergência.
-- **P6 — segmentação (real, piloto).** ≥ 90% das edições de Recife da
-  amostra geram ao menos uma unidade ≥ 200 caracteres, e nenhuma unidade
-  ultrapassa 50 KB (falha de split). *Refutada* fora disso — a
-  segmentação é pré-condição do sinal.
-- **P7 — precisão editorial (real, amostra anotada).** Precisão dos
-  pares sinalizados na amostra anotada ≥ banda fixada pelo exploratório.
+- **P6 — segmentação.** (a) **sintético, exato**: N6 recupera exatamente
+  12 unidades; *refutada* com qualquer outra contagem. (b) **real,
+  piloto**: ≥ 90% das edições da amostra geram ao menos uma unidade ≥ 200
+  caracteres, e nenhuma unidade ultrapassa 50 KB (falha de split);
+  *refutada* fora disso — a segmentação é pré-condição do sinal.
+- **P7 — determinismo (sintético, exato).** Mesma seed reproduz bit a bit
+  pares e scores; execuções distintas divergem em zero casos. *Refutada*
+  com qualquer divergência.
+- **P8 — precisão editorial (real, amostra anotada).** Precisão dos
+  pares sinalizados ≥ banda fixada pelo exploratório/anotação piloto.
   *Refutada* abaixo dela.
-- **P8 — invariante estrutural (pós-integração).** Todo sinal
-  `notice_clone` no gold tem score ≥ limiar do regime e par dentro do
-  mesmo território; zero sinais sobre pares com mesmo número de
+- **P9 — invariante estrutural (pós-integração).** Todo sinal
+  `notice_clone` no gold tem score > limiar do regime, par dentro do
+  mesmo território e zero sinais sobre pares com mesmo número de
   processo. Verificado por query após uma run do `detect`.
 
 ## 6. Controles e invariantes
 
 - Controles internos: N3 (minuta padronizada) e N5 (domínios distintos)
-  são os baselines de falso positivo; N4 é o baseline do veto.
+  são os baselines de falso positivo; N4 é o baseline do veto; N0 e N6
+  são as âncoras exatas (score unitário, contagem de segmentos).
+- Invariante de composição: o sinal existe se e somente se o par é
+  mesmo-território, dentro da janela, sem veto de processo e com
+  similaridade máxima estritamente acima do limiar — testável recomputando
+  a partir dos arquivos bronze (`details` carrega os campos que
+  fundamentam).
 - O placeholder 0,85 vem do protótipo (`detect_clone`); qualquer
-  recalibração exige PR-D-10b (monotonicidade documental).
+  recalibração, mudança de comparação, de encoder, de janela ou inclusão
+  de cross-território exige PR de refinamento (`PR-D-10b`) com a
+  justificativa medida (monotonicidade documental).
 - Embeddings não entram no grafo nem no CRI; o sinal é autônomo na
   triagem (chave estável do par).
+- Os sinais existentes não podem ser afetados (guarda: baterias
+  D-01..D-09 seguem verdes).
 
 ## 7. Critério de encerramento
 
-Bateria **bem-sucedida** com P1/P4/P5 exatas nas 5 seeds, P2/P3 dentro
-das bandas declaradas e P6–P8 satisfeitas no piloto. Qualquer refutação
-é publicada em `docs/results/R-D-10.md` com a causa investigada, e a
-forma corrigida vira `PR-D-10b.md` antes de nova execução. O sucesso
-habilita — não autoriza automaticamente — a emissão best-effort no
-`task_detect` e a expansão para outros territórios QD.
+Bateria **bem-sucedida** com P1/P2/P5/P6a/P7 exatas nas 5 seeds, P3/P4
+dentro das bandas declaradas e P6b/P8 satisfeitas no piloto (P9 após a
+integração). Qualquer refutação é publicada em `docs/results/R-D-10.md`
+com a causa investigada, e a forma corrigida vira `PR-D-10b.md` antes de
+nova execução. O sucesso habilita — não autoriza automaticamente — a
+emissão best-effort no `task_detect` e a expansão para outros
+territórios QD.
 
-## 8. Execução (após aprovação humana)
+## 8. Execução (após aprovação humana deste registro)
 
-1. Segmentação `src/capiba/ingestion/gazette_segments.py` (marcadores
-   estruturais + número de processo), testada unitariamente sobre
-   edições reais cacheadas.
-2. Semântica `src/capiba/detection/notice_clone.py` (pura, encoder
-   injetável; veto de reedição), `SignalType.NOTICE_CLONE`, testes
-   rápidos.
-3. Bateria `experiments/detect/D-10.json` + runner (dispatch em
-   `scripts/detect_battery.py`), saída em `results/detect/D-10/`;
+1. **Segmentação**: `src/capiba/ingestion/gazette_segments.py` (marcadores
+   estruturais + extração de número de processo), testada unitariamente
+   sobre a edição sintética N6 e edições reais cacheadas.
+2. **Sinal**: `src/capiba/detection/notice_clone.py` puro (encoder
+   injetável, veto de reedição, disciplina de nulos) +
+   `SignalType.NOTICE_CLONE`; testes rápidos. O protótipo `detect_clone`
+   de `nlp_operators.py` é removido ou reduzido a wrapper deprecado
+   (decisão de implementação, registrada em Revisões).
+3. **Exploratório**: procedimento da seção 4 executado e documentado em
+   Revisões, fixando as bandas de P3/P4/P6b/P8.
+4. **Bateria**: runner `battery_notice_clone.py` (dispatch
+   `"runner": "notice_clone"` em `scripts/detect_battery.py`) lendo
+   `experiments/detect/D-10.json`, saída em `results/detect/D-10/`;
    teste de regime `@pytest.mark.slow`.
-4. Amostra real do piloto + anotação editorial (P6/P7); integração
-   best-effort no `task_detect` somente após veredito, com pacote de
-   evidências (O9) e triagem (O10) reutilizados.
+5. **Amostra real + anotação editorial** (P6b/P8); integração best-effort
+   no `task_detect` somente após o veredito, reutilizando pacote de
+   evidências (`evidence/packages.py`) e triagem (`db/triage.py`); P9
+   verificado por query e anexado ao R-D-10.
 
 ## Revisões
 
 - 2026-08-21: criação (rascunho para revisão humana), após a primeira
   run real da `daily_querido_diario` (edição de Recife de 2026-08-18 com
-  texto persistido no bronze). Bandas de P2/P3/P6/P7 a fixar por
-  exploratório documentado antes da execução.
+  texto persistido no bronze).
+- 2026-08-21: reescrita completa, de rascunho a pré-registro pronto para
+  execução. Verificações em código: `SignalType` **não** tem
+  `NOTICE_CLONE` (adição virou passo explícito de implementação);
+  `detect_clone` usa comparação **estrita** `>` e não tem disciplina de
+  nulos nem veto — declarado como protótipo a substituir, não referência
+  reutilizável; o contrato da fonte foi confirmado no crawler e na spec
+  (metadados `/gazettes` + texto plano integral da edição, nome
+  determinístico, sem silver de documentos). Mudanças de desenho em
+  relação ao rascunho: comparação de limiar declarada **estrita**
+  (o rascunho dizia ≥ — alinhamento com o protótipo e com D-09); âncoras
+  exatas **N0** (cópia bit a bit → score 1,0000) e **N6** (segmentação
+  de edição sintética → exatamente 12 unidades) adicionadas, cumprindo a
+  regra de âncoras exatas sempre que computáveis a priori; procedimento
+  do exploratório tornado declarativo (seed 13 no sintético, seed de
+  amostragem 97 na amostra real, anotação piloto de até 20 pares);
+  rubrica binária de anotação editorial declarada; dependência de
+  acúmulo temporal do bronze declarada como limitação. Esqueleto
+  `experiments/detect/D-10.json` criado junto, sem execução. Bandas de
+  P3/P4/P6b/P8 seguem a fixar pelo exploratório documentado antes da
+  execução oficial.

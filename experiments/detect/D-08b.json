@@ -1,0 +1,48 @@
+{
+  "id": "D-08b",
+  "runner": "tse_parity",
+  "description": "Paridade de espelho TSE (O8, refinamento de fonte de D-08): a silver campaign_donations/candidacies derivada da Base dos Dados (br_tse_eleicoes: receitas_candidato + resultados_candidato, ano 2024) e medida contra o dump oficial TSE (referencia congelada no bronze, obtida uma vez via IP brasileiro) na amostra deterministica PE + 26 capitais. Sem alteracao de semantica do sinal political_connection. Ver docs/preregistrations/PR-D-08b.md (rascunho 2026-08-21).",
+  "mirror_source": {
+    "provider": "basedosdados",
+    "dataset": "br_tse_eleicoes",
+    "donations_table": "receitas_candidato",
+    "elected_gate_table": "resultados_candidato",
+    "elected_prefix": "eleito",
+    "election_year": 2024,
+    "bigquery_project": "basedosdados",
+    "access": ["bigquery_public", "python_package_api_key"]
+  },
+  "reference_source": {
+    "provider": "tse",
+    "bronze_prefix": "tse/reference/",
+    "dumps": [
+      "prestacao_de_contas_eleitorais_candidatos_2024.zip",
+      "consulta_cand_2024.zip"
+    ],
+    "parser": "capiba.ingestion.tse.parse_tse_zip",
+    "obtention": "one-shot manual download via brazilian IP; sha256 recorded in R-D-08b"
+  },
+  "sample": {
+    "type": "deterministic",
+    "ufs_full": ["PE"],
+    "capitals_of_remaining_ufs": true,
+    "expected_ue_count_approx": 211
+  },
+  "tolerances": {
+    "row_count_relative": 0.01,
+    "row_count_hard_cap": 0.05,
+    "ues_within_tolerance_share": 0.95,
+    "amount_sum_relative": 0.01,
+    "donor_jaccard_min": 0.99,
+    "elected_gate_max_divergences": 0,
+    "origin_value_share_trigger": 0.05
+  },
+  "measures": {
+    "origin_value_share": "fraction of total VR_RECEITA with NR_CPF_CNPJ_DOADOR_ORIGINARIO set, computed on the TSE reference over the sample"
+  },
+  "invariants": {
+    "mirror_origin_document_always_empty": true,
+    "battery_d08_synthetic_stays_green": true,
+    "detection_political_py_unchanged": true
+  }
+}

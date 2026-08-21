@@ -1,0 +1,69 @@
+{
+  "id": "D-12",
+  "runner": "pep_screening",
+  "description": "Piloto de screening de PEPs (O3, terceira fatia): fornecedores PF da silver contracts x dataset br_pep (CGU) via yente query-by-example FtM (algorithm logic-v2, threshold 0.7). Regimes: sintético exato do adapter FtM (yente stubado), benchmark OpenSanctions Pairs in-process com controle pareado do matcher local D-06b (amostra reservoir 1.000+1.000 seed 61 — distinta das seeds 19/23/37/41/53), e amostra real anotada (precisão editorial, carga de triagem). Ver docs/preregistrations/PR-D-12.md (rascunho 2026-08-21, aguardando aprovação).",
+  "seeds": [61, 67, 71, 73, 79],
+  "signal_type": "pep_supplier_match",
+  "backend": {
+    "mode": "self_hosted_yente_bulk",
+    "alternatives": ["hosted_api_trial"],
+    "decision": "pending_human_approval",
+    "note": "API hospedada jamais recebe CPF de fornecedor; bulk br_pep sob CC BY-NC 4.0 (uso não-comercial)."
+  },
+  "yente": {
+    "version": "5.5.0",
+    "version_pin": "confirm_at_execution_by_dated_amendment",
+    "algorithm": "logic-v2",
+    "algorithm_excluded": {
+      "regression_v1": "treinado pelo fornecedor — adjacência com o benchmark OS Pairs"
+    },
+    "threshold": 0.7,
+    "dataset": "br_pep",
+    "dataset_snapshot": "pin_before_any_scoring_by_dated_amendment",
+    "dataset_snapshot_reference": "20260818021948-guq (processado em 2026-08-18, observado em 2026-08-21)",
+    "dataset_license": "CC BY-NC 4.0",
+    "bulk_url": "https://data.opensanctions.org/datasets/latest/br_pep/entities.ftm.json"
+  },
+  "synthetic": {
+    "control_suppliers": 20,
+    "cases": {
+      "signal_cases": ["Q5"],
+      "no_signal_cases": ["Q3", "Q4", "Q6"],
+      "query_contract_cases": ["Q1", "Q2", "Q7"]
+    }
+  },
+  "os_pairs": {
+    "url": "https://data.opensanctions.org/contrib/training/pairs-20251209.json.gz",
+    "snapshot": "2025-12-09",
+    "sample_positive": 1000,
+    "sample_negative": 1000,
+    "seed": 61,
+    "paired_control": "local_matcher_d06b_name_only_threshold_0.95",
+    "min_precision": 0.85,
+    "min_recall": 0.55,
+    "local_reference": {
+      "precision": 0.925,
+      "recall": 0.296,
+      "source": "docs/results/R-D-06b.md"
+    },
+    "upper_bound_caveat": "benchmark adjacente ao fornecedor (dado de treinamento publicado pela OpenSanctions); regime decisivo é a amostra real"
+  },
+  "dataset_profile": {
+    "min_persons_without_document_share": 0.9,
+    "document_properties": ["idNumber", "registrationNumber"]
+  },
+  "real_sample": {
+    "population": "distinct_pf_suppliers_silver_contracts_current_partition",
+    "annotation": {
+      "mode": "editorial_blind_to_score",
+      "labels": ["same_person", "different_person", "indeterminate"],
+      "indeterminate_counts_as": "negative",
+      "sample_size_min": 60,
+      "all_if_alerts_lte": 60,
+      "stratification": "score_decile",
+      "seed": 61
+    },
+    "min_editorial_precision": 0.8,
+    "max_alert_rate": 0.1
+  }
+}

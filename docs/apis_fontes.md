@@ -26,6 +26,8 @@ A consulta pública não pede autenticação. As datas viajam no formato `yyyyMM
 
 O crawler `crawler_pncp.py` bate em `/v1/contratos` paginando até a última página, com retry e backoff exponencial centralizados no helper `fetch_page` de `src/capiba/ingestion/_http.py`, que trata o `204` como página vazia e o `429` como sinal de espera. A execução manual da DAG `daily_pncp` confirmou que o endpoint devolve contratos com fornecedor e valores. O crawler também cobre `GET /v1/contratos/atualizacao` (`fetch_contract_updates`), consumido pela DAG bronze-only `daily_pncp_updates` para capturar contratos aditivados após a publicação original. Não há credenciais a configurar.
 
+Os termos contratuais (aditivos) ficam **fora** do grupo `consulta`: `GET /v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos` vive no grupo transacional `pncp` (URL base `https://pncp.gov.br/api/pncp`, config `PNCP_TERMS_API_URL`), é público (verificado ao vivo em 2026-08-21) e lista apenas os termos vigentes — `204` quando o contrato não tem termos. É a fonte autoritativa do plano B de PR-D-05b ("houve aditivo formal?"), consumida por `fetch_contract_terms` com checkpoint por contrato no bronze (`persist_contract_terms`).
+
 ## 2. Portal da Transparência (CGU)
 
 ### URL base

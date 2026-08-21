@@ -21,7 +21,12 @@ from capiba.ingestion.crawler_federal_revenue import (
     extract_cnpj_zip,
     parse_cnpj_csv,
 )
-from capiba.ingestion.crawler_pncp import fetch_contract_updates, fetch_contracts
+from capiba.ingestion.crawler_pncp import (
+    fetch_contract_terms,
+    fetch_contract_updates,
+    fetch_contracts,
+    parse_control_number,
+)
 from capiba.ingestion.crawler_transparency import (
     fetch_contracts as fetch_contracts_transparency,
 )
@@ -266,6 +271,63 @@ class TestCrawlerPNCP:
         results = fetch_contract_updates("2026-01-01", "2026-01-01")
 
         assert [r["numeroControlePNCP"] for r in results] == ["U1", "U2"]
+
+    @patch("capiba.ingestion._http.requests.get")
+    def test_fetch_contract_terms_hits_terms_endpoint(
+        self, mock_get: MagicMock
+    ) -> None:
+        """Must hit the terms endpoint of the transactional pncp API group."""
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [
+            {"tipoTermoContratoNome": "Termo Aditivo", "valorAcrescido": 6840.88}
+        ]
+
+        terms = fetch_contract_terms("00394460000141", 2026, 12)
+
+        assert terms is not None
+        assert terms[0]["tipoTermoContratoNome"] == "Termo Aditivo"
+        args, kwargs = mock_get.call_args
+        assert args[0].endswith("/v1/orgaos/00394460000141/contratos/2026/12/termos")
+        assert kwargs["params"]["pagina"] == 1
+
+    @patch("capiba.ingestion._http.requests.get")
+    def test_fetch_contract_terms_no_content_is_none(
+        self, mock_get: MagicMock
+    ) -> None:
+        """A contract without terms (HTTP 204) returns None, not an error."""
+        mock_get.return_value.status_code = 204
+
+        assert fetch_contract_terms("00394460000141", 2026, 12) is None
+
+    @patch("capiba.ingestion._http.requests.get")
+    def test_fetch_contract_terms_fatal_error_raises(
+        self, mock_get: MagicMock
+    ) -> None:
+        """A non-transient error raises (the caller records NULL flags)."""
+        mock_get.return_value.status_code = 400
+        mock_get.return_value.raise_for_status.side_effect = requests.HTTPError(
+            response=mock_get.return_value
+        )
+
+        with pytest.raises(requests.HTTPError):
+            fetch_contract_terms("00394460000141", 2026, 12)
+
+
+class TestParseControlNumber:
+    """Tests for the numeroControlePNCP splitter (terms endpoint paths)."""
+
+    def test_valid_control_number(self) -> None:
+        """Must split cnpj, year and integer sequence."""
+        assert parse_control_number("28414217000167-2-000003/2026") == (
+            "28414217000167",
+            2026,
+            3,
+        )
+
+    def test_invalid_control_number_raises(self) -> None:
+        """Malformed control numbers raise ValueError."""
+        with pytest.raises(ValueError):
+            parse_control_number("not-a-control-number")
 
 
 class TestCrawlerTransparency:

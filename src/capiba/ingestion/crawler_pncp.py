@@ -14,7 +14,7 @@ import re
 from datetime import date
 from typing import Any, cast
 
-from capiba.config import PNCP_API_URL
+from capiba.config import PNCP_API_URL, PNCP_TERMS_API_URL
 from capiba.ingestion._http import BASE_DELAY, MAX_RETRIES, fetch_page
 
 logger = logging.getLogger(__name__)
@@ -192,4 +192,80 @@ def fetch_contract_updates(
         end_date,
         agency_cnpj,
         page_size,
+    )
+
+
+_CONTROL_NUMBER_RE = re.compile(
+    r"^(?P<cnpj>\d{14})-(?P<unidade>\d+)-(?P<sequencial>\d+)/(?P<ano>\d{4})$"
+)
+
+
+def parse_control_number(numero_controle: str) -> tuple[str, int, int]:
+    """Splits a ``numeroControlePNCP`` into its terms-endpoint path parts.
+
+    The control number is ``{cnpj}-{unidade}-{sequencial}/{ano}`` (e.g.
+    ``28414217000167-2-000003/2026``); the terms endpoint takes the cnpj,
+    the year and the sequence as an integer.
+
+    Args:
+        numero_controle: PNCP control number of the contract.
+
+    Returns:
+        Tuple ``(cnpj, ano, sequencial)``.
+
+    Raises:
+        ValueError: If the control number does not match the layout.
+    """
+    match = _CONTROL_NUMBER_RE.fullmatch(str(numero_controle).strip())
+    if match is None:
+        raise ValueError(f"Invalid numeroControlePNCP: {numero_controle}")
+    return match.group("cnpj"), int(match.group("ano")), int(match.group("sequencial"))
+
+
+def fetch_contract_terms(
+    cnpj: str,
+    ano: int,
+    sequencial: int,
+    page_size: int = 500,
+    retries: int = MAX_RETRIES,
+    delay: float = BASE_DELAY,
+) -> list[dict[str, Any]] | None:
+    """Fetches the registered terms (aditivos) of one contract (PR-D-05b).
+
+    ``GET /v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos`` of the
+    transactional ``pncp`` API group (public, no auth — verified live on
+    2026-08-21; absent from the ``consulta`` group). The authoritative
+    source for "was there a formal amendment?": only the vigente terms are
+    listed (excluded terms and publication retifications stay out). One
+    request per contract — terms are few, a single ``page_size`` page
+    suffices; the crawl cost is what restricts the pilot cut.
+
+    Args:
+        cnpj: CNPJ of the agency that owns the contract (14 digits).
+        ano: Contract year (path part of the control number).
+        sequencial: Contract sequence within the year, as an integer.
+        page_size: Page size requested (terms are rarely more than a few).
+        retries: Maximum number of attempts.
+        delay: Base delay between attempts (seconds).
+
+    Returns:
+        List of raw term payloads, or None when the contract has no terms
+        (HTTP 204 — "no terms" is data: the flags compute 0).
+
+    Raises:
+        requests.HTTPError: If the API returns a non-transient error; the
+            caller records NULL flags (insufficient data), never 0.
+    """
+    url = f"{PNCP_TERMS_API_URL}/v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos"
+    return cast(
+        list[dict[str, Any]] | None,
+        fetch_page(
+            url,
+            {"pagina": 1, "tamanhoPagina": page_size},
+            retries=retries,
+            delay=delay,
+            empty_statuses=(204,),
+            rate_limit_status=429,
+            retry_statuses=(500, 502, 503, 504),
+        ),
     )

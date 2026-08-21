@@ -8,6 +8,14 @@ by ingestion date, the last observation is sovereign, equality never
 fires and missing/malformed fields are NULL (insufficient data), never a
 clean flag.
 
+``compute_term_flags`` (PR-D-05b, plan B after the proxy coverage was
+refuted at 23.54% — ``docs/results/R-D-05.md`` section 4) computes the
+same question from the contract's **registered terms** (``GET
+/v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos``), the
+authoritative source: it answers "was there a formal amendment?", not
+"when did it change". The proxy semantics above remains the vigente
+reference until the Q4 verdict of PR-D-05b.
+
 Dependencies: capiba.detection.red_flags (defensive parsers)
 """
 
@@ -34,6 +42,12 @@ def _parse_rectifications(value: Any) -> int | None:
     """Parses numeroRetificacao defensively; malformed input is None."""
     amount = _parse_amount(value)
     return int(amount) if amount is not None and amount >= 0 else None
+
+
+def _parse_int(value: Any) -> int | None:
+    """Parses an integer field (e.g. prazoAditadoDias) defensively."""
+    amount = _parse_amount(value)
+    return int(amount) if amount is not None else None
 
 
 def compute_amendment_flags(observations: list[dict[str, Any]]) -> AmendmentFlags:
@@ -103,4 +117,99 @@ def compute_amendment_flags(observations: list[dict[str, Any]]) -> AmendmentFlag
         max_rectifications=max(rectifications) if rectifications else None,
         observations=len(observations),
         value_ratio=value_ratio,
+    )
+
+
+@dataclass(frozen=True)
+class TermFlags:
+    """Amendment flags of one contract computed from its registered terms."""
+
+    f_value_amendment_terms: int | None
+    f_term_extension_terms: int | None
+    terms_count: int | None
+    total_value_increase: float | None
+    total_days_extended: int | None
+    term_types: list[str] | None
+
+
+_AMENDMENT_TERM_TYPE = "Termo Aditivo"
+
+
+def compute_term_flags(terms: list[dict[str, Any]] | None) -> TermFlags:
+    """Computes the amendment flags from the contract's registered terms.
+
+    Reference semantics: ``docs/preregistrations/PR-D-05b.md`` (section 3).
+    A flag fires only on a term of type ``Termo Aditivo`` with the matching
+    qualification and a positive amount/days; ``qualificacaoReajuste`` is
+    NOT a flag (index reajuste is a legal price update, not an amendment —
+    accusing it would be a structural false positive) and a supressão
+    (negative ``valorAcrescido``) never fires the value flag.
+
+    Args:
+        terms: Raw payloads of the terms endpoint. An empty list (HTTP
+            204) computes clean flags (0); ``None`` means the query failed
+            and computes NULL (insufficient data) for flags and descriptors.
+
+    Returns:
+        The flags (1/0/None) and the descriptors (term count, summed
+        ``valorAcrescido``, summed ``prazoAditadoDias``, distinct term
+        types observed).
+    """
+    if terms is None:
+        return TermFlags(
+            f_value_amendment_terms=None,
+            f_term_extension_terms=None,
+            terms_count=None,
+            total_value_increase=None,
+            total_days_extended=None,
+            term_types=None,
+        )
+
+    amendments = [
+        term
+        for term in terms
+        if term.get("tipoTermoContratoNome") == _AMENDMENT_TERM_TYPE
+    ]
+    f_value_amendment_terms = int(
+        any(
+            term.get("qualificacaoAcrescimoSupressao") is True
+            and (value := _parse_amount(term.get("valorAcrescido"))) is not None
+            and value > 0
+            for term in amendments
+        )
+    )
+    f_term_extension_terms = int(
+        any(
+            term.get("qualificacaoVigencia") is True
+            and (days := _parse_int(term.get("prazoAditadoDias"))) is not None
+            and days > 0
+            for term in amendments
+        )
+    )
+
+    increases = [
+        value
+        for term in terms
+        if (value := _parse_amount(term.get("valorAcrescido"))) is not None
+    ]
+    days_extended = [
+        days
+        for term in terms
+        if (days := _parse_int(term.get("prazoAditadoDias"))) is not None
+    ]
+    term_types = sorted(
+        {
+            str(term["tipoTermoContratoNome"])
+            for term in terms
+            if term.get("tipoTermoContratoNome")
+        }
+    )
+
+    return TermFlags(
+        f_value_amendment_terms=f_value_amendment_terms,
+        f_term_extension_terms=f_term_extension_terms,
+        terms_count=len(terms),
+        total_value_increase=float(sum(increases)),
+        total_days_extended=sum(days_extended),
+        term_types=term_types,
     )

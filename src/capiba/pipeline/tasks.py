@@ -15,6 +15,7 @@ DAGs call it with the spec path, delegating execution to
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import re
@@ -61,6 +62,7 @@ from capiba.detection.statistical import (
 )
 from capiba.evidence.packages import store_signal_packages
 from capiba.evidence.storage import EvidenceStorage
+from capiba.ingestion.crawler_pncp import fetch_contract_terms, parse_control_number
 from capiba.ingestion.crawler_querido_diario import (
     download_gazette_text,
     text_file_name,
@@ -227,6 +229,105 @@ def persist_document_texts(
         "errors": errors,
     }
     logger.info("Document texts persisted for %s: %s", source_name, summary)
+    return summary
+
+
+def terms_checkpoint_name(numero_controle: str) -> str:
+    """Deterministic bronze checkpoint name of a contract's terms payload.
+
+    Layout ``<cnpj>/<ano>/<sequencial>.json.gz`` under
+    ``<source>/files/dt=<run>/`` (PR-D-05b § 4).
+
+    Raises:
+        ValueError: If the control number does not match the PNCP layout.
+    """
+    cnpj, ano, sequencial = parse_control_number(numero_controle)
+    return f"{cnpj}/{ano}/{sequencial}.json.gz"
+
+
+def persist_contract_terms(
+    source_name: str,
+    records: list[dict[str, Any]],
+    run_date: date | None = None,
+) -> dict[str, Any]:
+    """Fetches and persists the registered terms of each contract (PR-D-05b).
+
+    For each record with ``numeroControlePNCP``, fetches the terms from the
+    PNCP terms endpoint and uploads the payload (control number + term
+    list, gzip JSON) to the bronze layer under the deterministic
+    per-contract checkpoint name; contracts already persisted for the run
+    date are skipped, so a retried crawl resumes where it stopped and never
+    duplicates. Best-effort per contract: fetch/persist failures are
+    counted and logged (the contract keeps no checkpoint and is retried on
+    the next run), never fatal. Contracts without terms (HTTP 204) persist
+    an empty list — "no terms" is data (flags compute 0), not failure;
+    only a failed query computes NULL flags downstream. Records gain
+    ``terms_bronze_file`` with the persisted checkpoint name.
+
+    Args:
+        source_name: Source name (``pncp_contract_terms``).
+        records: Contract descriptors carrying ``numeroControlePNCP``.
+        run_date: Partition date; defaults to today (UTC).
+
+    Returns:
+        Summary (terms fetched/skipped, errors).
+    """
+    run_date = run_date or datetime.now(UTC).date()
+    prefix = f"{source_name}/files/dt={run_date.isoformat()}/"
+    try:
+        existing = {
+            key.removeprefix(prefix)
+            for key in lake.list_bronze_files(source_name, run_date)
+        }
+    except Exception as exc:
+        logger.warning(
+            "Failed to list %s bronze files; fetching everything: %s",
+            source_name,
+            exc,
+        )
+        existing = set()
+
+    fetched = skipped = errors = 0
+    for record in records:
+        numero_controle = record.get("numeroControlePNCP")
+        if not numero_controle:
+            continue
+        try:
+            filename = terms_checkpoint_name(str(numero_controle))
+            cnpj, ano, sequencial = parse_control_number(str(numero_controle))
+        except ValueError as exc:
+            errors += 1
+            logger.warning("Invalid numeroControlePNCP %s: %s", numero_controle, exc)
+            continue
+        if filename in existing:
+            record["terms_bronze_file"] = filename
+            skipped += 1
+            continue
+        try:
+            terms = fetch_contract_terms(cnpj, ano, sequencial)
+            payload = {
+                "numeroControlePNCP": numero_controle,
+                "cnpj": cnpj,
+                "ano": ano,
+                "sequencial": sequencial,
+                "terms": terms or [],
+            }
+            data = gzip.compress(json.dumps(payload, default=str).encode())
+            lake.write_bronze_file(source_name, filename, data, run_date=run_date)
+        except Exception as exc:
+            errors += 1
+            logger.warning("Failed to persist terms of %s: %s", numero_controle, exc)
+            continue
+        record["terms_bronze_file"] = filename
+        fetched += 1
+
+    summary: dict[str, Any] = {
+        "source": source_name,
+        "terms_fetched": fetched,
+        "terms_skipped": skipped,
+        "errors": errors,
+    }
+    logger.info("Contract terms persisted for %s: %s", source_name, summary)
     return summary
 
 
