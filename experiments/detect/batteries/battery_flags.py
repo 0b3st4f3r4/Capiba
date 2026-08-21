@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from capiba.detection import battery
+from batteries import battery
 from capiba.detection.red_flags import compute_red_flags
 
 _BASE = date(2026, 1, 1)

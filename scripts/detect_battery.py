@@ -17,8 +17,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# Batteries live outside the production package (experiments/detect/batteries/).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments" / "detect"))
 
-from capiba.detection import (  # noqa: E402
+from batteries import (  # noqa: E402
     battery,
     battery_amendments,
     battery_collusion,

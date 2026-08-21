@@ -2,7 +2,7 @@
 
 Responsibility: single source of truth for the signal vocabulary
 (``SignalType``) and the threshold-free signal computations, consumed by the
-pipeline post step ``detect`` (``capiba.pipeline.tasks.detect_fraud_signals``,
+pipeline post step ``detect`` (``capiba.pipeline.detect_task.detect_fraud_signals``,
 which emits raw scores per entity into the gold ``fraud_signals`` table) and
 by the on-demand API service layer (``capiba.api.services``, which applies
 its own emission thresholds and evidence messages on top).

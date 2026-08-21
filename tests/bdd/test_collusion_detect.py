@@ -45,8 +45,8 @@ def graph_unavailable(context: dict[str, Any]) -> None:
 @when("the detect task runs")
 def run_detect(context: dict[str, Any]) -> None:
     with (
-        patch("capiba.pipeline.tasks.lake") as mock_lake,
-        patch("capiba.pipeline.tasks.get_capiba_db") as mock_get_db,
+        patch("capiba.pipeline.detect_task.lake") as mock_lake,
+        patch("capiba.pipeline.detect_task.get_capiba_db") as mock_get_db,
         patch("capiba.detection.graphs.execute_aql") as mock_execute,
     ):
         mock_lake.read_silver_contracts.return_value = []

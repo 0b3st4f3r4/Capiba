@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from capiba.detection import battery_geography
+from batteries import battery_geography
 
 # Minimal config with the cases ``evaluate`` inspects unconditionally
 # (G2/G3/G4 gate, G8/G9/G10 missing-data discipline) plus G1; G5-G7 are

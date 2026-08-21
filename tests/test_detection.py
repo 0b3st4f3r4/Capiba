@@ -26,7 +26,7 @@ from capiba.detection.statistical import (
     hhi_index,
     single_bid_rate,
 )
-from capiba.pipeline.tasks import detect_fraud_signals
+from capiba.pipeline.detect_task import detect_fraud_signals
 
 
 class TestStatistical:

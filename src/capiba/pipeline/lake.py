@@ -832,6 +832,11 @@ def write_silver(records: list[dict[str, Any]], run_date: date | None = None) ->
             # Delete-half of the upsert first: a failure here aborts before
             # the append, so rows are never duplicated (see the docstring).
             _delete_silver_contracts(list(dict.fromkeys(row["id"] for row in rows)))
+            # The Trino DELETE commits a new snapshot; without a refresh the
+            # append commits against the stale one and the catalog rejects it
+            # ("Branch or tag `main`'s snapshot has changed" — pinned by
+            # tests/test_lake_integration.py).
+            table = table.refresh()
         table.append(pa.Table.from_pylist(rows, schema=_arrow_schema(table)))
     logger.info("Silver Iceberg table appended: contracts (%d rows)", len(rows))
     return f"{ICEBERG_NAMESPACE}.contracts"

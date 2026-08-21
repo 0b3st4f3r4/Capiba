@@ -349,7 +349,7 @@ class TestReproduceSignal:
     """Tests for the reproduction of a signal from its package."""
 
     def _package(self, contracts: list[dict[str, Any]]) -> dict[str, Any]:
-        from capiba.pipeline.tasks import detect_fraud_signals
+        from capiba.pipeline.detect_task import detect_fraud_signals
 
         signals = detect_fraud_signals(contracts)
         return packages.build_batch_package(contracts, signals, None)

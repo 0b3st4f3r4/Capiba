@@ -189,10 +189,10 @@ class TestNotifyValidationFailure:
 class TestTaskWiring:
     """Tests for the alert calls inside the pipeline tasks."""
 
-    @patch("capiba.pipeline.tasks.notify_fraud_signals")
-    @patch("capiba.pipeline.tasks.lake")
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.notify_fraud_signals")
+    @patch("capiba.pipeline.detect_task.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
     def test_task_detect_notifies_signals(
         self,
         mock_get_db: MagicMock,

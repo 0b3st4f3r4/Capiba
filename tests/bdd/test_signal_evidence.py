@@ -12,7 +12,7 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from capiba.evidence import packages
-from capiba.pipeline.tasks import detect_fraud_signals
+from capiba.pipeline.detect_task import detect_fraud_signals
 
 scenarios("features/signal_evidence.feature")
 

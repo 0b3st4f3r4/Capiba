@@ -1,6 +1,6 @@
 """Fast tests for the contract-terms battery runner (bateria D-05b).
 
-Responsibility: Cover the pure parts of ``capiba.detection.battery_terms``
+Responsibility: Cover the pure parts of ``batteries.battery_terms``
 (term payload builder, case generator, matcher, seed runner, evaluator and
 the offline ``run_battery`` flow) in the quick suite — no infra, no
 ``slow`` marker. The regime battery (pre-registered predictions Q1/Q2 over
@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from capiba.detection import battery_terms
+from batteries import battery_terms
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG: dict[str, Any] = json.loads(

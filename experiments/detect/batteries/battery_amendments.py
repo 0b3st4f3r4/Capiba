@@ -22,7 +22,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from capiba.detection import battery
+from batteries import battery
 from capiba.detection.amendments import compute_amendment_flags
 
 _BASE = date(2026, 1, 1)

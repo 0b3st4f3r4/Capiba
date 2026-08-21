@@ -249,44 +249,6 @@ destinations: [lake_silver]
         with pytest.raises(SpecError, match="unknown ruleset 'regras_inexistentes'"):
             load_spec(path)
 
-    def test_unknown_transformation(self, tmp_path: Path) -> None:
-        """An unknown transformation fails."""
-        path = _write(
-            tmp_path,
-            """\
-name: bad_transform
-sources: [mock_pncp]
-formula: contracts_default
-transformations: [transformacao_inexistente]
-destinations: [lake_silver]
-""",
-        )
-
-        with pytest.raises(
-            SpecError, match="unknown transformation 'transformacao_inexistente'"
-        ):
-            load_spec(path)
-
-    def test_known_transformation_from_package(self, tmp_path: Path) -> None:
-        """Transformations resolve from the capiba.transformations package."""
-        path = _write(
-            tmp_path,
-            """\
-name: good_transform
-sources: [mock_pncp]
-formula: contracts_default
-transformations:
-  - name: filter_by_min_value
-    params:
-      min_value: 1000
-destinations: [lake_silver]
-""",
-        )
-
-        spec = load_spec(path)
-
-        assert spec.transformations[0].params == {"min_value": 1000}
-
     def test_invalid_window(self, tmp_path: Path) -> None:
         """An unknown window name fails schema validation."""
         path = _write(

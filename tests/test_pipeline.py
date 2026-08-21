@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from capiba.config import DETECTION_ENTITY_THRESHOLD
+from capiba.pipeline.detect_task import notice_clone_bronze_signals
 from capiba.pipeline.tasks import (
     _lake_run_date,
-    notice_clone_bronze_signals,
     persist_cnpj_entities,
     persist_contracts,
     task_dbt_run,
@@ -205,15 +205,15 @@ class TestTaskDetect:
     def _mock_evidence(self) -> Any:
         """Evidence storage (MinIO) is mocked in every detect test."""
         with (
-            patch("capiba.pipeline.tasks.EvidenceStorage"),
-            patch("capiba.pipeline.tasks.store_signal_packages") as mock_store,
+            patch("capiba.pipeline.detect_task.EvidenceStorage"),
+            patch("capiba.pipeline.detect_task.store_signal_packages") as mock_store,
         ):
             self.mock_store_packages = mock_store
             yield
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_writes_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -234,9 +234,9 @@ class TestTaskDetect:
         )
         assert {s["signal_type"] for s in signals} == {"concentration"}
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_adds_collusion_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -259,9 +259,9 @@ class TestTaskDetect:
         assert signals[0]["signal_type"] == "collusion_network"
         assert signals[0]["entity_id"] == "91000000000001+91000000000002"
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_skips_collusion_over_the_pairs_budget(
         self,
         mock_lake: MagicMock,
@@ -273,7 +273,7 @@ class TestTaskDetect:
         inconclusive, PR-D-03c pending) is skipped, not OOMKilled: no
         collusion signals, the eligibility snapshot still reaches the
         evidence packages."""
-        import capiba.pipeline.tasks as tasks_module
+        import capiba.pipeline.detect_task as tasks_module
 
         monkeypatch.setattr(tasks_module, "DETECTION_COLLUSION_MAX_PAIRS", 2)
         mock_lake.read_silver_contracts.return_value = [
@@ -297,9 +297,9 @@ class TestTaskDetect:
         # Guard path unchanged: no derivation, no emission descriptor.
         assert "top_k" not in snapshot
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_truncates_collusion_emission_to_top_k(
         self,
         mock_lake: MagicMock,
@@ -309,7 +309,7 @@ class TestTaskDetect:
     ) -> None:
         """PR-D-03d: only the declared top-K prefix is emitted, and the
         descriptor (top_k, qualified_count) reaches the evidence snapshot."""
-        import capiba.pipeline.tasks as tasks_module
+        import capiba.pipeline.detect_task as tasks_module
 
         monkeypatch.setattr(tasks_module, "DETECTION_COLLUSION_TOP_K", 1)
         mock_lake.read_silver_contracts.return_value = []
@@ -333,9 +333,9 @@ class TestTaskDetect:
         assert snapshot["top_k"] == 1
         assert snapshot["qualified_count"] == 3
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_collusion_emission_order_deterministic(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -366,9 +366,9 @@ class TestTaskDetect:
         assert first == second
         assert first[0] == "91000000000001+91000000000002"  # buyer_count 2
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_adds_sanctioned_supplier_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -402,9 +402,9 @@ class TestTaskDetect:
         assert screened[0]["score"] == 1.0
         assert summary["signals"] == len(signals)
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_adds_sanctioned_name_match_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -443,9 +443,9 @@ class TestTaskDetect:
         assert fuzzy[0]["score"] == 1.0
         assert summary["signals"] == len(signals)
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_sanctions_failure_keeps_other_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -463,9 +463,9 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "sanctioned_supplier" not in {s["signal_type"] for s in signals}
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_adds_political_connection_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -524,9 +524,9 @@ class TestTaskDetect:
         assert political[0]["score"] == 1.0  # share 0.25 saturates at the cap
         assert summary["signals"] == len(signals)
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_tse_failure_keeps_other_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -544,9 +544,9 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "political_connection" not in {s["signal_type"] for s in signals}
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_adds_anomalous_geography_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -594,9 +594,9 @@ class TestTaskDetect:
         assert geo[0]["score"] == 0.1033  # Recife x João Pessoa anchor
         assert summary["signals"] == len(signals)
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_geography_failure_keeps_other_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -624,10 +624,10 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "anomalous_geography" not in {s["signal_type"] for s in signals}
 
-    @patch("capiba.pipeline.tasks.notice_clone_bronze_signals")
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.notice_clone_bronze_signals")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_adds_notice_clone_signals(
         self,
         mock_lake: MagicMock,
@@ -658,10 +658,10 @@ class TestTaskDetect:
         assert notice[0]["entity_id"] == "pair-key"
         assert summary["signals"] == len(signals)
 
-    @patch("capiba.pipeline.tasks.notice_clone_bronze_signals")
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.notice_clone_bronze_signals")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_notice_clone_failure_keeps_other_signals(
         self,
         mock_lake: MagicMock,
@@ -684,8 +684,8 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "notice_clone" not in {s["signal_type"] for s in signals}
 
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_arango_failure_keeps_statistical_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock
     ) -> None:
@@ -702,10 +702,10 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert {s["signal_type"] for s in signals} == {"concentration"}
 
-    @patch("capiba.pipeline.tasks.register_signals")
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.register_signals")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_registers_signals_for_triage(
         self,
         mock_lake: MagicMock,
@@ -726,10 +726,10 @@ class TestTaskDetect:
         assert mock_register.call_args.args[0] is mock_get_db.return_value
         assert len(mock_register.call_args.args[1]) == summary["signals"]
 
-    @patch("capiba.pipeline.tasks.register_signals")
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.register_signals")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_triage_failure_does_not_abort(
         self,
         mock_lake: MagicMock,
@@ -750,9 +750,9 @@ class TestTaskDetect:
         assert summary["signals"] >= 1
         mock_lake.write_fraud_signals.assert_called_once()
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_stores_evidence_packages(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -782,9 +782,9 @@ class TestTaskDetect:
             "qualified_count": 0,
         }
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_evidence_failure_does_not_abort(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -801,9 +801,9 @@ class TestTaskDetect:
         assert summary["signals"] >= 1
         mock_lake.write_fraud_signals.assert_called_once()
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_read_failure(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -816,9 +816,9 @@ class TestTaskDetect:
         assert summary == {"signals": 0, "collusion_projected_pairs": 0}
         mock_lake.write_fraud_signals.assert_not_called()
 
-    @patch("capiba.pipeline.tasks.collusion_eligibility")
-    @patch("capiba.pipeline.tasks.get_capiba_db")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.collusion_eligibility")
+    @patch("capiba.pipeline.detect_task.get_capiba_db")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_task_detect_write_failure(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -1034,8 +1034,8 @@ class TestNoticeCloneBronzeSignals:
         mock_lake.list_all_bronze_files.return_value = sorted(files)
         mock_lake.read_bronze_file.side_effect = lambda key: files[key].encode()
 
-    @patch("capiba.pipeline.tasks.default_encoder")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.default_encoder")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_exact_copy_across_editions_signals(
         self, mock_lake: MagicMock, mock_encoder: MagicMock
     ) -> None:
@@ -1065,8 +1065,8 @@ class TestNoticeCloneBronzeSignals:
         assert details["new_date"] == "2026-08-20"  # latest date = reference
         assert details["historical_date"] == "2026-01-10"
 
-    @patch("capiba.pipeline.tasks.default_encoder")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.default_encoder")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_historical_outside_the_window_never_signals(
         self, mock_lake: MagicMock, mock_encoder: MagicMock
     ) -> None:
@@ -1086,8 +1086,8 @@ class TestNoticeCloneBronzeSignals:
 
         assert notice_clone_bronze_signals() == []
 
-    @patch("capiba.pipeline.tasks.default_encoder")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.default_encoder")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_cross_territory_never_signals(
         self, mock_lake: MagicMock, mock_encoder: MagicMock
     ) -> None:
@@ -1107,8 +1107,8 @@ class TestNoticeCloneBronzeSignals:
 
         assert notice_clone_bronze_signals() == []
 
-    @patch("capiba.pipeline.tasks.default_encoder")
-    @patch("capiba.pipeline.tasks.lake")
+    @patch("capiba.pipeline.detect_task.default_encoder")
+    @patch("capiba.pipeline.detect_task.lake")
     def test_empty_corpus_skips_the_encoder(
         self, mock_lake: MagicMock, mock_encoder: MagicMock
     ) -> None:

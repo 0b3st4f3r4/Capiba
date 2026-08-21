@@ -61,7 +61,7 @@ from capiba.db.arangodb import (
     upsert_vertex,
 )
 from capiba.db.triage import signal_key
-from capiba.detection.battery_graphs import battery_database_name
+from batteries.battery_graphs import battery_database_name
 from capiba.detection.graphs import (
     _blocked_buyers_by_pair,
     blocked_projection,

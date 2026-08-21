@@ -27,7 +27,7 @@ manifests reference ``graph_sha256`` and are ``reproducible: true``. When the gr
 is unavailable (ArangoDB down, best-effort path), the manifest falls back
 to ``reproducible: false``.
 
-Dependencies: capiba.evidence.storage, capiba.pipeline.tasks (lazy,
+Dependencies: capiba.evidence.storage, capiba.pipeline.detect_task (lazy,
 for reproduction), capiba.db.triage (signal key), capiba.detection.graphs
 (pair derivation from the eligibility snapshot)
 """
@@ -377,7 +377,7 @@ def reproduce_signal(
     if batch_package.get("kind") == "graph_batch":
         return _reproduce_graph_signal(batch_package, signal_key_)
 
-    from capiba.pipeline.tasks import detect_fraud_signals
+    from capiba.pipeline.detect_task import detect_fraud_signals
 
     rows = batch_package.get("source_rows", [])
     integrity = _sha256(rows) == batch_package.get("source_rows_sha256")

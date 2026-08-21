@@ -24,7 +24,7 @@ from capiba.detection.signals import (
     MIN_ISOLATION_FOREST_CONTRACTS,
     SignalType,
 )
-from capiba.pipeline.tasks import detect_fraud_signals
+from capiba.pipeline.detect_task import detect_fraud_signals
 
 _BASE = date(2026, 1, 1)
 

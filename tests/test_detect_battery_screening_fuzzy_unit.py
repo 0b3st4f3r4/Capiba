@@ -1,7 +1,7 @@
 """Unit tests for the fuzzy-screening battery runner helpers (D-06b).
 
 Responsibility: Cover the pure functions of
-``capiba.detection.battery_screening_fuzzy`` (population generation,
+``batteries.battery_screening_fuzzy`` (population generation,
 evaluation of P1-P5, OS Pairs scoring) in the fast suite — the slow
 regime tests in ``tests/test_detect_battery_screening_fuzzy.py`` only run
 under ``CAPIBA_SLOW=1`` and leave the runner below the coverage floor.
@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from capiba.detection import battery_screening_fuzzy as battery
+from batteries import battery_screening_fuzzy as battery
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG: dict[str, Any] = json.loads(

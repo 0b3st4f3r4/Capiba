@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from capiba.detection import battery_graphs
+from batteries import battery_graphs
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "experiments" / "detect" / "D-02.json"
@@ -223,13 +223,13 @@ class TestRunBatteryOffline:
         client = MagicMock()
         client.db.return_value = db
         monkeypatch.setattr(
-            "capiba.detection.battery_graphs.get_system_db", lambda: sys_db
+            "batteries.battery_graphs.get_system_db", lambda: sys_db
         )
         monkeypatch.setattr(
-            "capiba.detection.battery_graphs.get_arango_client", lambda: client
+            "batteries.battery_graphs.get_arango_client", lambda: client
         )
         monkeypatch.setattr(
-            "capiba.detection.battery_graphs.ensure_collections", lambda _db: None
+            "batteries.battery_graphs.ensure_collections", lambda _db: None
         )
         perfect = _perfect_record(0)
 
@@ -247,10 +247,10 @@ class TestRunBatteryOffline:
             return perfect[mapping[(cnpj, max_depth)]]
 
         monkeypatch.setattr(
-            "capiba.detection.battery_graphs.detect_collusion", fake_collusion
+            "batteries.battery_graphs.detect_collusion", fake_collusion
         )
         monkeypatch.setattr(
-            "capiba.detection.battery_graphs.trace_ownership", fake_trace
+            "batteries.battery_graphs.trace_ownership", fake_trace
         )
 
         records = battery_graphs.run_battery(CONFIG, tmp_path)

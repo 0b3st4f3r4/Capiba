@@ -26,7 +26,7 @@ import random
 from pathlib import Path
 from typing import Any
 
-from capiba.detection.battery_entities import sample_os_pairs
+from batteries.battery_entities import sample_os_pairs
 from capiba.detection.entities import name_similarity
 from capiba.detection.pep_screening import build_match_query, pep_supplier_match_signals
 

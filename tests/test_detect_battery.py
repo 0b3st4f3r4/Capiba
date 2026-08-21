@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from capiba.detection import battery
+from batteries import battery
 
 # The battery trains one IsolationForest per eligible supplier/seed — regime
 # tests, not unit tests. Skipped by default; run with CAPIBA_SLOW=1 (the CI

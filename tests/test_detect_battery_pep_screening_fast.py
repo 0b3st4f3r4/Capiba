@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from capiba.detection import battery_entities, battery_pep_screening
+from batteries import battery_entities, battery_pep_screening
 
 # Minimal config: all Q1-Q7 cases are always planted by the generator; the
 # fast variant only shrinks the control suppliers and the seeds.

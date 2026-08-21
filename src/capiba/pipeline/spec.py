@@ -3,7 +3,7 @@
 Responsibility: define the pydantic models behind
 ``dags/pipelines/*.yaml`` and validate them at load time — both
 structurally (pydantic) and against the capability registries (unknown
-source/formula/destination/ruleset/transformation fails with a clear
+source/formula/destination/ruleset fails with a clear
 error before any run).
 
 A pipeline spec declares *what* to run; ``capiba.pipeline.runner`` decides
@@ -28,7 +28,6 @@ from capiba.pipeline.registry import (
     NORMALIZER_REGISTRY,
     RULESET_REGISTRY,
     SOURCE_REGISTRY,
-    get_transformation,
 )
 from capiba.pipeline.window import WindowKind
 
@@ -69,15 +68,6 @@ class SourceSpec(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-class TransformationSpec(BaseModel):
-    """A named transformation with free-form parameters."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
 class ValidateSpec(BaseModel):
     """Validation step configuration: which quality ruleset to apply."""
 
@@ -107,7 +97,7 @@ class PipelineSpec(BaseModel):
 
     Mirrors a ``dags/pipelines/*.yaml`` file: schedule and default window,
     the sources to crawl, the formula orchestrating the steps, optional
-    validation/transformations, destinations and Airflow-side post steps.
+    validation, destinations and Airflow-side post steps.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -121,11 +111,10 @@ class PipelineSpec(BaseModel):
     # YAML key is ``validate``; the field is named ``validation`` to avoid
     # shadowing ``BaseModel.validate``.
     validation: ValidateSpec | None = Field(None, alias="validate")
-    transformations: list[TransformationSpec] = Field(default_factory=list)
     destinations: Annotated[list[DestinationSpec], Field(min_length=1)]
     post_steps: list[PostStepSpec] = Field(default_factory=list)
 
-    @field_validator("sources", "transformations", "destinations", "post_steps", mode="before")
+    @field_validator("sources", "destinations", "post_steps", mode="before")
     @classmethod
     def _expand_shorthand(cls, value: Any) -> Any:
         return _expand_names(value)
@@ -199,15 +188,6 @@ def _cross_validate(spec: PipelineSpec, origin: str) -> None:
             f"unknown ruleset '{spec.validation.ruleset}'"
             f" (known: {sorted(RULESET_REGISTRY)})"
         )
-
-    for transformation in spec.transformations:
-        try:
-            get_transformation(transformation.name)
-        except KeyError:
-            errors.append(
-                f"unknown transformation '{transformation.name}'"
-                " (no registry entry and no capiba.transformations module)"
-            )
 
     for step in spec.post_steps:
         if step.name != "dbt_run" and step.select:

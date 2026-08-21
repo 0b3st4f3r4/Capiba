@@ -45,7 +45,6 @@ from capiba.pipeline.registry import (
     RULESET_REGISTRY,
     SOURCE_REGISTRY,
     EntityNormalizerDef,
-    get_transformation,
 )
 from capiba.pipeline.tasks import (
     persist_cnpj_entities,
@@ -154,12 +153,12 @@ def _formula_contracts_default(
     steps: list[StepMetrics],
     window_override: DateRange | None = None,
 ) -> FormulaResult:
-    """Formula: crawl -> normalize -> transform? -> validate? -> destinations.
+    """Formula: crawl -> normalize -> validate? -> destinations.
 
     Mirrors the legacy daily_ingestion flow: each source is crawled with its
     own window (per-source ``window`` overriding the pipeline default), raw
     payloads are kept for the bronze destination, records are normalized
-    into the unified Contract schema, optionally transformed and validated.
+    into the unified Contract schema, optionally validated.
     """
     result = FormulaResult()
 
@@ -201,23 +200,6 @@ def _formula_contracts_default(
 
     total_raw = sum(len(records) for records in result.raw.values())
     result.contracts = _run_step(steps, "normalize", _normalize, rows_in=total_raw)
-
-    for transformation in spec.transformations:
-        transform = get_transformation(transformation.name)
-
-        def _apply(
-            transform: Callable[..., list[dict[str, Any]]] = transform,
-            params: dict[str, Any] = transformation.params,
-        ) -> tuple[list[dict[str, Any]], int, int]:
-            transformed = transform(result.contracts, **params)
-            return transformed, len(transformed), 0
-
-        result.contracts = _run_step(
-            steps,
-            f"transform_{transformation.name}",
-            _apply,
-            rows_in=len(result.contracts),
-        )
 
     if spec.validation:
         ruleset = spec.validation.ruleset

@@ -162,24 +162,6 @@ class TestContractsDefaultFormula:
         )
         assert bronze_step.errors == 2
 
-    def test_transformation_step(
-        self, mock_client: MagicMock, local_catalog: Path
-    ) -> None:
-        """Declared transformations run between normalize and validate."""
-        spec = _spec(
-            transformations=[{"name": "filter_by_min_value", "params": {"min_value": 20000}}]
-        )
-
-        report = run_pipeline(spec, RUN_DATE)
-
-        transform = next(s for s in report.steps if s.name == "transform_filter_by_min_value")
-        assert transform.rows_in == 2
-        assert transform.rows_out == 1  # the 15000 PNCP mock is dropped
-        silver_rows = lake.read_silver_contracts()
-        assert len(silver_rows) == 1
-        assert report.validation is not None
-        assert report.validation["total"] == 1
-
     def test_per_source_window(
         self, mock_client: MagicMock, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

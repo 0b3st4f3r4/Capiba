@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from capiba.detection import battery_flags
+from batteries import battery_flags
 
 # Battery/regime tests, not unit tests. Skipped by default; run with
 # CAPIBA_SLOW=1 (the CI and `make test-cov`/`make test-slow` enable it).

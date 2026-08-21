@@ -1,7 +1,7 @@
 """Registries that resolve YAML names to Python callables.
 
 Responsibility: the declarative pipeline specs (``dags/pipelines/*.yaml``)
-reference sources, normalizers, rulesets, transformations, destinations and
+reference sources, normalizers, rulesets, destinations and
 formulas by name; this module owns the name → implementation mapping so
 that no Python code is needed to declare a new pipeline, only to register
 new capabilities.
@@ -17,12 +17,11 @@ Dependencies: ingestion crawlers/normalizer/mocks, quality validators.
 
 from __future__ import annotations
 
-import importlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from capiba.ingestion.cnpj import entity_for_zip as cnpj_entity_for_zip
 from capiba.ingestion.cnpj import parse_cnpj_zip
@@ -57,8 +56,6 @@ logger = logging.getLogger(__name__)
 RecordFetcher = Callable[..., list[dict[str, Any]]]
 # download(destination, reference_month, **params) -> downloaded files.
 DumpDownloader = Callable[..., list[Path]]
-# transform(records, **params) -> transformed records.
-TransformFn = Callable[..., list[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -252,35 +249,8 @@ DUMP_PARSER_REGISTRY: dict[str, DumpParserDef] = {
     "tse": DumpParserDef(parse=parse_tse_zip, entity_for_file=tse_entity_for_dump),
 }
 
-# Explicit transformation entries; names not present here are resolved by
-# importing ``capiba.transformations.<name>`` and reading its ``transform``
-# function (see ``get_transformation``).
-TRANSFORMATION_REGISTRY: dict[str, TransformFn] = {}
-
 # Populated by capiba.pipeline.runner at import time:
 # formula name -> formula(spec, execution_date, steps) -> FormulaResult.
 FORMULA_REGISTRY: dict[str, Callable[..., Any]] = {}
 # destination name -> handler(spec, execution_date, result) -> dict summary.
 DESTINATION_REGISTRY: dict[str, Callable[..., Any]] = {}
-
-
-def get_transformation(name: str) -> TransformFn:
-    """Resolves a transformation name to its callable.
-
-    Looks up ``TRANSFORMATION_REGISTRY`` first, then tries to import
-    ``capiba.transformations.<name>`` and use its ``transform`` function.
-
-    Raises:
-        KeyError: If the name matches neither an entry nor a module.
-    """
-    if name in TRANSFORMATION_REGISTRY:
-        return TRANSFORMATION_REGISTRY[name]
-    try:
-        module = importlib.import_module(f"capiba.transformations.{name}")
-    except ImportError as exc:
-        raise KeyError(name) from exc
-    transform = getattr(module, "transform", None)
-    if not callable(transform):
-        raise KeyError(name) from None
-    TRANSFORMATION_REGISTRY[name] = cast(TransformFn, transform)
-    return TRANSFORMATION_REGISTRY[name]

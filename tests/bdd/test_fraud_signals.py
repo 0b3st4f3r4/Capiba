@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from capiba.pipeline.tasks import detect_fraud_signals
+from capiba.pipeline.detect_task import detect_fraud_signals
 
 scenarios("features/fraud_signals.feature")
 

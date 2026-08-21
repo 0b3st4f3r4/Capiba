@@ -1145,6 +1145,10 @@ class TestWriteSilverUpsert:
     ) -> tuple[MagicMock, MagicMock]:
         """Non-SQLite catalog URI with the table and Trino mocked out."""
         table = MagicMock()
+        # write_silver refreshes the handle between the Trino DELETE and the
+        # append (the DELETE commits a new snapshot); pyiceberg's refresh
+        # returns the refreshed table.
+        table.refresh.return_value = table
         monkeypatch.setattr(lake, "_ensure_table", lambda *args: table)
         monkeypatch.setattr(lake, "_arrow_schema", lambda _table: None)
         monkeypatch.setattr(

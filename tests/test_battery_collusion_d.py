@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from capiba.detection import battery_collusion
+from batteries import battery_collusion
 from capiba.detection.graphs import (
     pair_buyers_from_eligibility,
     pair_buyers_from_eligibility_blocked,

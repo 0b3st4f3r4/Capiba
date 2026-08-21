@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from capiba.detection import battery_notice_clone
+from batteries import battery_notice_clone
 
 pytestmark = pytest.mark.slow
 

@@ -23,7 +23,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from capiba.detection.battery_entities import sample_os_pairs
+from batteries.battery_entities import sample_os_pairs
 from capiba.detection.entities import name_similarity
 from capiba.detection.screening_fuzzy import sanctioned_name_match_signals
 

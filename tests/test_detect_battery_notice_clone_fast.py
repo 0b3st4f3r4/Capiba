@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 
-from capiba.detection import battery_notice_clone
+from batteries import battery_notice_clone
 
 # Minimal config with the full case structure at reduced counts; the
 # bands suit the stub encoder (structural minutas score high under a
