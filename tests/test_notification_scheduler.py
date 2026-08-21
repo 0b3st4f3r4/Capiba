@@ -24,7 +24,8 @@ from capiba.notification.scheduler import (
 @pytest.fixture
 def scheduler() -> NotificationScheduler:
     """Scheduler with apscheduler, dispatcher and monitor mocked out."""
-    instance = NotificationScheduler()
+    with patch("capiba.notification.scheduler.QualityMonitor"):
+        instance = NotificationScheduler()
     instance.scheduler = MagicMock()
     instance.dispatcher = AsyncMock()
     instance.monitor = MagicMock()
@@ -37,7 +38,8 @@ class TestNotificationScheduler:
 
     def test_init_creates_components(self) -> None:
         """Init must wire dispatcher, apscheduler and quality monitor."""
-        instance = NotificationScheduler()
+        with patch("capiba.notification.scheduler.QualityMonitor"):
+            instance = NotificationScheduler()
         assert instance.dispatcher is not None
         assert instance.scheduler is not None
         assert instance.monitor is not None
