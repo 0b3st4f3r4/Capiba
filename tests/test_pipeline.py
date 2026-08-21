@@ -710,11 +710,13 @@ class TestTaskDbtRun:
 
         summary = task_dbt_run()
 
-        mock_run_dbt.assert_called_once_with("run", select=None, exclude=None)
+        mock_run_dbt.assert_called_once_with(
+            "run", select=None, exclude=["pod_usage_hourly", "platform_cost_daily"]
+        )
         assert summary == {
             "dbt": "run",
             "select": [],
-            "exclude": [],
+            "exclude": ["pod_usage_hourly", "platform_cost_daily"],
             "project_dir": DBT_PROJECT_DIR,
         }
 
@@ -749,9 +751,19 @@ class TestTaskDbtRun:
             summary = task_dbt_run()
 
         mock_run_dbt.assert_called_once_with(
-            "run", select=None, exclude=["political_connections"]
+            "run",
+            select=None,
+            exclude=[
+                "pod_usage_hourly",
+                "platform_cost_daily",
+                "political_connections",
+            ],
         )
-        assert summary["exclude"] == ["political_connections"]
+        assert summary["exclude"] == [
+            "pod_usage_hourly",
+            "platform_cost_daily",
+            "political_connections",
+        ]
 
 
 class TestTaskPostStep:

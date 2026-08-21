@@ -1142,6 +1142,12 @@ def task_gold_report(spec_path: str, **context: Any) -> dict[str, Any]:
 # gold_detection DAG.
 _TSE_SILVER_ENTITIES = ("campaign_donations", "candidacies")
 _TSE_DEPENDENT_MARTS = ["political_connections"]
+# Marts refreshed by the hourly pipeline's own dbt_run (--select). The
+# daily full run excludes them: two concurrent dbt invocations committing
+# the same Iceberg table are rejected by Lakekeeper ("Failed to commit
+# the transaction during insert: Cannot assign a new UUID" — gold run of
+# 2026-08-21 collided with the hourly 07:07 run).
+_HOURLY_OWNED_MARTS = ["pod_usage_hourly", "platform_cost_daily"]
 
 
 def task_dbt_run(select: list[str] | None = None, **context: Any) -> dict[str, Any]:
@@ -1153,7 +1159,9 @@ def task_dbt_run(select: list[str] | None = None, **context: Any) -> dict[str, A
     Args:
         select: Optional dbt model selection (``--select``); None builds
             the whole project (used by ``gold_detection``), excluding the
-            TSE-dependent marts while the TSE silver tables do not exist.
+            hourly-owned marts (``_HOURLY_OWNED_MARTS`` — refreshed by the
+            hourly pipeline itself) and the TSE-dependent marts while the
+            TSE silver tables do not exist.
         context: Airflow context.
 
     Returns:
@@ -1162,14 +1170,16 @@ def task_dbt_run(select: list[str] | None = None, **context: Any) -> dict[str, A
     from capiba.pipeline.dbt_runner import run_dbt
 
     exclude: list[str] = []
-    if select is None and any(
-        not lake.silver_table_exists(entity) for entity in _TSE_SILVER_ENTITIES
-    ):
-        exclude = _TSE_DEPENDENT_MARTS
-        logger.warning(
-            "TSE silver tables missing; excluding %s from the full dbt run",
-            exclude,
-        )
+    if select is None:
+        exclude = list(_HOURLY_OWNED_MARTS)
+        if any(
+            not lake.silver_table_exists(entity) for entity in _TSE_SILVER_ENTITIES
+        ):
+            exclude += _TSE_DEPENDENT_MARTS
+            logger.warning(
+                "TSE silver tables missing; excluding %s from the full dbt run",
+                _TSE_DEPENDENT_MARTS,
+            )
     logger.info("Building gold marts with dbt (select: %s, exclude: %s)",
                 select or "all", exclude or "none")
     run_dbt("run", select=select, exclude=exclude or None)

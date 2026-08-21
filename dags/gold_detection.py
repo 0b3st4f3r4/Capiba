@@ -33,7 +33,10 @@ from capiba.pipeline.tasks import task_dbt_run, task_detect
 # Lineage assets of the dbt marts and fraud signals — keep in sync with
 # GOLD_MARTS/DWH_SERVING_MARTS/GOLD_FRAUD_SIGNALS in dags/pipeline_factory.py
 # (DAG files do not import each other; the DagBag does not put the dags
-# folder on sys.path).
+# folder on sys.path). The pod-usage marts are absent on purpose: the
+# hourly pipeline refreshes them with its own dbt_run (--select) and the
+# full run here excludes them (_HOURLY_OWNED_MARTS in pipeline/tasks.py) —
+# concurrent commits on the same Iceberg table are rejected by Lakekeeper.
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
 GOLD_MARTS = [
     Asset(uri=f"capiba://gold/{mart}")
@@ -42,8 +45,6 @@ GOLD_MARTS = [
         "contracts_daily",
         "data_quality_daily",
         "supplier_stats",
-        "pod_usage_hourly",
-        "platform_cost_daily",
     )
 ]
 DWH_SERVING_MARTS = [
