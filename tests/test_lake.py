@@ -675,6 +675,34 @@ class TestDeleteSilverEntitiesPartition:
             f" WHERE dt = DATE '{RUN_DATE.isoformat()}'"
         )
 
+    def test_delete_scoped_to_election_year(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Multi-year TSE: the delete is scoped so other years survive."""
+        monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+        mock_catalog = MagicMock()
+        monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        lake.delete_silver_entities_partition(
+            "campaign_donations", RUN_DATE, election_year=2022
+        )
+
+        mock_query.assert_called_once_with(
+            "DELETE FROM silver.capiba.campaign_donations"
+            f" WHERE dt = DATE '{RUN_DATE.isoformat()}' AND election_year = 2022"
+        )
+
+    def test_election_year_rejected_without_column(
+        self, local_catalog: Path
+    ) -> None:
+        """Only entities with the election_year column accept the scope."""
+        with pytest.raises(ValueError, match="no election_year column"):
+            lake.delete_silver_entities_partition(
+                "companies", RUN_DATE, election_year=2022
+            )
+
     def test_missing_table_is_noop(
         self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

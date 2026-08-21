@@ -162,17 +162,9 @@ FEDERAL_REVENUE_FILES = [
     if f.strip()
 ]
 
-# Electoral data (TSE — campaign finance / prestação de contas)
-TSE_BASE_URL = os.getenv(
-    "TSE_BASE_URL",
-    "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas",
-)
-# The candidates dump (consulta_cand — who was elected) lives in a sibling
-# directory of the CDN.
-TSE_CANDIDATES_BASE_URL = os.getenv(
-    "TSE_CANDIDATES_BASE_URL",
-    "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand",
-)
+# Electoral data (TSE — campaign finance / prestação de contas). The dumps
+# are resolved from the frozen bronze anchor `tse/reference/` (uploaded once,
+# manually — the TSE CDN blocks CLI clients); there are no base URL settings.
 # Election year of the fixed prestação de contas snapshot (2024 municipal
 # elections); the dump is not month-indexed, so the pipeline's
 # reference_month does not apply (see dags/pipelines/monthly_tse.yaml).

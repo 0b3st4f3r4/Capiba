@@ -2,9 +2,10 @@
 
 Responsibility: Validate the CampaignDonation model, the streaming ZIP
 parser (receitas_candidatos layout: header row, latin1, semicolon, comma
-decimal) and the snapshot downloader (year-derived file name, skip/on_file
-resume, CDN error pages rejected) with minimal local fixtures — the real
-CDN is geo-restricted (PR-D-08 §2).
+decimal) and the snapshot resolver (year-derived file names from the
+frozen bronze anchor ``tse/reference/``, skip/on_file resume, missing or
+corrupt anchor fails loudly) with minimal local fixtures — the lake is
+mocked, the TSE CDN is unreachable from CLI clients (Akamai 403).
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ import zipfile
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -340,32 +340,26 @@ class TestParseCandidaciesZip:
         assert sum(len(records) for _, records, _ in chunks) == 2
 
 
-class _FakeResponse:
-    """Minimal requests.Response stand-in for streaming downloads."""
+class _FakeAnchor:
+    """In-memory stand-in of the frozen bronze anchor (``tse/reference/``)."""
 
-    def __init__(self, body: bytes, status_ok: bool = True) -> None:
-        self._body = body
-        self._status_ok = status_ok
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self._objects = objects
 
-    def __enter__(self) -> _FakeResponse:
-        return self
-
-    def __exit__(self, *_args: Any) -> None:
-        return None
-
-    def raise_for_status(self) -> None:
-        if not self._status_ok:
-            import requests
-
-            raise requests.HTTPError("403 Forbidden")
-
-    def iter_content(self, chunk_size: int = 8192) -> Any:
-        for offset in range(0, len(self._body), chunk_size):
-            yield self._body[offset : offset + chunk_size]
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Patches the lake listing/reading over the in-memory objects."""
+        monkeypatch.setattr(
+            "capiba.pipeline.lake.list_bronze_objects",
+            lambda prefix: sorted(f"{prefix}{name}" for name in self._objects),
+        )
+        monkeypatch.setattr(
+            "capiba.pipeline.lake.read_bronze_file",
+            lambda key: self._objects[key.rsplit("/", 1)[-1]],
+        )
 
 
 class TestDownloadTseDump:
-    """Tests for the snapshot downloader contract."""
+    """Tests for the snapshot resolver contract (frozen bronze anchor)."""
 
     def _zip_bytes(self) -> bytes:
         buffer = io.BytesIO()
@@ -373,41 +367,33 @@ class TestDownloadTseDump:
             zf.writestr("receitas_candidatos_2024_BRASIL.csv", "header")
         return buffer.getvalue()
 
-    def test_downloads_year_derived_file(
+    def _anchor(self, year: int = 2024) -> _FakeAnchor:
+        return _FakeAnchor(
+            {
+                tse_dump_filename(year): self._zip_bytes(),
+                tse_candidates_filename(year): self._zip_bytes(),
+            }
+        )
+
+    def test_resolves_year_derived_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The default file list derives from the election year."""
-        seen_urls: list[str] = []
-        body = self._zip_bytes()
+        """Both dumps of the election year resolve from the bronze anchor."""
+        self._anchor().install(monkeypatch)
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
-            seen_urls.append(url)
-            return _FakeResponse(body)
+        resolved = download_tse_dump(tmp_path, "2026-07", year=2024)
 
-        monkeypatch.setattr("capiba.ingestion.crawler_tse.requests.get", fake_get)
-
-        downloaded = download_tse_dump(tmp_path, "2026-07", year=2024)
-
-        assert [p.name for p in downloaded] == [
+        assert [p.name for p in resolved] == [
             "prestacao_de_contas_eleitorais_candidatos_2024.zip",
             "consulta_cand_2024.zip",
         ]
-        assert seen_urls == [
-            "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas/"
-            "prestacao_de_contas_eleitorais_candidatos_2024.zip",
-            "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/"
-            "consulta_cand_2024.zip",
-        ]
+        assert all(p.read_bytes() == self._zip_bytes() for p in resolved)
 
     def test_reference_month_is_ignored(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The fixed snapshot does not depend on the reference month."""
-        body = self._zip_bytes()
-        monkeypatch.setattr(
-            "capiba.ingestion.crawler_tse.requests.get",
-            lambda *_a, **_k: _FakeResponse(body),
-        )
+        self._anchor().install(monkeypatch)
 
         first = download_tse_dump(tmp_path / "a", "2026-01")
         second = download_tse_dump(tmp_path / "b", "2026-12")
@@ -419,13 +405,10 @@ class TestDownloadTseDump:
     ) -> None:
         """Registry resume contract: skip is honored, on_file fires per file."""
         body = self._zip_bytes()
-        monkeypatch.setattr(
-            "capiba.ingestion.crawler_tse.requests.get",
-            lambda *_a, **_k: _FakeResponse(body),
-        )
+        _FakeAnchor({"a_2024.zip": body, "b_2024.zip": body}).install(monkeypatch)
         uploaded: list[str] = []
 
-        downloaded = download_tse_dump(
+        resolved = download_tse_dump(
             tmp_path,
             "2026-07",
             files=["a_2024.zip", "b_2024.zip"],
@@ -433,31 +416,43 @@ class TestDownloadTseDump:
             on_file=lambda path: uploaded.append(path.name),
         )
 
-        assert [p.name for p in downloaded] == ["b_2024.zip"]
+        assert [p.name for p in resolved] == ["b_2024.zip"]
         assert uploaded == ["b_2024.zip"]
 
-    def test_cdn_error_page_is_not_data(
+    def test_missing_anchor_fails_with_upload_instructions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An HTML payload (Akamai 403/200 error page) is discarded."""
-        monkeypatch.setattr(
-            "capiba.ingestion.crawler_tse.requests.get",
-            lambda *_a, **_k: _FakeResponse(b"<HTML><TITLE>Access Denied</TITLE>"),
-        )
+        """Without the anchor the run fails loudly, pointing to the upload."""
+        _FakeAnchor({}).install(monkeypatch)
 
-        assert download_tse_dump(tmp_path, "2026-07") == []
+        with pytest.raises(RuntimeError, match=r"tse/reference/"):
+            download_tse_dump(tmp_path, "2026-07")
+
         assert list(tmp_path.iterdir()) == []
 
-    def test_http_error_is_logged_not_raised(
+    def test_wrong_year_does_not_match(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A failed download (geo-restricted CDN) yields an empty list."""
-        monkeypatch.setattr(
-            "capiba.ingestion.crawler_tse.requests.get",
-            lambda *_a, **_k: _FakeResponse(b"", status_ok=False),
-        )
+        """An anchor of another election year never satisfies the request."""
+        self._anchor(year=2024).install(monkeypatch)
 
-        assert download_tse_dump(tmp_path, "2026-07") == []
+        with pytest.raises(RuntimeError, match=r"consulta_cand_2022"):
+            download_tse_dump(tmp_path, "2026-07", year=2022)
+
+    def test_corrupt_anchor_object_is_not_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-ZIP anchor object fails loudly instead of landing broken."""
+        body = self._zip_bytes()
+        _FakeAnchor(
+            {
+                tse_dump_filename(2024): b"<HTML><TITLE>Access Denied</TITLE>",
+                tse_candidates_filename(2024): body,
+            }
+        ).install(monkeypatch)
+
+        with pytest.raises(RuntimeError, match=r"not a valid ZIP"):
+            download_tse_dump(tmp_path, "2026-07")
 
 
 class TestRegistry:

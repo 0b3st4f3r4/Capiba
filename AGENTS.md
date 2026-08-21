@@ -123,9 +123,17 @@ Fórmulas do runner:
   normalize silver; as flags de termo (`compute_term_flags` em
   `detection/amendments.py`) só entram no mart após o veredito de Q4.
 
-Ingestão TSE (`ingestion/tse.py`): download da prestação de contas e
-`consulta_cand_<ano>.zip` (`TSE_CANDIDATES_BASE_URL`, gate do eleito);
-normalize streaming grava as silvers `campaign_donations`
+Ingestão TSE (`ingestion/tse.py`): sem download — o CDN bloqueia clientes
+CLI via Akamai Bot Manager (403 mesmo com IP residencial BR, 2026-08-21). Os
+dumps `prestacao_de_contas_eleitorais_candidatos_<ano>.zip` e
+`consulta_cand_<ano>.zip` vivem como **âncora congelada** no bronze
+`capiba-bronze/tse/reference/` (upload manual via browser; sha256 registrado
+no R-D-08b); `download_tse_dump` resolve a âncora pelo ano da run
+(`params.year`/`TSE_ELECTION_YEAR`) e falha com mensagem clara se ela não
+existir. Multi-ano (2024 municipal, 2022 geral): o normalize deleta por
+(dt, `election_year`) — `delete_silver_entities_partition(...,
+election_year=)`; demais fontes deletam a partição inteira. Normalize
+streaming grava as silvers `campaign_donations`
 (`receitas_candidatos_<ano>_BRASIL.csv`) e `candidacies`
 (`consulta_cand_<ano>_BRASIL.csv`, coluna `DS_SITUACAO_TOTALIZACAO_TURNO`).
 Documentos completos no silver; mascaramento é preocupação do mart gold

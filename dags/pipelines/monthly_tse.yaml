@@ -1,28 +1,30 @@
-# Monthly TSE campaign finance dump (PR-D-08): downloads the fixed
+# Monthly TSE campaign finance dump (PR-D-08): resolves the fixed
 # prestação de contas eleitorais snapshot of the configured election year
 # (default: 2024 municipal elections — the cycle that crosses with the
-# municipal suppliers of monthly_transparency), lands the ZIP under
-# tse/files/ in the bronze bucket, records a manifest in the raw_tse
-# Iceberg table and normalizes the receitas_candidatos CSV (streaming,
-# chunked) into the silver campaign_donations table. An empty manifest
-# fails the run.
+# municipal suppliers of monthly_transparency) from the frozen bronze
+# anchor tse/reference/ (uploaded once, manually — the TSE CDN blocks CLI
+# clients, Akamai 403; contract in experiments/detect/D-08b.json,
+# reference_source.bronze_prefix), lands the ZIPs under tse/files/ in the
+# bronze bucket, records a manifest in the raw_tse Iceberg table and
+# normalizes the receitas_candidatos CSV (streaming, chunked) into the
+# silver campaign_donations table. A missing/incomplete anchor fails the
+# run with upload instructions; an empty manifest fails the run.
 #
 # Snapshot semantics: the dump is not month-indexed — reference_month is
-# ignored by the downloader (params.year selects the snapshot). The monthly
-# schedule re-downloads the snapshot as the TSE republishes it along the
-# accounts judgement; the silver partition of the run date is deleted
-# before parsing, so re-runs never duplicate rows. Donor documents are
-# complete at the source and kept in the silver for the deterministic
-# match of the political_connection signal; masking for publication is a
-# gold mart concern (LGPD, PR-D-08 §2).
+# ignored by the resolver (params.year selects the snapshot). The monthly
+# schedule re-copies the snapshot from the anchor; the silver partition of
+# the run date is deleted before parsing, so re-runs never duplicate rows.
+# Donor documents are complete at the source and kept in the silver for the
+# deterministic match of the political_connection signal; masking for
+# publication is a gold mart concern (LGPD, PR-D-08 §2).
 name: monthly_tse
 description: Monthly TSE campaign finance (prestação de contas) snapshot crawl
 schedule: "37 6 3 * *" # 3rd of the month, 06:37 UTC
 window: previous_month # required by file_dump; the snapshot ignores it
 sources:
   - name: tse
-    # params.year/params.base_url/params.files override the TSE_ELECTION_YEAR /
-    # TSE_BASE_URL config defaults when declared.
+    # params.year/params.files override the TSE_ELECTION_YEAR config default
+    # / the default dump pair when declared.
     params:
       year: 2024
 formula: file_dump

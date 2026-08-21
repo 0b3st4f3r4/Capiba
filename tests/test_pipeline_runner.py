@@ -1073,9 +1073,108 @@ destinations: [lake_silver]
             ds="2026-02-02",
         )
 
-        # Only entity files get a partition delete (Cnaes.zip is skipped).
-        mock_delete.assert_called_once_with("companies", date(2026, 2, 2))
+        # Only entity files get a partition delete (Cnaes.zip is skipped);
+        # sources without a year param keep the whole-partition delete.
+        mock_delete.assert_called_once_with(
+            "companies", date(2026, 2, 2), election_year=None
+        )
         assert summary["entities"] == {"companies": 1}
+
+    def test_tse_delete_scoped_to_election_year(
+        self, tmp_path: Path, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Multi-year TSE: the delete carries params.year of the run."""
+        from capiba.pipeline.tasks import task_normalize_dump
+
+        zip_path = _tse_zip(
+            tmp_path / "prestacao_de_contas_eleitorais_candidatos_2022.zip",
+            [TSE_PJ_ROW],
+        )
+        monkeypatch.setattr(
+            lake, "read_bronze_file", MagicMock(return_value=zip_path.read_bytes())
+        )
+        mock_delete = MagicMock()
+        monkeypatch.setattr(lake, "delete_silver_entities_partition", mock_delete)
+
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(
+            """\
+name: tse_dump_task
+window: previous_month
+sources: [{name: tse, params: {year: 2022}}]
+formula: file_dump
+destinations: [lake_silver]
+""",
+            encoding="utf-8",
+        )
+        ti = MagicMock()
+        ti.xcom_pull.return_value = {
+            "reference_month": "2026-01",
+            "files": [
+                {
+                    "file": "prestacao_de_contas_eleitorais_candidatos_2022.zip",
+                    "bytes": 1,
+                    "sha256": "x",
+                    "lake_key": "tse/files/dt=2026-02-02/x.zip",
+                },
+            ],
+        }
+
+        summary = task_normalize_dump(
+            "tse", str(spec_path), ti=ti, ds="2026-02-02"
+        )
+
+        mock_delete.assert_called_once_with(
+            "campaign_donations", date(2026, 2, 2), election_year=2022
+        )
+        assert summary["entities"] == {"campaign_donations": 1}
+
+    def test_tse_delete_defaults_to_config_year(
+        self, tmp_path: Path, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A TSE spec without params.year scopes the delete to the config year."""
+        from capiba.config import TSE_ELECTION_YEAR
+        from capiba.pipeline.tasks import task_normalize_dump
+
+        zip_path = _tse_zip(
+            tmp_path / "prestacao_de_contas_eleitorais_candidatos_2024.zip",
+            [TSE_PJ_ROW],
+        )
+        monkeypatch.setattr(
+            lake, "read_bronze_file", MagicMock(return_value=zip_path.read_bytes())
+        )
+        mock_delete = MagicMock()
+        monkeypatch.setattr(lake, "delete_silver_entities_partition", mock_delete)
+
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(
+            """\
+name: tse_dump_task_default_year
+window: previous_month
+sources: [tse]
+formula: file_dump
+destinations: [lake_silver]
+""",
+            encoding="utf-8",
+        )
+        ti = MagicMock()
+        ti.xcom_pull.return_value = {
+            "reference_month": "2026-01",
+            "files": [
+                {
+                    "file": "prestacao_de_contas_eleitorais_candidatos_2024.zip",
+                    "bytes": 1,
+                    "sha256": "x",
+                    "lake_key": "tse/files/dt=2026-02-02/x.zip",
+                },
+            ],
+        }
+
+        task_normalize_dump("tse", str(spec_path), ti=ti, ds="2026-02-02")
+
+        mock_delete.assert_called_once_with(
+            "campaign_donations", date(2026, 2, 2), election_year=TSE_ELECTION_YEAR
+        )
 
 
 class TestTaskDestinationFileDump:

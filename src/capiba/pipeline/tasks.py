@@ -1009,14 +1009,31 @@ def task_normalize_dump(
     # partition day of every entity in the manifest is deleted first —
     # otherwise a pod restart mid-dump duplicates the rows already appended
     # (OOMKill loop of 2026-08-20). A delete failure aborts before any
-    # append, so rows are never duplicated.
+    # append, so rows are never duplicated. Multi-year sources (TSE —
+    # params.year) scope the delete to the election year, so two years
+    # sharing a partition day never delete each other's rows; sources
+    # without a year keep the whole-partition delete.
+    source = next((s for s in spec.sources if s.name == source_name), None)
+    election_year = source.params.get("year") if source is not None else None
     entities = {
         entity
         for entry in manifest.get("files", [])
         if (entity := dump_parser.entity_for_file(entry["file"])) is not None
     }
+    if election_year is None:
+        # The resolver of a year-aware source defaults to TSE_ELECTION_YEAR
+        # when the spec omits params.year; mirror that default here so the
+        # delete scope never diverges from the resolved dump.
+        has_year_column = any(
+            "election_year" in {f.name for f in lake.ENTITY_TABLES[e][0].fields}
+            for e in entities
+        )
+        if has_year_column:
+            election_year = TSE_ELECTION_YEAR
     for entity in sorted(entities):
-        lake.delete_silver_entities_partition(entity, run_date)
+        lake.delete_silver_entities_partition(
+            entity, run_date, election_year=election_year
+        )
 
     counts: dict[str, int] = {}
     errors = 0

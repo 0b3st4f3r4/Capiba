@@ -1,17 +1,26 @@
-"""Download of the TSE campaign finance dump (prestação de contas).
+"""Resolution of the TSE campaign finance dumps (prestação de contas).
 
 Chunk: tse
-Responsibility: Download the prestação de contas eleitorais and the
+Responsibility: Resolve the prestação de contas eleitorais and the
 consulta_cand (elected candidates) ZIPs of the configured election year
-from the TSE open data CDN.
+from the **frozen bronze anchor** (``tse/reference/``), never from the
+TSE CDN.
+
+The TSE CDN is unreachable from CLI clients (Akamai Bot Manager answers
+403 — confirmed 2026-08-21), so the dumps are obtained once via a
+Brazilian IP and uploaded manually to the bronze bucket under
+``tse/reference/`` (contract of ``experiments/detect/D-08b.json``,
+``reference_source.bronze_prefix``; obtention recorded in PR-D-08b).
+The pipeline copies the anchor files of the election year into the run
+partition (``tse/files/dt=<run>/``) through the registry downloader
+contract.
 
 The dump is a **fixed snapshot per election** (the 2024 municipal
-elections by default), republished while the accounts are judged — it is
-not month-indexed, so the ``reference_month`` argument of the registry
-downloader contract is accepted but ignored; the election year and base
-URL are parameters (``year``/``base_url``).
+elections by default) — it is not month-indexed, so the
+``reference_month`` argument of the registry downloader contract is
+accepted but ignored; the election year is a parameter (``year``).
 
-Dependencies: requests
+Dependencies: capiba.pipeline.lake (lazy, bronze MinIO client)
 """
 
 from __future__ import annotations
@@ -20,12 +29,14 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-import requests
-
-from capiba.config import TSE_BASE_URL, TSE_CANDIDATES_BASE_URL, TSE_ELECTION_YEAR
+from capiba.config import TSE_ELECTION_YEAR
 from capiba.ingestion.crawler_federal_revenue import _is_valid_zip
 
 logger = logging.getLogger(__name__)
+
+# Frozen anchor of the official TSE dumps in the bronze bucket (uploaded
+# once, manually, per election year — the CDN blocks CLI clients).
+TSE_REFERENCE_PREFIX = "tse/reference/"
 
 
 def tse_dump_filename(year: int) -> str:
@@ -38,44 +49,52 @@ def tse_candidates_filename(year: int) -> str:
     return f"consulta_cand_{year}.zip"
 
 
-def _base_url_for(name: str, base_url: str, candidates_base_url: str) -> str:
-    """The CDN directory of a dump file (the two dumps are siblings)."""
-    if name.startswith("consulta_cand_"):
-        return candidates_base_url.rstrip("/")
-    return base_url.rstrip("/")
+def _available_reference_files() -> dict[str, str]:
+    """Maps file name -> bronze key of every object in the frozen anchor."""
+    from capiba.pipeline import lake
+
+    return {
+        key.rsplit("/", 1)[-1]: key
+        for key in lake.list_bronze_objects(TSE_REFERENCE_PREFIX)
+    }
 
 
 def download_tse_dump(
     destination: Path,
     reference_month: str,
     year: int = TSE_ELECTION_YEAR,
-    base_url: str = TSE_BASE_URL,
-    candidates_base_url: str = TSE_CANDIDATES_BASE_URL,
     files: list[str] | None = None,
     skip: set[str] | None = None,
     on_file: Callable[[Path], None] | None = None,
 ) -> list[Path]:
-    """Downloads the TSE dumps of an election year.
+    """Resolves the TSE dumps of an election year from the bronze anchor.
+
+    Reads the frozen reference dumps (``tse/reference/``) of the bronze
+    bucket and materializes them locally so the caller uploads them to the
+    run partition — no HTTP call is made (the TSE CDN blocks CLI clients).
 
     Args:
         destination: Directory where the files will be saved.
         reference_month: Registry contract argument; **ignored** — the dump
             is a fixed snapshot per election, not a monthly partition.
         year: Election year of the snapshot (default: TSE_ELECTION_YEAR).
-        base_url: Base URL of the prestação de contas directory on the TSE
-            CDN.
-        candidates_base_url: Base URL of the consulta_cand directory (the
-            elected-candidates gate of the political_connection signal).
-        files: File names to download. Default: the candidates' prestação
+        files: File names to resolve. Default: the candidates' prestação
             de contas dump and the consulta_cand dump of ``year``.
         skip: File names to skip (already uploaded to the bronze layer by a
             previous attempt — resume semantics of the download task).
-        on_file: Optional callback invoked with each downloaded path right
+        on_file: Optional callback invoked with each resolved path right
             after it lands (lets the caller upload/remove it immediately).
 
     Returns:
-        List of paths of the downloaded ZIP files (excluding skipped ones).
+        List of paths of the resolved ZIP files (excluding skipped ones).
+
+    Raises:
+        RuntimeError: If the anchor of ``year`` is incomplete — the message
+            instructs the manual upload to ``tse/reference/`` (there is no
+            automatic fallback, so a missing anchor never retries silently).
     """
+    from capiba.pipeline import lake
+
     del reference_month  # fixed snapshot per election; documented above
     destination.mkdir(parents=True, exist_ok=True)
     files = (
@@ -84,42 +103,49 @@ def download_tse_dump(
         else [tse_dump_filename(year), tse_candidates_filename(year)]
     )
     skip = skip or set()
-    downloaded: list[Path] = []
 
+    available = _available_reference_files()
+    wanted = [name for name in files if name not in skip]
+    missing = [name for name in wanted if name not in available]
+    if missing:
+        raise RuntimeError(
+            "TSE reference anchor incomplete in the bronze layer "
+            f"({TSE_REFERENCE_PREFIX}): missing {missing}. The TSE CDN "
+            "blocks CLI clients (Akamai 403), so download the dumps via a "
+            "Brazilian IP and upload them manually — e.g. "
+            "`mc cp <file> capiba/${CAPIBA_BUCKET_BRONZE:-capiba-bronze}/"
+            f"{TSE_REFERENCE_PREFIX}<file>` (contract: "
+            "experiments/detect/D-08b.json, reference_source.bronze_prefix)."
+        )
+
+    resolved: list[Path] = []
     for name in files:
         if name in skip:
             logger.info("Skipping %s (already uploaded to the bronze layer)", name)
             continue
-        base = _base_url_for(name, base_url, candidates_base_url)
-        url = f"{base}/{name}"
+        key = available[name]
         file_path = destination / name
-
         if file_path.exists():
             logger.info("File already exists: %s", file_path)
-            downloaded.append(file_path)
+            resolved.append(file_path)
             continue
 
-        logger.info("Downloading TSE dump: %s", url)
-        try:
-            with requests.get(url, stream=True, timeout=120) as response:
-                response.raise_for_status()
-                with open(file_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-            if not _is_valid_zip(file_path):
-                # The CDN can answer 200/403 with an HTML error page instead
-                # of the ZIP (Akamai geo-restriction): not data.
-                logger.warning("Invalid ZIP payload for %s (CDN error page?)", name)
-                file_path.unlink()
-                continue
-            downloaded.append(file_path)
-            logger.info(
-                "Download finished: %s (%d bytes)", file_path, file_path.stat().st_size
+        logger.info("Resolving TSE dump from the bronze anchor: %s", key)
+        data = lake.read_bronze_file(key)
+        file_path.write_bytes(data)
+        if not _is_valid_zip(file_path):
+            # A corrupt anchor object is not data: fail loudly instead of
+            # landing a broken snapshot in the run partition.
+            file_path.unlink()
+            raise RuntimeError(
+                f"TSE reference object {key} is not a valid ZIP; "
+                f"re-upload the dump to {TSE_REFERENCE_PREFIX}."
             )
-            if on_file is not None:
-                on_file(file_path)
-        except requests.RequestException as exc:
-            logger.warning("Failed to download %s: %s", name, exc)
+        resolved.append(file_path)
+        logger.info(
+            "TSE dump resolved: %s (%d bytes)", file_path, file_path.stat().st_size
+        )
+        if on_file is not None:
+            on_file(file_path)
 
-    return downloaded
+    return resolved

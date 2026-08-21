@@ -621,6 +621,30 @@ def list_all_bronze_files(source: str) -> list[str]:
     return sorted(keys)
 
 
+def list_bronze_objects(prefix: str) -> list[str]:
+    """Lists every object key of the bronze bucket under an arbitrary prefix.
+
+    Generic counterpart of ``list_bronze_files``/``list_all_bronze_files``
+    for frozen anchors that live outside the ``<source>/files/dt=`` layout
+    (e.g. ``tse/reference/``).
+
+    Args:
+        prefix: Object key prefix in the bronze bucket.
+
+    Returns:
+        Object keys (possibly empty), sorted for determinism.
+    """
+    keys = [
+        obj.object_name
+        for obj in get_client().list_objects(
+            LAKE_BUCKET_BRONZE, prefix=prefix, recursive=True
+        )
+        if obj.object_name is not None
+    ]
+    logger.info("Bronze objects listed: %s (%d keys)", prefix, len(keys))
+    return sorted(keys)
+
+
 def read_bronze_file(key: str) -> bytes:
     """Reads back a raw file uploaded with ``write_bronze_file``.
 
@@ -908,7 +932,9 @@ def count_silver_contracts() -> int:
     return int(rows[0]["n"]) if rows else 0
 
 
-def delete_silver_entities_partition(entity: str, run_date: date) -> None:
+def delete_silver_entities_partition(
+    entity: str, run_date: date, election_year: int | None = None
+) -> None:
     """Deletes the entity's silver rows of one partition day through Trino.
 
     Idempotency half of the dump normalization (``task_normalize_dump``):
@@ -919,6 +945,11 @@ def delete_silver_entities_partition(entity: str, run_date: date) -> None:
     start clean. A failure here propagates — no append is attempted, so
     rows are never duplicated.
 
+    With ``election_year`` set (TSE multi-year ingestion), the delete is
+    scoped to that year, so two election years sharing a partition day
+    (or a retry of one year after another wrote to the partition) never
+    delete each other's rows.
+
     No-op with the offline SQLite catalog (no Trino to DELETE through)
     and when the table does not exist yet (first load of the entity).
 
@@ -926,9 +957,23 @@ def delete_silver_entities_partition(entity: str, run_date: date) -> None:
         entity: Entity name (``companies``/``establishments``/``partners``/
             ``sanctions``); validated against ``ENTITY_TABLES``.
         run_date: Partition day to delete.
+        election_year: Optional election year scope of the delete; only
+            valid for entities whose schema has the ``election_year``
+            column (TSE silvers).
+
+    Raises:
+        ValueError: If ``election_year`` is given for an entity without
+            the column.
     """
     if entity not in ENTITY_TABLES:
         raise ValueError(f"Unknown silver entity '{entity}'")
+    if election_year is not None and "election_year" not in {
+        field.name for field in ENTITY_TABLES[entity][0].fields
+    }:
+        raise ValueError(
+            f"Silver entity '{entity}' has no election_year column; "
+            "the year-scoped delete only applies to the TSE silvers"
+        )
     if ICEBERG_CATALOG_URI.startswith("sqlite"):
         logger.info("Offline catalog; skipping %s partition delete", entity)
         return
@@ -939,13 +984,22 @@ def delete_silver_entities_partition(entity: str, run_date: date) -> None:
         logger.info("Silver %s table not found; nothing to delete", entity)
         return
     partition = _partition_day(run_date)
-    # The entity name is whitelisted against ENTITY_TABLES above; SQL
-    # literals cannot be parameterized over the HTTP API.
-    trino.run_query(
+    # The entity name is whitelisted against ENTITY_TABLES above and the
+    # year is coerced to int; SQL literals cannot be parameterized over
+    # the HTTP API.
+    sql = (
         f"DELETE FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.{entity}"  # nosec: B608
         f" WHERE dt = DATE '{partition.isoformat()}'"
     )
-    logger.info("Silver %s partition dt=%s deleted", entity, partition)
+    if election_year is not None:
+        sql += f" AND election_year = {int(election_year)}"
+    trino.run_query(sql)
+    logger.info(
+        "Silver %s partition dt=%s deleted (election_year=%s)",
+        entity,
+        partition,
+        election_year,
+    )
 
 
 def write_silver_entities(
