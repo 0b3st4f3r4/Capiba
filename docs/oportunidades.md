@@ -264,8 +264,7 @@ assinatura por município/órgão.
 A ordem abaixo é a registrada na pesquisa de 2026-08-18; hoje os itens
 O1–O12 estão entregues ou em andamento (status detalhado em
 `docs/gaps.md`), e o que resta são os desdobramentos anotados nos itens
-(NLP sobre o corpus de diários, PEPs/OpenSanctions, CEAF no grafo) e o
-modo leve de onboarding.
+(`semantic_gap` sem fonte, CEAF no grafo) e o modo leve de onboarding.
 
 1. **O9 + O10** (verificação e triagem): transformam sinais em produto
    editorial e criam o laço de rótulos humanos.

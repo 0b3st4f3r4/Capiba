@@ -211,8 +211,7 @@ evidências) dentro de cada item.
    único caminho; o SMS, declarado mas não suportado, saiu do enum
    `NotificationChannel` (`notification/dispatcher.py`); os testes de
    `db/vectors.py` e `db/search.py` migraram de `test_detection.py` para
-   `test_db.py`; e `config.py` e `transformations/filter_by_min_value.py`
-   ganharam teste dedicado.
+   `test_db.py`; e `config.py` ganhou teste dedicado.
 
 ## Editorial: jornalismo de dados comunitário
 

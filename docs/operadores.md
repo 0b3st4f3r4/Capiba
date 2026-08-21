@@ -14,7 +14,8 @@ entidade na tabela gold `fraud_signals` com os mesmos nomes da API
 (`single_bid`, `concentration`, `anomalous_price`, `anomalous_duration`) e,
 best-effort (nunca derrubam a task), os sinais de screening e cruzamento
 (`sanctioned_supplier`, `sanctioned_name_match`, `political_connection`,
-`anomalous_geography`) e o sinal de grafo (`collusion_network`) — todos no
+`anomalous_geography`, `notice_clone`) e o sinal de grafo
+(`collusion_network`) — todos no
 vocabulário canônico `SignalType` —, enquanto a API aplica seus próprios
 limiares de emissão e mensagens de evidência sobre as mesmas funções.
 
@@ -87,12 +88,34 @@ Onde a estatística vê números, o grafo vê relações: quem ganha de quem, qu
 
 | Operador              | O que captura                                                   | Status                                                     |
 | --------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| Colusão em rede       | Pares de fornecedores alternando vitórias para o mesmo comprador | Pipeline (sinal `collusion_network`, validado na bateria D-02) |
+| Colusão em rede       | Pares de fornecedores alternando vitórias para o mesmo comprador | Pipeline (sinal `collusion_network`, validado nas baterias D-02 e D-03d) |
 | Cadeia de propriedade | Beneficial ownership                                            | API (`GET /v1/graph/ownership/{cnpj}`)                     |
 
 A colusão em rede aceita ainda o refinamento `min_buyers`
 (`DETECTION_COLLUSION_MIN_BUYERS`, default 1, bateria D-03b), que exige o
-par alternando vitórias em pelo menos N compradores distintos.
+par alternando vitórias em pelo menos N compradores distintos. O limiar
+`DETECTION_COLLUSION_MIN_WINS` (default 3) é placeholder validado por D-02;
+a calibração em volume real (D-03/D-03b) ficou inconclusiva, e a bateria
+D-03d validou o ponto (min_wins 5, min_buyers 2) — promovê-lo aos defaults
+é candidato a um refinamento pré-registrado (PR-D-03e). O score é binário.
+
+Guarda de escala: a derivação de pares é **pulada** quando a projeção
+(Σ C(n,2) por comprador, `graphs.projected_pair_count`) excede
+`DETECTION_COLLUSION_MAX_PAIRS` (default 1.000.000) — 9,6M pares OOMKillaram
+o pod na primeira run real (2026-08); o snapshot de elegibilidade segue
+gravado como evidência. O blocking de recall exato
+(`blocked_supplier_index`, predicado `|B(s)| ≥ min_buyers`) foi provado
+equivalente bit a bit em D-03c, mas refutado nos pontos permissivos ((3,2)
+e (3,3) seguem acima da guarda). O backlog legado (anterior ao top-K) não é
+reprocessado.
+
+Desde
+2026-08-21 a emissão em produção é **ranqueada com orçamento editorial**
+(emissão top-K da bateria D-03d, success T1–T9): a derivação usa blocking
+(`pair_buyers_from_eligibility_blocked`) e emite os
+top-`DETECTION_COLLUSION_TOP_K` pares (default 500; ordenação
+`buyer_count`/`wins_sum` desc, par asc), com `top_k` e `qualified_count`
+no descriptor do pacote de evidência.
 
 ## Screening e cruzamento (`detection/screening*.py`, `political.py`, `geography.py`)
 
@@ -116,6 +139,28 @@ persons↔persons no grafo ao final da carga FtM (score 0,6 nome + 0,3
 documento mascarado + 0,1 faixa etária, limiar `DETECTION_ENTITY_THRESHOLD`
 default 0,85), sem colapsar vértices.
 
+Os pares candidatos do `sanctioned_name_match` passam por **prefilter
+vetorizado exato** (cota superior da ratio do SequenceMatcher via interseção
+de multiset de caracteres; equivalência bit-a-bit guardada por
+`TestIndexedImplementationEquivalence`) — o produto cruzado documentless
+levaria horas em volume real (570M pares, medido em 2026-08). O piloto de
+PEPs via yente/OpenSanctions (`br_pep`) foi **refutado** por D-12
+(`docs/results/R-D-12.md`): o logic-v2 não supera o matcher local no regime
+documentless (precisão 0,8272, revocação 0,517 no OS Pairs); o adapter
+testado vive em `detection/pep_screening.py`, arquivado sem sinal novo.
+
+No `political_connection`, o match é exato por documento (originário
+prioritário — nome nunca é evidência) e a janela do mandato é derivada de
+`TSE_ELECTION_YEAR`. O mart gold `political_connections` publica os sinais
+enriquecidos com as silvers TSE (última partição) e a seed
+`dbt/seeds/ue_siafi_crosswalk.csv` (incremental, piloto Recife: UE 25313,
+SIAFI 2531); LGPD: CPF mascarado padrão CEAF, CNPJ completo, chave
+`signal_id` sha256. A CDN do TSE bloqueia clientes CLI por IP (403); o
+PR-D-08b pré-registra a troca da fonte para a Base dos Dados
+(`br_tse_eleicoes`, bateria de paridade `tse_parity` — o gate do eleito
+migra para `resultados_candidato` e a BD zera o doador originário, perda de
+revocação medida por P5).
+
 Fora do vocabulário `SignalType`, mas já em produção nos marts gold, os
 red flags determinísticos: `detection/red_flags.py` (CRI Fazekas & Kocsis
 por contrato, flag nula = dado insuficiente, bateria D-04) e
@@ -123,12 +168,21 @@ por contrato, flag nula = dado insuficiente, bateria D-04) e
 bronze, bateria D-05) alimentam os marts `contract_red_flags`,
 `red_flags_by_*`, `contract_amendments` e `amendments_by_*` via dbt.
 
-## NLP (`detection/nlp_operators.py`), ainda scaffold
+## NLP (`detection/nlp_operators.py`, `detection/notice_clone.py`)
 
-| Operador        | O que captura               | Técnica                          |
-| --------------- | --------------------------- | -------------------------------- |
-| Gap semântico   | Sub-declaração de escopo    | Similaridade coseno (embeddings) |
-| Clone de edital | Near-duplicate entre órgãos | Sentence transformers            |
+| Operador        | O que captura               | Técnica                          | Status        |
+| --------------- | --------------------------- | -------------------------------- | ------------- |
+| Gap semântico   | Sub-declaração de escopo    | Similaridade coseno (embeddings) | Scaffold      |
+| Clone de edital | Near-duplicate entre órgãos | Sentence transformers            | Pipeline      |
 
-Os dois operadores seguem sem consumidor: `SignalType.SEMANTIC_GAP` existe no
-vocabulário canônico à espera de um produtor.
+O sinal `notice_clone` (`detection/notice_clone.py`, PR-D-10, refinamento
+D-10b success 7/7 — o exploratório D-10 fixou as âncoras N0/N6 e as bandas
+P3/P4 e refutou a P2 original; a forma corrigida P2b, rank ≤ 4, foi
+validada) detecta editais clonados/direcionados sobre os textos
+bronze do Querido Diário: segmentação de edições
+(`ingestion/gazette_segments.py`), similaridade coseno estrita acima de
+`DETECTION_NOTICE_CLONE_THRESHOLD` (default 0,85), veto de reedição por
+número de processo e encoder pinado; emitido best-effort no `task_detect`
+pelo produtor `notice_clone_bronze_signals`. O `semantic_gap` segue sem
+consumidor: `SignalType.SEMANTIC_GAP` existe no vocabulário canônico à
+espera de um produtor e de fonte.

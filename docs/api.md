@@ -265,7 +265,7 @@ portal abre sem login. As rotas do portal e do fluxo de autenticação:
 | `GET /auth/login` | Inicia o fluxo OIDC (redirect para o Keycloak); com SSO desabilitado, redireciona de volta para `/` |
 | `GET /auth/callback` | Callback do fluxo OIDC: valida o token (issuer público), grava o `userinfo` na sessão e redireciona para `/` |
 | `GET /auth/logout` | Limpa a sessão e redireciona para `/` |
-| `GET /triage` | Página de triagem editorial: fila de sinais por estado (`?status=`), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
+| `GET /triage` | Página de triagem editorial: fila de sinais com filtros (`?status=`, `?signal_type=`, `?min_score=`), paginação server-side (`offset`/`limit`, ordenação score desc), ações de confirmar/rejeitar/publicar e relatório de precisão por operador; degrada para "indisponível" com o ArangoDB fora |
 | `POST /triage/review` | Aplica a transição editorial vinda do formulário da página (revisor do campo ou da sessão SSO); erros de validação voltam como banner na fila (redirect 303), nunca como página 4xx |
 
 ## Evidências
@@ -385,15 +385,19 @@ precisão por operador e, futuramente, o ML supervisionado.
 
 ### GET /v1/triage/signals
 
-Lista os sinais em triagem, mais recentes primeiro.
+Lista os sinais em triagem, **maiores scores primeiro** (`score DESC,
+last_seen DESC`), com filtragem, ordenação e paginação executadas
+server-side no AQL — nenhuma varredura completa da coleção.
 
 **Query params:**
 
 | Parâmetro | Tipo | Descrição |
 |---|---|---|
 | `status` | string, opcional | `pending_review`, `confirmed`, `rejected` ou `published` |
-| `signal_type` | string, opcional | Filtro por tipo de sinal |
-| `limit` | integer, opcional | Máximo de resultados (default 100, mínimo 1, máximo 1000) |
+| `signal_type` | string, opcional | Filtro por tipo de sinal (vocabulário `SignalType`) |
+| `min_score` | float, opcional | Score mínimo (0 a 1) |
+| `limit` | integer, opcional | Máximo de resultados por página (default 100, mínimo 1, máximo 1000) |
+| `offset` | integer, opcional | Deslocamento da paginação (default 0) |
 
 **Response:** lista de entradas com `key`, `entity_type`, `entity_id`,
 `signal_type`, `score`, `details`, `status`, `reviewed_by`, `reviewed_at`,

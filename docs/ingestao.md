@@ -156,9 +156,6 @@ sources:
 formula: contracts_default      # fórmula que orquestra os passos
 validate:
   ruleset: contract_rules       # regras de qualidade (opcional)
-transformations:                # transformações nomeadas (opcional)
-  - name: filter_by_min_value
-    params: { min_value: 1000 }
 destinations:
   - lake_bronze                 # cópia de auditoria + tabela raw_<fonte>
   - lake_silver                 # tabela Iceberg capiba.contracts (upsert por id)
@@ -210,8 +207,7 @@ O registry é a fronteira entre os dois mundos.
 ### Fórmulas
 
 **`contracts_default`** espelha o fluxo diário de contratos: crawl por fonte
-(cada uma com sua janela), normalize, transformations (opcional), validate
-(opcional) e destinos.
+(cada uma com sua janela), normalize, validate (opcional) e destinos.
 
 **`file_dump`** baixa arquivos de referência (ex.: dump CNPJ da Receita
 Federal) e guarda os ZIPs no bronze junto de um manifesto; manifesto vazio
@@ -263,14 +259,6 @@ não há normalização silver (documentos não são contratos).
 cada fonte pode sobrescrevê-lo. Com a separação por fonte (abaixo), cada
 pipeline usa a janela natural da sua fonte: `previous_day` para o PNCP,
 `previous_month` para o Portal da Transparência.
-
-### Transformações customizadas
-
-Transformações nomeadas vivem em `src/capiba/transformations/`, um módulo
-por transformação, expondo `transform(records, **params)`, e são
-referenciadas por nome no YAML, com `params` livres. Nomes fora do
-`TRANSFORMATION_REGISTRY` são resolvidos importando
-`capiba.transformations.<name>`.
 
 ### Validação da spec
 
