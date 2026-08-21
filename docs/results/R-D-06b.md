@@ -68,7 +68,41 @@ falha declarado do regime nome-only, filtrado pela triagem humana (O10).
   anonimizado como fixture) e o roundtrip silver com `masked_document`;
   a bateria D-06 segue verde (o screening exato não mudou).
 
+## 4. Etapa real (run gold_detection 2026-08-21)
+
+Executada sobre o gold produzido pela run agendada
+`scheduled__2026-08-21T08:00` (detect com sucesso 08:24–08:37 UTC), com
+o silver real acumulado (~205,7 mil contratos) e a silver `sanctions`
+completa (29.388 sanções únicas CEIS/CNEP/CEAF, todas as partições).
+Verificação por query sobre `gold.capiba.fraud_signals`
+(dt=2026-08-21).
+
+| Predição | Esperado | Medido | Veredito |
+|---|---|---|---|
+| P8 — invariante estrutural | todo sinal com score ≥ limiar do seu regime e sem contradição documental | **0 sinais** `sanctioned_name_match` (866 sinais factuais `sanctioned_supplier` na mesma partição) | success por vacuidade |
+
+- O invariante é universalmente quantificado sobre os sinais emitidos;
+  com zero sinais, vale por vacuidade. A **genuinidade do zero** foi
+  corroborada por duas vias: o perfil local do fluxo do detect (mesmo
+  código, mesmas silvers via Trino) também emitiu 0 sinais fuzzy em 82 s
+  com o prefilter exato, e a referência naive (produto cruzado sem
+  prefilter) sobre uma amostra real de 3.216 contratos igualmente emitiu
+  0 — o zero não é artefato de implementação.
+- Leitura editorial: os limiares são estritos por desenho (nome-only
+  0,95; doc-assistido 0,85 com veto documental), então recall baixo no
+  regime real é esperado — homônimos são vetados e homonímias quase
+  idênticas são raras na interseção fornecedores × sanções. Se a triagem
+  editorial mostrar ausência sistemática de sinais onde o repórter
+  esperaria matches, a recalibração dos limiares vira PR-D-06c.
+- A invariante segue de pé para o primeiro sinal fuzzy real (query
+  reexecutável a cada run). Nota operacional: a run que produziu esta
+  partição exigiu correções de infra no mesmo dia — ver `docs/gaps.md`
+  (seção Alto, item "Estabilidade do detect em volume real").
+
 ## Revisões
 
 - 2026-08-20: publicação — 7/7 predições confirmadas; P8 pendente da run
   real com a feature.
+- 2026-08-21: etapa real anexada — **P8 satisfeita por vacuidade** (0
+  sinais fuzzy no gold real; zero corroborado contra referência naive).
+  Bateria D-06b completa (P1–P8).

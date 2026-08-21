@@ -136,9 +136,24 @@ antes de parsear, DELETA a partição `dt=<run_date>` de cada entidade via
 Trino (`lake.delete_silver_entities_partition`; falha aborta sem append)
 — retry reprocessa sem duplicar. A escrita no silver `contracts`
 (`lake.write_silver`) é **upsert-por-id** (DELETE via Trino dos ids do
-lote + append; no catálogo sqlite offline degrada para append puro). Como
+lote + append; no catálogo sqlite offline degrada para append puro). A
+escrita no gold `fraud_signals` (`lake.write_fraud_signals`) é
+**replace-por-partição** (DELETE via Trino de `dt=<run_date>` + append;
+offline, append puro) — attempt reenfileirado do `detect` não duplica
+sinais. Todo DELETE via Trino seguido de append pyiceberg exige
+`table.refresh()` entre os dois: o DELETE comita um snapshot novo e o
+handle carregado antes dele é rejeitado pelo Lakekeeper
+(CatalogCommitConflicts, "snapshot has changed" — run real de
+2026-08-21). Como
 DELETE+append não é atômico, as DAGs da factory usam `max_active_runs=1`
 (runs sobrepostas duplicavam linhas — observado em dt=2026-08-18/19).
+Atenção: **backfills ignoram o `max_active_runs` da DAG** — o Airflow 3 usa
+o `--max-active-runs` do próprio backfill (default 10); crie sempre com
+`--max-active-runs 1 --run-on-latest-version`. As TIs pinam pool e versão
+da DAG na criação do dag run do backfill: runs de backfills criados antes
+de uma mudança de pool/estrutura **não** herdam a correção (backfill de
+2026-08-19 rodou 3 crawls concorrentes em `default_pool` e OOMKillou o pod
+mesmo após o deploy do `heavy_lake`; cancelado e recriado em 2026-08-21).
 Efeito colateral dos deletes Trino: o scan pyiceberg **não decodifica os
 delete files** ("DecodeArrow of DictAccumulator", pyarrow 25.0.1) —
 `lake.read_silver_contracts` lê via **Trino** no cluster (o scan local só
@@ -157,6 +172,9 @@ container e picos concorrentes (detect ~2 GB + normalize/crawl do
 criado pelo init container `airflow-db-init`
 (`airflow pools set heavy_lake 1`, idempotente) e referenciado via
 `HEAVY_POOL` em `dags/pipeline_factory.py` e `dags/gold_detection.py`.
+Na mesma linha, `AIRFLOW__CORE__PARALLELISM: "8"` no configmap do
+Airflow: cada slot do LocalExecutor mantém um worker idle (~164 MiB),
+e os 32 default custavam ~5 GiB de baseline dentro do container.
 Transformações nomeadas em `src/capiba/transformations/` (um módulo por
 transformação, `transform(records, **params)`).
 
@@ -174,6 +192,10 @@ ibge/lat/long via (city, uf) e `suppliers` ganha lat/long via cadeia
 silver `establishments` (TOM) → `rfb_municipalities` → referência
 vendored — best-effort, funções puras injetáveis
 (`geography.buyer_geo_fields`, `geography.build_supplier_geo_index`).
+A leitura de `establishments` na persistência é **seletiva**
+(`lake.read_establishments_for_cnpjs`, como no `task_detect`): o scan
+pyiceberg da tabela RFB completa OOMKillou o pod do Airflow nos
+backfills de maio (2026-08-21, worker a >7,7 GB).
 
 O sinal `anomalous_geography` (contrato PR-D-09 §3, validado no sintético
 pela bateria D-09, `docs/results/R-D-09.md`, 5/5; P6/volume real
@@ -307,7 +329,12 @@ fica com a `gold_detection` — que **exclui automaticamente os marts
 dependentes de TSE** (`political_connections`) enquanto as silvers
 `campaign_donations`/`candidacies` não existirem
 (`lake.silver_table_exists`; sem isso o TABLE_NOT_FOUND derrubava a DAG
-inteira antes do primeiro load da `monthly_tse`).
+inteira antes do primeiro load da `monthly_tse`) **e sempre exclui os
+marts horários** (`pod_usage_hourly`/`platform_cost_daily`,
+`_HOURLY_OWNED_MARTS`): eles são refrescados pelo próprio pipeline
+horário e dois dbt commits concorrentes na mesma tabela Iceberg são
+rejeitados pelo Lakekeeper ("Cannot assign a new UUID" — colisão real
+da gold com a run horária das 07:07 em 2026-08-21).
 
 ## Infra e convenções
 

@@ -1,6 +1,6 @@
 # Checklist de gaps
 
-Gerado na revisão de 2026-08-18 e revalidado em 2026-08-20, ordenado do
+Gerado na revisão de 2026-08-18 e revalidado em 2026-08-21, ordenado do
 mais crítico ao menos crítico, com os detalhes (caminhos, linhas,
 evidências) dentro de cada item.
 
@@ -54,8 +54,11 @@ evidências) dentro de cada item.
    proporcional saturando em 1.000 km), validado no regime sintético pela
    bateria D-09 (`docs/results/R-D-09.md`, 5/5) e emitido best-effort no
    `task_detect`; o operador AQL legado (vértices `bids` inexistentes) foi
-   removido. P6/volume real pendente; calibração do limiar e exposição nos
-   marts exigem PR-D-09b.
+   removido. **P6 satisfeita no volume real** (2026-08-21, R-D-09 § 4:
+   66.485 sinais na partição dt=2026-08-21, 0 violações de gate/score/
+   distância/coordenadas). Descritivo para a calibração: o gate de 100 km
+   sinaliza ~1/3 dos contratos reais — calibração do limiar e exposição
+   nos marts exigem PR-D-09b.
 5. (aberto) **Conectar os operadores NLP.** `semantic_gap` e `detect_clone`
    (`src/capiba/detection/nlp_operators.py`), junto com `db/vectors.py` e
    `db/search.py`, seguem sem consumidor; `SignalType.SEMANTIC_GAP` não tem
@@ -105,6 +108,46 @@ evidências) dentro de cada item.
    streaming (carga do grafo): entre um delete e o `optimize` semanal da
    `lake_maintenance`, a leitura quebra. Correções possíveis: rodar
    `optimize` ao fim do normalize, ou ler via Trino com paginação.
+6. (feito) **Estabilidade do `detect` em volume real (2026-08-21).** A
+   primeira run real da `gold_detection` exigiu uma cadeia de correções,
+   todas commitadas no dia: pool `heavy_lake` (1 slot) serializando as
+   tasks pesadas do lake + `AIRFLOW__CORE__PARALLELISM=8` (32 workers
+   idle do LocalExecutor custavam ~5 GiB de baseline); leitura seletiva
+   da silver `establishments` por CNPJ (`lake.read_establishments_for_cnpjs`,
+   Trino `IN` batches) no `task_detect` **e** na persistência do grafo
+   (`ingestion/persistence._default_supplier_geo` — o scan completo da
+   RFB levava o worker a >7,7 GB e OOMKillava o pod nos backfills de
+   maio); `lake.read_silver_contracts` via Trino (delete files
+   ilegíveis); guarda de pares da colusão (`DETECTION_COLLUSION_MAX_PAIRS`);
+   prefilter vetorizado exato no screening fuzzy (570M pares → 82 s);
+   `lake.write_fraud_signals` **replace-por-partição** com
+   `table.refresh()` entre o DELETE via Trino e o append (sem o refresh o
+   Lakekeeper rejeita o commit — os 78.014 sinais da run das 04:29 se
+   perderam); o run completo do `dbt_run` excluindo os marts horários
+   (`_HOURLY_OWNED_MARTS` — commits concorrentes na mesma tabela Iceberg
+   com o pipeline horário eram rejeitados); e evidência tolerante a
+   falha transitória por manifesto (`evidence/packages.py` — um
+   `SignatureDoesNotMatch` na rajada de PUTs abortava o loop inteiro).
+   A run agendada `scheduled__2026-08-21T08:00` completou verde: 78.014
+   sinais gravados (66.485 `anomalous_geography`, 866
+   `sanctioned_supplier`, 5.428 `concentration`, 2.706
+   `anomalous_duration`, 2.529 `anomalous_price`; colusão pulada pela
+   guarda de pares, snapshot gravado como evidência). **Pendência de
+   dados**: os backfills `daily_pncp` de 2026-05-06 a 2026-05-09 foram
+   marcados failed na limpeza de TIs zumbis — esses dias podem ter ficado
+   incompletos no silver; re-rodar o backfill da janela se o recorte
+   temporal importar.
+7. (aberto) **`register_signals` aborta com `_key` ilegal (ERR 1221).** A
+   chave de triagem `{entity_type}:{entity_id}:{signal_type}`
+   (`db/triage.py`) vira `_key` ArangoDB sem sanitização; um sinal cujo
+   `entity_id` contém caractere ilegal (espaço, acento, `/`, `|`...)
+   levanta "illegal document key" e aborta o registro **inteiro** — na
+   run de 2026-08-21 nenhum dos 78.014 sinais entrou na fila editorial
+   (o erro foi engolido pelo catch do bloco de colusão, com mensagem
+   enganosa "Collusion detection unavailable"). A correção (sanitizar ou
+   hashear a `_key` preservando a chave legível em campo próprio, +
+   tolerância por sinal) mexe na identidade estável usada por API e
+   evidências — decidir a semântica antes de implementar.
 
 ## Médio: qualidade e observabilidade
 
@@ -225,8 +268,12 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    (`detection/screening_fuzzy.py` — veto documental, regime doc-assistido
    0,6/0,4 a 0,85, nome-only a 0,95; precisão 0,925 no OS Pairs nome-only),
    com a fonte **CEAF** (CPF mascarado na origem → coluna `masked_document`
-   na silver `sanctions`) no pipeline `weekly_sanctions`. P8 do PR-D-06b
-   (invariante no gold real) pendente da run com a feature. PEPs/
+   na silver `sanctions`) no pipeline `weekly_sanctions`. **P8 do PR-D-06b
+   satisfeita por vacuidade no volume real** (2026-08-21, R-D-06b § 4: 0
+   sinais `sanctioned_name_match` na partição dt=2026-08-21 — zero
+   corroborado contra referência naive numa amostra real, não é artefato
+   de implementação; os 866 sinais factuais `sanctioned_supplier` foram
+   emitidos normalmente). PEPs/
    OpenSanctions (`yente` self-hosted) e CEAF no grafo (sancionado como
    sócio de fornecedor, via O5) ficam para PRs próprios.
 6. (feito) **Esquema FollowTheMoney no grafo (O4).** Vocabulário FtM:
