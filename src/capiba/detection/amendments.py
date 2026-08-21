@@ -73,7 +73,10 @@ def compute_amendment_flags(observations: list[dict[str, Any]]) -> AmendmentFlag
     )
     if initial is not None and accumulated is not None:
         f_value_amendment: int | None = int(accumulated > initial)
-        value_ratio: float | None = round(float(accumulated / initial), 4)
+        # Full precision: rounding (e.g. to 4 decimals) can collapse a tiny
+        # but positive ratio to 0.0, outside the declared domain (P7 of
+        # PR-D-05: ratio > 0 whenever present).
+        value_ratio: float | None = float(accumulated / initial)
     else:
         f_value_amendment = None
         value_ratio = None

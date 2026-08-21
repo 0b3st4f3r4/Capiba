@@ -68,6 +68,17 @@ class TestValueAmendment:
         flags = compute_amendment_flags([_obs("2026-02-01", accumulated=120_000.0)])
         assert flags.value_ratio == 1.2
 
+    def test_value_ratio_tiny_but_positive_is_not_rounded_to_zero(self) -> None:
+        # Real-data domain violation (P7, PR-D-05): valorInicial huge with a
+        # tiny valorAcumulado yields a ratio below 5e-5; rounding to 4
+        # decimals reported 0.0, outside the declared domain (> 0 when
+        # present). The descriptor keeps full precision.
+        flags = compute_amendment_flags(
+            [_obs("2026-02-01", initial=100_000_000.0, accumulated=1_000.0)]
+        )
+        assert flags.value_ratio is not None
+        assert 0 < flags.value_ratio < 0.0001
+
     def test_non_positive_accumulated_does_not_count(self) -> None:
         flags = compute_amendment_flags([_obs("2026-02-01", accumulated=0)])
         assert flags.f_value_amendment is None
