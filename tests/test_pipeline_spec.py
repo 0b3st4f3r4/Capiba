@@ -65,6 +65,7 @@ class TestLoadSpec:
         assert set(specs) == {
             "daily_pncp",
             "daily_pncp_updates",
+            "pilot_pncp_terms",
             "monthly_transparency",
             "monthly_federal_revenue",
             "hourly_pod_usage",
@@ -118,6 +119,17 @@ class TestLoadSpec:
         assert tse.sources[0].params == {"year": 2024}
         assert [d.name for d in tse.destinations] == ["lake_bronze", "lake_silver"]
         assert tse.post_steps == []  # dbt/detect live in the gold_detection DAG
+        terms = specs["pilot_pncp_terms"]
+        assert terms.schedule is None  # one-off probe, manually triggered
+        assert terms.window == "all"  # cohort-driven; the window is ignored
+        assert terms.formula == "terms_collect"
+        assert [s.name for s in terms.sources] == ["pncp_contract_terms"]
+        assert terms.sources[0].params == {
+            "include_flagged": True,
+            "siafi_codes": ["2531"],
+        }
+        assert [d.name for d in terms.destinations] == ["lake_bronze", "gold_report"]
+        assert terms.post_steps == []
 
     def test_string_shorthand(self, tmp_path: Path) -> None:
         """Plain strings are accepted as shorthand for name-only entries."""
@@ -423,6 +435,43 @@ destinations: [lake_silver]
         )
 
         with pytest.raises(SpecError, match="has no registered entity normalizer"):
+            load_spec(path)
+
+    def test_terms_collect_valid(self, tmp_path: Path) -> None:
+        """The real pncp_contract_terms source validates against terms_collect."""
+        path = _write(
+            tmp_path,
+            """\
+name: terms_ok
+window: all
+sources:
+  - name: pncp_contract_terms
+    params:
+      siafi_codes: ["2531"]
+formula: terms_collect
+destinations: [lake_bronze]
+""",
+        )
+
+        spec = load_spec(path)
+
+        assert spec.formula == "terms_collect"
+        assert spec.sources[0].params == {"siafi_codes": ["2531"]}
+
+    def test_terms_formula_requires_record_source(self, tmp_path: Path) -> None:
+        """terms_collect with a dump-only source fails."""
+        path = _write(
+            tmp_path,
+            """\
+name: bad_terms
+window: all
+sources: [federal_revenue]
+formula: terms_collect
+destinations: [lake_bronze]
+""",
+        )
+
+        with pytest.raises(SpecError, match="has no record fetcher"):
             load_spec(path)
 
     def test_name_pattern(self, tmp_path: Path) -> None:

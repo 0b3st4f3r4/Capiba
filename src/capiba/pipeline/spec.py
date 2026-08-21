@@ -166,6 +166,11 @@ def _cross_validate(spec: PipelineSpec, origin: str) -> None:
                 f"source '{source.name}' has no record fetcher;"
                 " formula 'documents_collect' requires one"
             )
+        elif spec.formula == "terms_collect" and source_def.fetch is None:
+            errors.append(
+                f"source '{source.name}' has no record fetcher;"
+                " formula 'terms_collect' requires one"
+            )
         elif spec.formula == "entities_collect":
             if source_def.fetch is None:
                 errors.append(

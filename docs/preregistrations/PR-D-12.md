@@ -3,7 +3,9 @@
 - **Pré-registro**: bateria D-12
 - **Criado em**: 2026-08-21
 - **Última atualização**: 2026-08-21
-- **Status**: rascunho para revisão humana, não aprovado, não executado
+- **Status**: executada em 2026-08-21 — **refutada** (P3 ∧ P4 falharam no
+  benchmark; refutação limpa declarada em § 7). Resultados em
+  `docs/results/R-D-12.md`; piloto arquivado sem sinal novo.
 - **Alvo**: sinal `pep_supplier_match` (novo `SignalType`, hipótese
   computada — **nunca** factual) — match entre **fornecedores pessoa
   física** dos contratos silver e a coleção **PEPs** da OpenSanctions
@@ -101,9 +103,9 @@ piloto?
   pin). A API hospedada (pay-as-you-go, 30 dias de trial — fonte 1) é a
   alternativa registrada; a escolha final é decisão humana na aprovação
   (§ 8), não durante a bateria.
-- Versão do yente pinada na config (`5.5.0` no rascunho — a pinar na
-  execução por emenda datada se mudar); threshold, algoritmo e dataset
-  vivem na config (`D-12.json`), nunca só em código.
+- Versão do yente pinada na config: **`5.5.0`** (última estável no PyPI,
+  conferida em 2026-08-21 — emenda datada em Revisões); threshold,
+  algoritmo e dataset vivem na config (`D-12.json`), nunca só em código.
 
 ## 4. Desenho
 
@@ -272,6 +274,26 @@ alternativa: trial da API hospedada, vedada ao envio de CPF):
 
 ## Revisões
 
+- 2026-08-21 (execução): bateria executada no setup self-hosted pinado
+  (venv isolado `.venv-yente`, OpenSearch 2.19.1 efêmero). P1 (100,00%
+  sem documento), P2 (exata nas 5 seeds) e P5 (zero divergências, serviço
+  e sintético) satisfeitas; **P3 (precisão 0,8272 < 0,85) e P4 (revocação
+  0,517 < 0,55) refutadas** — controle pareado do matcher local na mesma
+  amostra seed 61: 0,9297/0,291. Pela refutação limpa de § 7, o piloto é
+  arquivado sem sinal novo; P6 não executada por desenho; P7 não se
+  aplica. Publicação: `docs/results/R-D-12.md`.
+- 2026-08-21 (pins, pré-score): aprovação humana registrada, com a
+  decisão de backend **yente self-hosted + bulk CC BY-NC**. Pins fixados
+  antes de qualquer score: **yente `5.5.0`** (última versão estável no
+  PyPI, conferida em `https://pypi.org/pypi/yente/json` em 2026-08-21 —
+  coincide com o valor do rascunho) e **snapshot do `br_pep`
+  `20260818021948-guq`** (processado em 2026-08-18; URL versionada
+  `https://data.opensanctions.org/artifacts/br_pep/20260818021948-guq/entities.ftm.json`,
+  sha1 `4e5ae21c2ea35f5cb5952848ff9ed40df3d1237e`, 111.193.934 bytes,
+  `target_count` 106.465 — conferidos no `index.json` do artifact em
+  2026-08-21; coincide com a referência observada no rascunho).
+  `experiments/detect/D-12.json` atualizado na mesma emenda
+  (`yente.version_pin`, `yente.dataset_snapshot`, checksum e tamanho).
 - 2026-08-21: criação (rascunho para revisão humana). Origem: estudo de
   gaps que declarou PEPs fora de escopo (correto para o foco
   brasileiro), com a observação de que o yente fala o mesmo modelo FtM

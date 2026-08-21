@@ -9,6 +9,7 @@ scheduler can retry failures independently:
 - ``normalize`` and ``validate`` for ``contracts_default`` formulas
 - ``normalize_<source>`` for ``file_dump``/``entities_collect`` formulas
 - ``download_<source>_texts`` and ``validate`` for ``documents_collect``
+- ``persist_<source>_terms`` for ``terms_collect``
 - one ``destination_<name>`` task per destination
 - ``dbt_run`` / ``detect`` for declared post steps
 
@@ -49,6 +50,7 @@ from capiba.pipeline.tasks import (
     task_post_step,
     task_validate_pipeline,
 )
+from capiba.pipeline.term_tasks import task_persist_contract_terms
 
 # Register the custom ``capiba://`` OpenLineage scheme so that all Capiba
 # datasets are emitted under the single namespace ``capiba`` in Marquez.
@@ -90,6 +92,8 @@ SOURCE_INLETS = {
     "querido_diario": Asset(uri="capiba://source/querido_diario"),
     # TSE campaign finance dump (prestação de contas eleitorais).
     "tse": Asset(uri="capiba://source/tse"),
+    # PNCP contract terms endpoint (transactional pncp API group, PR-D-05b).
+    "pncp_contract_terms": Asset(uri="capiba://source/pncp_contract_terms"),
 }
 
 SILVER_CONTRACTS = Asset(uri="capiba://silver/contracts")
@@ -154,6 +158,9 @@ def _outlets(spec: PipelineSpec) -> list[Asset]:
             outlets.append(Asset(uri=f"capiba://bronze/raw_{source.name}"))
             if source.name == "federal_revenue":
                 outlets.append(Asset(uri="capiba://bronze/federal_revenue/files"))
+            if source.name == "pncp_contract_terms":
+                # Per-contract terms checkpoints (PR-D-05b).
+                outlets.append(Asset(uri="capiba://bronze/pncp_contract_terms/files"))
     if "lake_silver" in destination_names:
         if spec.formula == "file_dump":
             for source in spec.sources:
@@ -362,6 +369,25 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                 for download_task in new_tail:
                     download_task >> validate
                 intermediate_tail = [validate]
+
+        if spec.formula == "terms_collect":
+            # Fetch and persist the registered terms of each cohort
+            # contract — one granular task per source (per-contract
+            # checkpoints in the bronze layer; skip-existing on retry).
+            new_tail = []
+            for src_task, source in zip(source_tasks, spec.sources, strict=True):
+                persist = PythonOperator(
+                    task_id=f"persist_{source.name}_terms",
+                    python_callable=partial(
+                        task_persist_contract_terms,
+                        source_name=source.name,
+                        spec_path=str(spec_path),
+                    ),
+                    outlets=shared_outlets,
+                )
+                src_task >> persist
+                new_tail.append(persist)
+            intermediate_tail = new_tail
 
         # --- Destinations ----------------------------------------------------
         destination_tasks: list[PythonOperator] = []

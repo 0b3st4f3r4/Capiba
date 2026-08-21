@@ -407,6 +407,145 @@ class TestMetricsCollectFormula:
         assert report.steps[0].rows_out == 0
 
 
+class TestTermsCollectFormula:
+    """Tests of the terms_collect formula (PR-D-05b pilot probe)."""
+
+    def _spec(self) -> PipelineSpec:
+        return PipelineSpec.model_validate(
+            {
+                "name": "test_terms",
+                "window": "all",
+                "sources": [
+                    {
+                        "name": "pncp_contract_terms",
+                        "params": {"include_flagged": True, "siafi_codes": ["2531"]},
+                    }
+                ],
+                "formula": "terms_collect",
+                "destinations": ["lake_bronze"],
+            }
+        )
+
+    def test_cohort_crawl_then_terms_persist(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The cohort flows to the persist step; the bronze keeps the cohort."""
+        from capiba.pipeline import runner
+
+        cohort = [
+            {
+                "numeroControlePNCP": "00394460000141-1-000012/2026",
+                "cohort": "flagged+pilot",
+            }
+        ]
+        captured: dict[str, Any] = {}
+
+        def fake_fetch(*_args: Any, **params: Any) -> list[dict[str, Any]]:
+            captured["params"] = params
+            return [dict(record) for record in cohort]
+
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "pncp_contract_terms", SourceDef(fetch=fake_fetch)
+        )
+        persist = MagicMock(
+            return_value={
+                "source": "pncp_contract_terms",
+                "terms_fetched": 1,
+                "terms_skipped": 0,
+                "errors": 0,
+            }
+        )
+        monkeypatch.setattr(runner, "persist_contract_terms", persist)
+
+        report = run_pipeline(self._spec(), RUN_DATE)
+
+        assert report.success is True
+        assert [s.name for s in report.steps] == [
+            "crawl_pncp_contract_terms",
+            "persist_pncp_contract_terms_terms",
+            "destination_lake_bronze",
+        ]
+        # The window is ignored; the spec params reach the cohort fetcher.
+        assert captured["params"] == {
+            "include_flagged": True,
+            "siafi_codes": ["2531"],
+        }
+        persist.assert_called_once_with(
+            "pncp_contract_terms", cohort, run_date=RUN_DATE
+        )
+        assert report.steps[1].rows_out == 1
+        assert report.outputs["pncp_contract_terms_terms"]["terms_fetched"] == 1
+
+        catalog = lake.get_catalog("bronze")
+        table = catalog.load_table("capiba.raw_pncp_contract_terms")
+        rows = table.scan().to_pandas().to_dict("records")
+        assert len(rows) == 1
+        payload = json.loads(rows[0]["payload_json"])
+        assert payload[0]["numeroControlePNCP"] == cohort[0]["numeroControlePNCP"]
+
+    def test_persist_errors_are_step_metrics_not_run_failure(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Per-contract fetch failures are counted; the run still succeeds."""
+        from capiba.pipeline import runner
+
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            "pncp_contract_terms",
+            SourceDef(
+                fetch=lambda *_a, **_k: [
+                    {"numeroControlePNCP": "00394460000141-1-000012/2026"}
+                ]
+            ),
+        )
+        monkeypatch.setattr(
+            runner,
+            "persist_contract_terms",
+            MagicMock(
+                return_value={
+                    "source": "pncp_contract_terms",
+                    "terms_fetched": 0,
+                    "terms_skipped": 0,
+                    "errors": 1,
+                }
+            ),
+        )
+
+        report = run_pipeline(self._spec(), RUN_DATE)
+
+        assert report.success is True
+        assert report.steps[1].errors == 1
+
+    def test_source_failure_fails_run(
+        self,
+        mock_client: MagicMock,
+        local_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cohort enumeration failure fails the run with the crawl step."""
+
+        def broken_fetch(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("trino down")
+
+        monkeypatch.setitem(
+            SOURCE_REGISTRY, "pncp_contract_terms", SourceDef(fetch=broken_fetch)
+        )
+
+        with pytest.raises(PipelineRunError) as exc_info:
+            run_pipeline(self._spec(), RUN_DATE)
+
+        report = exc_info.value.report
+        assert report.success is False
+        assert [s.name for s in report.steps] == ["crawl_pncp_contract_terms"]
+        assert report.steps[0].error == "trino down"
+
+
 class TestTaskRunPipeline:
     """Tests for the Airflow wrapper task_run_pipeline."""
 

@@ -16,6 +16,7 @@ under ``results/detect/<id>/``.
 from __future__ import annotations
 
 import json
+import math
 import random
 from datetime import date, timedelta
 from pathlib import Path
@@ -160,7 +161,17 @@ def evaluate(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str,
         for case_id, expected in expected_by_case.items():
             got = by_case[case_id]
             for key, want in expected.items():
-                if got[key] != want:
+                # value_ratio carries float noise from the cent-rounded
+                # generator; the deviation is bounded by
+                # 0,005/estimated_min = 0,005/1000 = 5e-6, so the
+                # declared anchor tolerance is 1e-5 (PR-D-05, Revisões
+                # 2026-08-21).
+                if key == "value_ratio" and isinstance(want, float):
+                    if not math.isclose(got[key], want, rel_tol=0.0, abs_tol=1e-5):
+                        p1_failures.append(
+                            f"seed {seed} {case_id}: {key} {got[key]} != {want}"
+                        )
+                elif got[key] != want:
                     p1_failures.append(
                         f"seed {seed} {case_id}: {key} {got[key]} != {want}"
                     )

@@ -1,0 +1,27 @@
+# Pilot crawl of the PNCP contract terms endpoint (PR-D-05b — plan B after
+# the valorAcumulado proxy coverage was refuted at 23.54%, R-D-05 § 4).
+# Bronze-only like daily_pncp_updates: one request per contract of the
+# pilot cut (GET /v1/orgaos/{cnpj}/contratos/{ano}/{sequencial}/termos,
+# transactional pncp API group), each payload checkpointed under
+# pncp_contract_terms/<cnpj>/<ano>/<seq>.json.gz — a retry resumes where it
+# stopped and never duplicates. The proxy semantics stays the vigente
+# reference of contract_amendments until the Q4 verdict (PR-D-05b § 6).
+name: pilot_pncp_terms
+description: PNCP contract terms pilot crawl (PR-D-05b probe, bronze-only)
+# Manual trigger: one-off probe over the declared pilot cut (~10^3
+# requests), not a recurring ingestion.
+window: all # cohort-driven; the window is ignored by the source
+sources:
+  - name: pncp_contract_terms
+    params:
+      # Cohort (a): contracts flagged by the proxy (f_value_amendment = 1
+      # in the gold contract_amendments mart) — the Q4 control cohort.
+      include_flagged: true
+      # Cohort (b): pilot municipality Recife (SIAFI 2531), the same
+      # editorial cut of PR-D-08.
+      siafi_codes: ["2531"]
+formula: terms_collect
+destinations:
+  - lake_bronze # raw audit copy + per-contract terms checkpoints
+  - gold_report # persistent record of the probe run (feeds R-D-05b)
+post_steps: []

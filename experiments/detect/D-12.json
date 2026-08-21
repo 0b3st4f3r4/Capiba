@@ -12,14 +12,18 @@
   },
   "yente": {
     "version": "5.5.0",
-    "version_pin": "confirm_at_execution_by_dated_amendment",
+    "version_pin": "confirmed_2026-08-21_pypi_latest_stable",
     "algorithm": "logic-v2",
     "algorithm_excluded": {
       "regression_v1": "treinado pelo fornecedor — adjacência com o benchmark OS Pairs"
     },
     "threshold": 0.7,
     "dataset": "br_pep",
-    "dataset_snapshot": "pin_before_any_scoring_by_dated_amendment",
+    "dataset_snapshot": "20260818021948-guq",
+    "dataset_snapshot_checksum_sha1": "4e5ae21c2ea35f5cb5952848ff9ed40df3d1237e",
+    "dataset_snapshot_size_bytes": 111193934,
+    "dataset_snapshot_pinned_at": "2026-08-21",
+    "dataset_snapshot_url": "https://data.opensanctions.org/artifacts/br_pep/20260818021948-guq/entities.ftm.json",
     "dataset_snapshot_reference": "20260818021948-guq (processado em 2026-08-18, observado em 2026-08-21)",
     "dataset_license": "CC BY-NC 4.0",
     "bulk_url": "https://data.opensanctions.org/datasets/latest/br_pep/entities.ftm.json"

@@ -1,0 +1,14 @@
+{
+  "battery": "D-05b",
+  "predictions": {
+    "Q1": {
+      "verdict": "success",
+      "failures": []
+    },
+    "Q2": {
+      "verdict": "success",
+      "failures": []
+    }
+  },
+  "verdict": "success"
+}

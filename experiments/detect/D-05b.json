@@ -1,0 +1,94 @@
+{
+  "id": "D-05b",
+  "description": "Red flags de aditivos via termos registrados do contrato (plano B do PR-D-05, apos a cobertura do proxy valorAcumulado ser refutada em 23,54% — R-D-05 secao 4): semantica exata sobre listas plantadas de termos (B1-B6), incluindo disciplina de nulos e o nao-disparo do reajuste puro. Q3-Q5 sao sonda real sobre o recorte-piloto (fora deste runner). Ver docs/preregistrations/PR-D-05b.md.",
+  "runner": "terms",
+  "seeds": [13, 23, 33, 43, 53],
+  "cases": [
+    {
+      "id": "B1",
+      "description": "Sem termos (HTTP 204) -> (0, 0)",
+      "terms": [],
+      "expected": {
+        "f_value_amendment_terms": 0,
+        "f_term_extension_terms": 0,
+        "terms_count": 0,
+        "total_value_increase": 0.0,
+        "total_days_extended": 0,
+        "term_types": []
+      }
+    },
+    {
+      "id": "B2",
+      "description": "Termo aditivo de acrescimo de R$ 6.840,88 -> (1, 0)",
+      "terms": [
+        {"kind": "value_increase", "valorAcrescido": 6840.88}
+      ],
+      "expected": {
+        "f_value_amendment_terms": 1,
+        "f_term_extension_terms": 0,
+        "terms_count": 1,
+        "total_value_increase": 6840.88,
+        "total_days_extended": 0,
+        "term_types": ["Termo Aditivo"]
+      }
+    },
+    {
+      "id": "B3",
+      "description": "Termo aditivo de vigencia de 180 dias -> (0, 1)",
+      "terms": [
+        {"kind": "term_extension", "prazoAditadoDias": 180}
+      ],
+      "expected": {
+        "f_value_amendment_terms": 0,
+        "f_term_extension_terms": 1,
+        "terms_count": 1,
+        "total_value_increase": 0.0,
+        "total_days_extended": 180,
+        "term_types": ["Termo Aditivo"]
+      }
+    },
+    {
+      "id": "B4",
+      "description": "Reajuste puro (qualificacaoReajuste, sem acrescimo/vigencia) -> (0, 0): reajuste por indice e atualizacao legal de preco, nao aditivo",
+      "terms": [
+        {"kind": "pure_reajuste"}
+      ],
+      "expected": {
+        "f_value_amendment_terms": 0,
+        "f_term_extension_terms": 0,
+        "terms_count": 1,
+        "total_value_increase": 0.0,
+        "total_days_extended": 0,
+        "term_types": ["Termo Aditivo"]
+      }
+    },
+    {
+      "id": "B5",
+      "description": "Termo de supressao (valorAcrescido negativo) -> valor nao dispara: (0, 0)",
+      "terms": [
+        {"kind": "suppression", "valorAcrescido": -1500.0}
+      ],
+      "expected": {
+        "f_value_amendment_terms": 0,
+        "f_term_extension_terms": 0,
+        "terms_count": 1,
+        "total_value_increase": -1500.0,
+        "total_days_extended": 0,
+        "term_types": ["Termo Aditivo"]
+      }
+    },
+    {
+      "id": "B6",
+      "description": "Falha de consulta -> (NULL, NULL), descritores NULL (dado insuficiente, nunca flag limpa)",
+      "query_failed": true,
+      "expected": {
+        "f_value_amendment_terms": null,
+        "f_term_extension_terms": null,
+        "terms_count": null,
+        "total_value_increase": null,
+        "total_days_extended": null,
+        "term_types": null
+      }
+    }
+  ]
+}

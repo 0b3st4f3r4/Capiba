@@ -1049,6 +1049,92 @@ def read_establishments_for_cnpjs(cnpjs: Collection[str]) -> list[dict[str, Any]
     return rows
 
 
+def read_terms_pilot_cohort(
+    include_flagged: bool = True,
+    siafi_codes: Collection[str] = (),
+) -> list[dict[str, Any]]:
+    """Enumerates the PR-D-05b pilot cohort of contracts for the terms crawl.
+
+    The pilot cut (declared, not the 205k universe — one terms-endpoint
+    request per contract has a rate-limit cost): (a) every contract with
+    ``f_value_amendment = 1`` by the proxy in the gold
+    ``contract_amendments`` mart (the Q4 control cohort) and (b) the
+    contracts of the pilot municipality (Recife, SIAFI 2531 — the same
+    editorial cut of PR-D-08). Each record carries the control number and
+    the cohorts it belongs to (``flagged``, ``pilot`` or both).
+
+    Reads go through Trino (cluster-only: the cohort depends on the gold
+    mart). A missing ``contract_amendments`` table (never built) degrades
+    to the pilot-municipality cohort with a warning, like the TSE
+    dependent-marts guard; offline (SQLite catalog) the cohort is empty.
+    Deterministic: records are deduplicated and sorted by control number.
+
+    Args:
+        include_flagged: Include cohort (a) — proxy-flagged contracts.
+        siafi_codes: SIAFI codes of cohort (b) — pilot municipalities
+            (digits-only values; others are ignored).
+
+    Returns:
+        One record per contract: ``numeroControlePNCP`` and ``cohort``.
+
+    Raises:
+        ValueError: If neither cohort is selected (empty cut is a
+            configuration error, not a successful empty crawl).
+    """
+    codes = {re.sub(r"\D", "", str(code or "")) for code in siafi_codes}
+    codes = {code for code in codes if code}
+    if not include_flagged and not codes:
+        raise ValueError(
+            "The pncp_contract_terms cohort is empty: set include_flagged "
+            "and/or siafi_codes"
+        )
+    if ICEBERG_CATALOG_URI.startswith("sqlite"):
+        logger.warning(
+            "Offline catalog: the terms pilot cohort requires the Trino marts; "
+            "returning an empty cohort"
+        )
+        return []
+
+    cohorts: dict[str, set[str]] = {}
+    if include_flagged:
+        try:
+            rows = trino.run_query(
+                "SELECT contract_id"
+                f" FROM {GOLD_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contract_amendments"
+                " WHERE f_value_amendment = 1"  # nosec: B608
+            )
+        except RuntimeError as exc:
+            if "TABLE_NOT_FOUND" not in str(exc):
+                raise
+            logger.warning(
+                "Gold contract_amendments mart not found; flagged cohort empty: %s",
+                exc,
+            )
+            rows = []
+        for row in rows:
+            contract_id = str(row.get("contract_id") or "")
+            if contract_id:
+                cohorts.setdefault(contract_id, set()).add("flagged")
+    if codes:
+        # SIAFI codes are digits-only after the normalization above, so the
+        # literals cannot break out of the IN clause.
+        literal = ", ".join(f"'{code}'" for code in sorted(codes))
+        rows = trino.run_query(
+            "SELECT id"
+            f" FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contracts"
+            f" WHERE buyer.siafi_code IN ({literal})"  # nosec: B608
+        )
+        for row in rows:
+            contract_id = str(row.get("id") or "")
+            if contract_id:
+                cohorts.setdefault(contract_id, set()).add("pilot")
+
+    return [
+        {"numeroControlePNCP": contract_id, "cohort": "+".join(sorted(tags))}
+        for contract_id, tags in sorted(cohorts.items())
+    ]
+
+
 def load_municipalities(run_date: date | None = None) -> str:
     """Loads the vendored municipality reference into the silver, idempotently.
 

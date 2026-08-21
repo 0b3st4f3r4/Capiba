@@ -565,6 +565,87 @@ class TestDocumentsCollectFactory:
         validate = dag.get_task("validate").python_callable
         assert validate.func is task_validate_documents
 
+TERMS_SPEC = """\
+name: factory_terms
+window: all
+sources:
+  - name: pncp_contract_terms
+    params:
+      include_flagged: true
+      siafi_codes: ["2531"]
+formula: terms_collect
+destinations:
+  - lake_bronze
+  - gold_report
+"""
+
+
+class TestTermsCollectFactory:
+    """Tests for the terms_collect formula in the DAG factory (PR-D-05b)."""
+
+    def test_generates_granular_tasks(self, factory, tmp_path: Path) -> None:
+        """A terms_collect spec gets crawl + persist tasks per source."""
+        (tmp_path / "terms.yaml").write_text(TERMS_SPEC, encoding="utf-8")
+
+        dags = factory.build_dags(tmp_path)
+        dag = dags["factory_terms"]
+
+        # The single-task simplification must never return.
+        assert "run" not in {t.task_id for t in dag.tasks}
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_pncp_contract_terms",
+            "persist_pncp_contract_terms_terms",
+            "destination_lake_bronze",
+            "destination_gold_report",
+        }
+
+        # Dependencies: crawl -> persist_terms -> destinations -> gold_report
+        assert dag.get_task("crawl_pncp_contract_terms").downstream_task_ids == {
+            "persist_pncp_contract_terms_terms"
+        }
+        assert dag.get_task(
+            "persist_pncp_contract_terms_terms"
+        ).downstream_task_ids == {"destination_lake_bronze"}
+        assert dag.get_task("destination_lake_bronze").downstream_task_ids == {
+            "destination_gold_report"
+        }
+
+        # Lineage assets: source inlet + bronze raw/checkpoints/gold outlets
+        crawl = dag.get_task("crawl_pncp_contract_terms")
+        assert {a.uri for a in crawl.inlets} == {
+            "capiba://source/pncp_contract_terms"
+        }
+        outlet_uris = {a.uri for a in crawl.outlets}
+        assert "capiba://bronze/raw_pncp_contract_terms" in outlet_uris
+        assert "capiba://bronze/pncp_contract_terms/files" in outlet_uris
+        assert "capiba://silver/contracts" not in outlet_uris
+        assert "capiba://gold/reports/factory_terms" in outlet_uris
+
+    def test_persist_uses_the_contract_terms_task(
+        self, factory, tmp_path: Path
+    ) -> None:
+        """terms_collect persists run the per-contract checkpoint task."""
+        from capiba.pipeline.term_tasks import task_persist_contract_terms
+
+        (tmp_path / "terms.yaml").write_text(TERMS_SPEC, encoding="utf-8")
+
+        dag = factory.build_dags(tmp_path)["factory_terms"]
+
+        persist = dag.get_task("persist_pncp_contract_terms_terms").python_callable
+        assert persist.func is task_persist_contract_terms
+
+    def test_real_pilot_pncp_terms_dag(self, factory) -> None:
+        """The shipped pilot_pncp_terms spec produces a granular DAG."""
+        dag = factory.pilot_pncp_terms
+
+        assert dag.schedule is None  # one-off probe, manually triggered
+        assert {t.task_id for t in dag.tasks} == {
+            "crawl_pncp_contract_terms",
+            "persist_pncp_contract_terms_terms",
+            "destination_lake_bronze",
+            "destination_gold_report",
+        }
+
     def test_real_daily_querido_diario_dag(self, factory) -> None:
         """The shipped daily_querido_diario spec produces a granular DAG."""
         dag = factory.daily_querido_diario

@@ -92,6 +92,26 @@ def _fetch_pncp_contract_updates(
     return pncp_fetch_updates(start_date=start, end_date=end, **params)
 
 
+def _fetch_pncp_contract_terms(
+    start: date | None, end: date | None, **params: Any
+) -> list[dict[str, Any]]:
+    """Enumerates the PR-D-05b pilot cohort for the per-contract terms crawl.
+
+    The window is ignored: the cohort is declared by the spec params
+    (``include_flagged``/``siafi_codes``) and enumerated from the
+    gold/silver marts via Trino. The terms themselves are fetched one
+    request per contract by the ``persist_<source>_terms`` step
+    (``capiba.pipeline.tasks.persist_contract_terms``), checkpointed per
+    contract in the bronze layer.
+
+    The lake import is lazy so this module stays free of lake
+    dependencies at import time.
+    """
+    from capiba.pipeline import lake
+
+    return lake.read_terms_pilot_cohort(**params)
+
+
 def _fetch_transparency(
     start: date | None, end: date | None, **params: Any
 ) -> list[dict[str, Any]]:
@@ -157,6 +177,7 @@ def _fetch_querido_diario(
 SOURCE_REGISTRY: dict[str, SourceDef] = {
     "pncp": SourceDef(fetch=_fetch_pncp),
     "pncp_contract_updates": SourceDef(fetch=_fetch_pncp_contract_updates),
+    "pncp_contract_terms": SourceDef(fetch=_fetch_pncp_contract_terms),
     "transparency": SourceDef(fetch=_fetch_transparency),
     "federal_revenue": SourceDef(download=download_cnpj_dump),
     "tse": SourceDef(download=download_tse_dump),

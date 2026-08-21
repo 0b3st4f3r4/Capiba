@@ -205,3 +205,24 @@ operacional do `compute_cri` supervisionado.
   havia adiado explicitamente o `compute_cri` supervisionado para um PR
   futuro após o gap — este é esse PR. Relatório de volume e descritivas
   do dataset a documentar aqui antes da execução oficial.
+- 2026-08-21: **relatório de volume do gate P1 (exploratório declarado,
+  § 4)** — medição somente-leitura (AQL) sobre a coleção
+  `signal_reviews` do cluster local, antes de qualquer execução das
+  predições P2–P7. Resultado: 816.405 documentos na coleção, **todos
+  em `pending_review`** — `confirmed` 0, `rejected` 0, `published` 0;
+  nenhum documento com `reviewed_by` registrado (zero revisões por
+  operador, relatório de precisão vazio). Fila pendente por
+  `signal_type`: `collusion_network` 809.220, `anomalous_price` 7.153,
+  `concentration` 32 (primeiro registro em 2026-08-19, janela de dois
+  dias de produção de sinais). Entidades elegíveis ao dataset (§ 3):
+  **N = 0** — positivos 0, negativos 0, pois toda entidade tem revisões
+  pendentes e nenhuma revisão concluída; revisões (`confirmed` +
+  `rejected`) por `signal_type`: 0 em todos os três tipos, abaixo da
+  meta de 30. **Veredito: gate P1 refutado** — déficit integral de 300
+  entidades rotuladas (100 por classe) e de 30 revisões por
+  `signal_type`. Conforme § 4, a bateria **não executa**: este
+  relatório de volume é o resultado publicável da rodada. Sem taxa
+  histórica de revisão editorial, não há base para estimar data de
+  reavaliação; o gate será reavaliado quando a triagem acumular
+  revisões concluídas (acompanhar pelo relatório de precisão por
+  operador, `/v1/triage/metrics`).

@@ -9,12 +9,17 @@ follow the adapted semantics of PR-D-02, section 3. (The legacy
 
 from __future__ import annotations
 
+import random
 from unittest.mock import MagicMock
 
 from capiba.detection.graphs import (
+    _blocked_buyers_by_pair,
+    blocked_projection,
+    blocked_supplier_index,
     collusion_eligibility,
     detect_collusion,
     pair_buyers_from_eligibility,
+    pair_buyers_from_eligibility_blocked,
     pairs_from_eligibility,
     partners_of_buyer,
     projected_pair_count,
@@ -331,3 +336,113 @@ class TestPartnersOfBuyer:
         assert "INBOUND" in query
         assert "ownership, directorship" in query
         assert 'CONCAT("companies/", LEFT(supplierCnpj, 8))' in query
+
+
+class TestBlockedSupplierIndex:
+    """Tests for blocked_supplier_index (PR-D-03c blocking predicate)."""
+
+    ROWS = TestPairBuyersFromEligibility.ROWS
+
+    def test_predicate_counts_distinct_buyers(self) -> None:
+        """S1/S2 co-occur in 2 buyers; S3/S4/S5 in a single one."""
+        assert blocked_supplier_index(self.ROWS, 2) == {"S1", "S2"}
+
+    def test_min_buyers_one_admits_every_supplier(self) -> None:
+        """The predicate is the identity at min_buyers=1 (control)."""
+        assert blocked_supplier_index(self.ROWS, 1) == {"S1", "S2", "S3", "S4", "S5"}
+
+    def test_empty_rows_yield_empty_index(self) -> None:
+        assert blocked_supplier_index([], 2) == set()
+
+
+class TestBlockedProjection:
+    """Tests for blocked_projection (arithmetic, no materialization)."""
+
+    ROWS = TestPairBuyersFromEligibility.ROWS
+
+    def test_projection_sums_blocked_combinations(self) -> None:
+        """Only S1/S2 survive the n=2 predicate: one pair per buyer."""
+        assert blocked_projection(self.ROWS, 2) == 2
+
+    def test_min_buyers_one_equals_unblocked_projection(self) -> None:
+        """Degenerate control: n=1 reproduces projected_pair_count."""
+        assert blocked_projection(self.ROWS, 1) == projected_pair_count(self.ROWS)
+
+    def test_projection_matches_materialized_incidences(self) -> None:
+        """The arithmetic projection equals the materialized incidence count."""
+        for min_buyers in (1, 2, 3):
+            incidences = sum(
+                len(buyers)
+                for buyers in _blocked_buyers_by_pair(self.ROWS, min_buyers).values()
+            )
+            assert blocked_projection(self.ROWS, min_buyers) == incidences
+
+    def test_empty_rows_yield_zero(self) -> None:
+        assert blocked_projection([], 2) == 0
+
+
+class TestBlockedDerivationEquivalence:
+    """Bit-a-bit equivalence guard: blocked == unblocked derivation.
+
+    Permanent guard of PR-D-03c, section 7, in the fast suite over small
+    synthetic populations — the same pattern as
+    ``TestIndexedImplementationEquivalence`` of the fuzzy screening
+    prefilter. The unblocked derivation is the reference implementation.
+    """
+
+    def _random_rows(self, seed: int) -> list[dict[str, object]]:
+        """Builds a random eligibility snapshot (structure only varies)."""
+        rng = random.Random(seed)  # deterministic test data, not cryptographic
+        rows: list[dict[str, object]] = []
+        for buyer in range(rng.randint(1, 6)):
+            for supplier in range(rng.randint(0, 10)):
+                if rng.random() < 0.5:
+                    rows.append(
+                        {
+                            "buyer": f"B{buyer}",
+                            "supplier": f"S{supplier}",
+                            "wins": rng.randint(1, 5),
+                        }
+                    )
+        return rows
+
+    def test_blocked_matches_unblocked_across_populations(self) -> None:
+        """Same ordered (pair, buyers) output on 50 random snapshots."""
+        for seed in range(50):
+            rows = self._random_rows(seed)
+            for min_buyers in (1, 2, 3, 4):
+                assert pair_buyers_from_eligibility_blocked(rows, min_buyers) == (
+                    pair_buyers_from_eligibility(rows, min_buyers)
+                ), (seed, min_buyers)
+
+    def test_min_buyers_one_is_the_identity(self) -> None:
+        """Degenerate control: n=1 blocked output == unblocked output."""
+        for seed in range(10):
+            rows = self._random_rows(seed)
+            assert pair_buyers_from_eligibility_blocked(rows, 1) == (
+                pair_buyers_from_eligibility(rows, 1)
+            )
+
+    def test_projection_never_exceeds_unblocked(self) -> None:
+        """Monotonicity: blocked <= unblocked, non-increasing in n."""
+        for seed in range(50):
+            rows = self._random_rows(seed)
+            projections = [blocked_projection(rows, n) for n in (1, 2, 3, 4)]
+            assert projections[0] == projected_pair_count(rows)
+            assert all(
+                hi <= lo for lo, hi in zip(projections, projections[1:], strict=False)
+            )
+
+    def test_projection_matches_incidences_across_populations(self) -> None:
+        """R3/R7 shape: arithmetic projection == materialized incidences."""
+        for seed in range(50):
+            rows = self._random_rows(seed)
+            for min_buyers in (1, 2, 3):
+                incidences = sum(
+                    len(buyers)
+                    for buyers in _blocked_buyers_by_pair(rows, min_buyers).values()
+                )
+                assert blocked_projection(rows, min_buyers) == incidences
+
+    def test_empty_rows_yield_no_pairs(self) -> None:
+        assert pair_buyers_from_eligibility_blocked([], min_buyers=2) == []

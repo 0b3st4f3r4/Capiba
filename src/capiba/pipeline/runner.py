@@ -49,6 +49,7 @@ from capiba.pipeline.registry import (
 )
 from capiba.pipeline.tasks import (
     persist_cnpj_entities,
+    persist_contract_terms,
     persist_contracts,
     persist_document_texts,
     validate_contracts,
@@ -580,6 +581,59 @@ def _formula_documents_collect(
     return result
 
 
+def _formula_terms_collect(
+    spec: PipelineSpec,
+    execution_date: date,
+    steps: list[StepMetrics],
+    window_override: DateRange | None = None,
+) -> FormulaResult:
+    """Formula: crawl (cohort enumeration) -> persist_<source>_terms -> destinations.
+
+    Terms sources (``pncp_contract_terms``, PR-D-05b) enumerate a declared
+    contract cohort from the lake marts (the window is ignored); each
+    contract's registered terms are then fetched one request per contract
+    and persisted to the bronze layer under the deterministic per-contract
+    checkpoint (contracts already checkpointed for the run date are
+    skipped, so a retried run resumes where it stopped). There is no
+    normalization or validation — the term flags
+    (``capiba.detection.amendments.compute_term_flags``) are computed
+    downstream from the bronze checkpoints.
+    """
+    result = FormulaResult()
+
+    for source in spec.sources:
+        fetch = SOURCE_REGISTRY[source.name].fetch
+        if fetch is None:  # guarded by spec validation
+            raise ValueError(f"Source '{source.name}' has no record fetcher")
+
+        def _crawl(
+            fetch: Callable[..., list[dict[str, Any]]] = fetch,
+            source_params: dict[str, Any] = source.params,
+        ) -> tuple[list[dict[str, Any]], int, int]:
+            records = fetch(None, None, **source_params)
+            return records, len(records), 0
+
+        result.raw[source.name] = _run_step(steps, f"crawl_{source.name}", _crawl)
+
+        def _persist_terms(
+            source_name: str = source.name,
+        ) -> tuple[dict[str, Any], int, int]:
+            summary = persist_contract_terms(
+                source_name, result.raw[source_name], run_date=execution_date
+            )
+            persisted = summary["terms_fetched"] + summary["terms_skipped"]
+            return summary, persisted, summary["errors"]
+
+        result.outputs[f"{source.name}_terms"] = _run_step(
+            steps,
+            f"persist_{source.name}_terms",
+            _persist_terms,
+            rows_in=len(result.raw[source.name]),
+        )
+
+    return result
+
+
 def _dest_lake_bronze(
     spec: PipelineSpec, execution_date: date, result: FormulaResult
 ) -> tuple[dict[str, Any], int | None, int]:
@@ -762,6 +816,7 @@ FORMULA_REGISTRY.update(
         "metrics_collect": _formula_metrics_collect,
         "entities_collect": _formula_entities_collect,
         "documents_collect": _formula_documents_collect,
+        "terms_collect": _formula_terms_collect,
     }
 )
 DESTINATION_REGISTRY.update(

@@ -26,9 +26,12 @@ from capiba.detection import (  # noqa: E402
     battery_flags,
     battery_geography,
     battery_graphs,
+    battery_notice_clone,
+    battery_pep_screening,
     battery_political,
     battery_screening,
     battery_screening_fuzzy,
+    battery_terms,
 )
 
 
@@ -73,6 +76,12 @@ def main() -> int:
             runner = battery_political
         elif runner_name == "geography":
             runner = battery_geography
+        elif runner_name == "notice_clone":
+            runner = battery_notice_clone
+        elif runner_name == "terms":
+            runner = battery_terms
+        elif runner_name == "pep_screening":
+            runner = battery_pep_screening
         elif config.get("requires_infra") == "arangodb":
             runner = battery_graphs
         else:

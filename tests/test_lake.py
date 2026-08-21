@@ -803,6 +803,119 @@ class TestReadEstablishmentsForCnpjs:
         assert result == [rows[0]]
 
 
+class TestReadTermsPilotCohort:
+    """Cohort enumeration of the terms pilot crawl (PR-D-05b § 4).
+
+    Cluster-only: the cohort reads the gold ``contract_amendments`` mart
+    (proxy-flagged control cohort) and the silver ``contracts`` table
+    (pilot municipality) through Trino — mocked here.
+    """
+
+    def _cluster(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        """Points the lake at a remote catalog and mocks the Trino client."""
+        monkeypatch.setattr(
+            lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog"
+        )
+        mock_query = MagicMock(return_value=[])
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+        return mock_query
+
+    def test_empty_selection_is_a_config_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Neither cohort selected fails loudly instead of crawling nothing."""
+        mock_query = self._cluster(monkeypatch)
+
+        with pytest.raises(ValueError, match="cohort is empty"):
+            lake.read_terms_pilot_cohort(include_flagged=False, siafi_codes=[])
+        mock_query.assert_not_called()
+
+    def test_offline_catalog_returns_empty_cohort(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Offline (SQLite catalog) there are no Trino marts to read."""
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        assert lake.read_terms_pilot_cohort() == []
+        mock_query.assert_not_called()
+
+    def test_cluster_path_queries_both_cohorts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The flagged and pilot cohorts merge, deduplicated and sorted."""
+        mock_query = self._cluster(monkeypatch)
+        mock_query.side_effect = [
+            [{"contract_id": "00394460000141-1-000012/2026"}],  # flagged
+            [
+                {"id": "00394460000141-1-000012/2026"},  # in both cohorts
+                {"id": "00394460000141-1-000003/2026"},
+            ],
+        ]
+
+        cohort = lake.read_terms_pilot_cohort(siafi_codes=["2.531"])
+
+        assert cohort == [
+            {
+                "numeroControlePNCP": "00394460000141-1-000003/2026",
+                "cohort": "pilot",
+            },
+            {
+                "numeroControlePNCP": "00394460000141-1-000012/2026",
+                "cohort": "flagged+pilot",
+            },
+        ]
+        flagged_sql, pilot_sql = (call.args[0] for call in mock_query.call_args_list)
+        assert "FROM gold.capiba.contract_amendments" in flagged_sql
+        assert "WHERE f_value_amendment = 1" in flagged_sql
+        assert "FROM silver.capiba.contracts" in pilot_sql
+        # SIAFI codes are digits-only literals in the IN clause.
+        assert "WHERE buyer.siafi_code IN ('2531')" in pilot_sql
+
+    def test_flagged_cohort_can_be_turned_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """include_flagged=False skips the gold mart query entirely."""
+        mock_query = self._cluster(monkeypatch)
+        mock_query.return_value = [{"id": "00394460000141-1-000003/2026"}]
+
+        cohort = lake.read_terms_pilot_cohort(
+            include_flagged=False, siafi_codes=["2531"]
+        )
+
+        assert cohort == [
+            {
+                "numeroControlePNCP": "00394460000141-1-000003/2026",
+                "cohort": "pilot",
+            }
+        ]
+        assert mock_query.call_count == 1
+
+    def test_missing_amendments_mart_degrades_to_the_pilot_cohort(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A never-built gold mart empties the flagged cohort, not the run."""
+        mock_query = self._cluster(monkeypatch)
+        mock_query.side_effect = [
+            RuntimeError("Trino query failed: TABLE_NOT_FOUND: nope"),
+            [{"id": "00394460000141-1-000003/2026"}],
+        ]
+
+        cohort = lake.read_terms_pilot_cohort(siafi_codes=["2531"])
+
+        assert [c["cohort"] for c in cohort] == ["pilot"]
+
+    def test_other_trino_errors_propagate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuine query failure (not a missing table) is loud."""
+        mock_query = self._cluster(monkeypatch)
+        mock_query.side_effect = RuntimeError("Trino query failed: SYNTAX_ERROR")
+
+        with pytest.raises(RuntimeError, match="SYNTAX_ERROR"):
+            lake.read_terms_pilot_cohort()
+
+
 _MUNICIPALITY_ROWS = [
     {
         "ibge_code": "2611606",

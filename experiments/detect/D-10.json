@@ -81,5 +81,10 @@
       "anotacao piloto dos ate 20 pares reais mais similares (banda de P8)"
     ],
     "documented_in": "docs/preregistrations/PR-D-10.md, secao Revisoes, antes da execucao oficial"
+  },
+  "bands": {
+    "p3_min_recall": 0.75,
+    "p4_max_fp_rate": 0.1,
+    "fixed_by": "exploratorio seed 13, 2026-08-21 (Revisoes do PR-D-10): revocacao N2 observada 0,875 no limiar 0,85 -> piso 0,75; taxa FP N3/N5 observada 0,0504 -> teto 0,10. Bandas de P6b/P8 pendentes (amostra real + anotacao editorial)"
   }
 }

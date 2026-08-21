@@ -75,6 +75,111 @@ def projected_pair_count(rows: list[dict[str, Any]]) -> int:
     return sum(n * (n - 1) // 2 for n in suppliers_by_buyer.values())
 
 
+def blocked_supplier_index(rows: list[dict[str, Any]], min_buyers: int) -> set[str]:
+    """Suppliers eligible in >= ``min_buyers`` distinct buyers: the set A.
+
+    Blocking predicate of PR-D-03c, section 3: a supplier ``s`` only
+    participates in the derivation at ``min_buyers`` when
+    ``|B(s)| >= min_buyers``, where ``B(s)`` is the set of buyers of its
+    eligibility rows. Exact recall by construction: a qualifying pair
+    co-occurs in >= ``min_buyers`` buyers, so both suppliers pass the
+    predicate — it never removes a true pair (proof in the PR).
+
+    Args:
+        rows: Eligibility rows from ``collusion_eligibility``.
+        min_buyers: Minimum number of distinct buyers per supplier.
+
+    Returns:
+        Set of supplier ids that pass the predicate.
+    """
+    buyers_by_supplier: dict[str, set[str]] = {}
+    for row in rows:
+        buyers_by_supplier.setdefault(row["supplier"], set()).add(row["buyer"])
+    return {
+        supplier
+        for supplier, buyers in buyers_by_supplier.items()
+        if len(buyers) >= min_buyers
+    }
+
+
+def blocked_projection(rows: list[dict[str, Any]], min_buyers: int) -> int:
+    """Blocked pair projection: sum over buyers of C(|S_b ∩ A|, 2).
+
+    Arithmetic counterpart of the blocked derivation (PR-D-03c, section
+    3), computable from the eligibility export without materializing
+    pairs — direct extension of ``projected_pair_count``. At
+    ``min_buyers = 1`` the predicate is the identity and the projection
+    equals ``projected_pair_count`` (degenerate control).
+
+    Args:
+        rows: Eligibility rows from ``collusion_eligibility``.
+        min_buyers: Minimum number of distinct buyers per supplier.
+
+    Returns:
+        Number of (pair, buyer) incidences the blocked derivation builds.
+    """
+    allowed = blocked_supplier_index(rows, min_buyers)
+    suppliers_by_buyer: dict[str, int] = {}
+    for row in rows:
+        if row["supplier"] in allowed:
+            buyer = row["buyer"]
+            suppliers_by_buyer[buyer] = suppliers_by_buyer.get(buyer, 0) + 1
+    return sum(n * (n - 1) // 2 for n in suppliers_by_buyer.values())
+
+
+def _blocked_buyers_by_pair(
+    rows: list[dict[str, Any]], min_buyers: int
+) -> dict[tuple[str, str], list[str]]:
+    """Unfiltered blocked derivation: pair → buyers over S_b ∩ A.
+
+    Internal helper shared by the blocked derivation (which applies the
+    ``min_buyers`` filter to the pairs) and the double-counting checks
+    (R3/R7), which compare ``blocked_projection`` against the number of
+    materialized (pair, buyer) incidences.
+    """
+    allowed = blocked_supplier_index(rows, min_buyers)
+    suppliers_by_buyer: dict[str, list[str]] = {}
+    for row in rows:
+        if row["supplier"] in allowed:
+            suppliers_by_buyer.setdefault(row["buyer"], []).append(row["supplier"])
+
+    buyers_by_pair: dict[tuple[str, str], list[str]] = {}
+    for buyer in sorted(suppliers_by_buyer):
+        for s1, s2 in combinations(sorted(suppliers_by_buyer[buyer]), 2):
+            buyers_by_pair.setdefault((s1, s2), []).append(buyer)
+    return buyers_by_pair
+
+
+def pair_buyers_from_eligibility_blocked(
+    rows: list[dict[str, Any]], min_buyers: int = 1
+) -> list[tuple[tuple[str, str], list[str]]]:
+    """Blocked derivation of collusion pairs (PR-D-03c, section 3).
+
+    Same output contract as ``pair_buyers_from_eligibility``, but forms
+    pairs only within ``S_b ∩ A`` per buyer, with
+    ``A = {s : |B(s)| >= min_buyers}``. Bit-a-bit equivalent to the
+    unblocked derivation (exact-recall predicate; equivalence guarded by
+    ``TestBlockedDerivationEquivalence``) while skipping the per-buyer
+    combinations of suppliers that cannot qualify — the combinatorial
+    explosion that OOMKilled the Airflow pod on 2026-08-21. At
+    ``min_buyers = 1`` the blocking is the identity (degenerate control).
+
+    Args:
+        rows: Eligibility rows from ``collusion_eligibility``.
+        min_buyers: Minimum number of distinct buyers sharing the pair.
+
+    Returns:
+        Sorted list of ``(pair, buyers)`` — pair as a sorted tuple of two
+        CNPJs, buyers as the sorted list of siafi codes.
+    """
+    buyers_by_pair = _blocked_buyers_by_pair(rows, min_buyers)
+    return sorted(
+        (pair, sorted(buyers))
+        for pair, buyers in buyers_by_pair.items()
+        if len(buyers) >= min_buyers
+    )
+
+
 def pair_buyers_from_eligibility(
     rows: list[dict[str, Any]], min_buyers: int = 1
 ) -> list[tuple[tuple[str, str], list[str]]]:
@@ -84,6 +189,10 @@ def pair_buyers_from_eligibility(
     eligible suppliers S_b, form every pair {s1, s2} ⊆ S_b; a pair is
     flagged only when it is eligible in >= ``min_buyers`` distinct buyers.
     ``min_buyers = 1`` reduces exactly to the D-02/D-03 semantics.
+
+    This is the unblocked reference derivation, preserved for the
+    bit-a-bit equivalence guard of the blocked derivation
+    (``pair_buyers_from_eligibility_blocked``, PR-D-03c).
 
     Args:
         rows: Eligibility rows from ``collusion_eligibility``.

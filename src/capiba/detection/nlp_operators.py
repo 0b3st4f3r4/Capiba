@@ -1,8 +1,13 @@
 """NLP operators for analyzing notices and terms of reference.
 
-Chunks: semantic_gap, notice_clone, exclusivity_violated
-Responsibility: Detect scope under-declaration, notice cloning
-and exclusivity violation via linguistic processing.
+Chunks: semantic_gap, exclusivity_violated
+Responsibility: Detect scope under-declaration and exclusivity violation
+via linguistic processing.
+
+The notice-cloning prototype (``detect_clone``) was replaced by the
+production signal ``capiba.detection.notice_clone`` under the PR-D-10
+semantics (strict threshold, reedition veto, null discipline) — see
+docs/preregistrations/PR-D-10.md.
 
 Dependencies: spacy, sentence-transformers
 """
@@ -67,35 +72,3 @@ def semantic_gap(
         logger.warning("Semantic gap detected: %.3f < %.3f", similarity, threshold)
 
     return round(similarity, 4)
-
-
-def detect_clone(
-    new_notice: str,
-    historical_notices: list[str],
-    threshold: float = 0.85,
-) -> list[tuple[str, float]]:
-    """Detects notice cloning via embedding similarity.
-
-    Args:
-        new_notice: Text of the notice to check.
-        historical_notices: List of texts from previous notices.
-        threshold: Similarity threshold to flag as a clone.
-
-    Returns:
-        List of tuples (similar_notice, score) above the threshold.
-    """
-    encoder = _get_encoder()
-
-    new_emb = encoder.encode(new_notice, convert_to_tensor=True)
-    historical_embs = encoder.encode(historical_notices, convert_to_tensor=True)
-
-    similarities = util.cos_sim(new_emb, historical_embs)[0]
-
-    clones = [
-        (historical_notices[i], float(sim))
-        for i, sim in enumerate(similarities)
-        if sim > threshold
-    ]
-
-    clones.sort(key=lambda x: x[1], reverse=True)
-    return clones

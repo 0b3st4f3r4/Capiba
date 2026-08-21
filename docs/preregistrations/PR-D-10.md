@@ -3,7 +3,11 @@
 - **Pré-registro**: bateria D-10
 - **Criado em**: 2026-08-21
 - **Última atualização**: 2026-08-21
-- **Status**: completo, aguardando aprovação humana; não executado
+- **Status**: aprovado; implementação e exploratório executados
+  (2026-08-21, ver Revisões). P2 **refutada** no regime sintético nas 5
+  seeds — refinamento de adjudicação proposto em **PR-D-10b**
+  (2026-08-21, decisão final humana pendente); execução oficial da
+  bateria e amostra real (P6b/P8) pendentes
 - **Alvo**: sinal `notice_clone` (novo `SignalType` — **inexistente hoje**:
   `signals.py` declara `SEMANTIC_GAP` mas não `NOTICE_CLONE`; a adição é
   passo de implementação deste registro) — clonagem/direcionamento de
@@ -258,3 +262,53 @@ territórios QD.
   `experiments/detect/D-10.json` criado junto, sem execução. Bandas de
   P3/P4/P6b/P8 seguem a fixar pelo exploratório documentado antes da
   execução oficial.
+- 2026-08-21: **implementação + exploratório executados** (após aprovação
+  humana). Implementação: `SignalType.NOTICE_CLONE` adicionado;
+  `src/capiba/ingestion/gazette_segments.py` (segmentação por marcadores
+  estruturais normalizados + extração de número de processo NUP/rotulado,
+  normalizado a dígitos); `src/capiba/detection/notice_clone.py` (puro,
+  encoder injetável, comparação estrita, veto de reedição, disciplina de
+  nulos, janela móvel, identidade/chave de triagem determinísticas);
+  settings `DETECTION_NOTICE_CLONE_*` em `config.py`; runner
+  `src/capiba/detection/battery_notice_clone.py` (gerador sintético
+  N0–N6, avaliação P1–P7). Decisão de implementação (§ 8, passo 2): o
+  protótipo `detect_clone` de `nlp_operators.py` foi **removido** (sem
+  chamadores de produção; substituído por `notice_clone.py`), não
+  reduzido a wrapper. Decisão de desenho do gerador: os pares **N0**
+  (cópia bit a bit) são plantados **sem número de processo extraível** —
+  uma cópia idêntica carregaria o mesmo processo e cairia no veto de
+  reedição (a disciplina do veto é coberta por N4); "processo ausente não
+  é veto nem evidência" (§ 3). **Exploratório (seed 13, encoder pinado
+  real, CPU)**: âncora N0 confirmada (similaridade 1,0, rank 1, nos dois
+  pares); âncora N6 confirmada (exatamente 12 unidades); curva revocação
+  × limiar de N2: 1,00 até 0,80; 0,875 em 0,85; 0,625 em 0,90; 0,25 em
+  0,95 → **banda de P3 fixada em 0,75** (piso conservador sob a medida);
+  curva de FP (N3/N5): 0,79 em 0,60; 0,0504 em 0,85; 0,0044 em 0,95 →
+  **banda de P4 fixada em 0,10** (teto com folga ~2×). Medidas brutas em
+  `results/detect/D-10/exploratory_seed_13.json`; bandas registradas em
+  `D-10.json` (`bands`). Verificação de desenvolvimento das 5 seeds
+  (encoder real; run de implementação, não a execução oficial): P1, P3,
+  P4, P5, P6a e P7 **verdes em todas as seeds** (revocação N2 por seed:
+  0,875/0,875/0,875/0,75/1,0; FP: 0,0488–0,0649); **P2 refutada em todas
+  as seeds** — scores N1 entre 0,86 e 0,998 (vários < 0,95) e ranks até
+  4: a troca de entidade/órgão (string longa, duas ocorrências no texto)
+  derruba a similaridade abaixo da banda declarada de 0,95, e avisos
+  estruturalmente próximos (mesmo template de introdução, objeto
+  parcialmente sobreposto) superam o par plantado em alguns casos. A
+  refutação de P2 segue a disciplina do § 7: adjudicação humana e forma
+  corrigida em **PR-D-10b** (revisar a banda/score mínimo de P2 ou o
+  critério de rank) antes da execução oficial; o teste de regime slow
+  pinna o veredito atual. **P6b/P8 não executados nesta fase** (exigem a
+  amostra real do bronze e a anotação editorial — bandas pendentes).
+  **Wiring pendente**: dispatch `"notice_clone"` em
+  `scripts/detect_battery.py` (arquivo compartilhado, não editado nesta
+  frente). Integração best-effort no `task_detect` segue fora desta fase
+  (§ 8, passo 5: somente após o veredito).
+- 2026-08-21: **refinamento PR-D-10b criado** (`PR-D-10b.md` +
+  `experiments/detect/D-10b.json`), adjudicando a refutação de P2:
+  direção proposta (a) — re-calibração da banda para o regime real do
+  encoder (P2b: sinal + rank ≤ 4, ancorado nas medidas brutas do
+  exploratório seed 13 e na verificação das 5 seeds; limiar de sinal
+  0,85 e semântica do sinal intocados); direção (b) registrada como
+  gatilho de PR-D-10c. **Decisão final humana pendente**; este registro
+  segue valendo para as demais predições (P1, P3–P9).

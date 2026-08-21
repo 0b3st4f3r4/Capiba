@@ -292,6 +292,27 @@ DETECTION_GEOGRAPHY_SCORE_REFERENCE = float(
     os.getenv("DETECTION_GEOGRAPHY_SCORE_REFERENCE", "1000")
 )
 
+# Gates of the notice_clone signal (PR-D-10): strict cosine-similarity
+# threshold over embeddings of gazette notices segmented from the bronze
+# Querido Diário texts, minimum running-text size of an analyzable notice,
+# rolling window (days) for the historical candidates and the sentence
+# encoder model. Pre-registered calibration placeholders; changing them
+# requires PR-D-10b. Best-effort emission in task_detect only after the
+# battery verdict (PR-D-10 section 8, step 5).
+DETECTION_NOTICE_CLONE_THRESHOLD = float(
+    os.getenv("DETECTION_NOTICE_CLONE_THRESHOLD", "0.85")
+)
+DETECTION_NOTICE_CLONE_MIN_CHARS = int(
+    os.getenv("DETECTION_NOTICE_CLONE_MIN_CHARS", "200")
+)
+DETECTION_NOTICE_CLONE_WINDOW_DAYS = int(
+    os.getenv("DETECTION_NOTICE_CLONE_WINDOW_DAYS", "365")
+)
+DETECTION_NOTICE_CLONE_ENCODER = os.getenv(
+    "DETECTION_NOTICE_CLONE_ENCODER",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+)
+
 # =============================================================================
 # Notification (SMTP)
 # =============================================================================

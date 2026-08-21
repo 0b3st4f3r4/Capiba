@@ -1,7 +1,10 @@
 """Unit tests for the NLP detection operators.
 
-Responsibility: Validate semantic gap and notice cloning with mocked
-spaCy/sentence-transformers models (no model downloads).
+Responsibility: Validate the semantic gap with mocked
+spaCy/sentence-transformers models (no model downloads). The
+notice-cloning prototype (``detect_clone``) was replaced by
+``capiba.detection.notice_clone`` (PR-D-10), tested in
+``tests/test_notice_clone.py``.
 """
 
 from __future__ import annotations
@@ -82,33 +85,3 @@ class TestSemanticGap:
         score = nlp_operators.semantic_gap("term", "contract")
 
         assert score == pytest.approx(0.95)
-
-
-class TestDetectClone:
-    """Tests for detect_clone."""
-
-    def test_flags_only_above_threshold_sorted(self, monkeypatch, mock_encoder) -> None:
-        """Only notices above the threshold, sorted by descending score."""
-        monkeypatch.setattr(
-            nlp_operators.util,
-            "cos_sim",
-            MagicMock(return_value=[[0.86, 0.5, 0.99]]),
-        )
-        historical = ["edital A", "edital B", "edital C"]
-
-        clones = nlp_operators.detect_clone("novo edital", historical, threshold=0.85)
-
-        assert clones == [
-            ("edital C", pytest.approx(0.99)),
-            ("edital A", pytest.approx(0.86)),
-        ]
-
-    def test_no_clones(self, monkeypatch, mock_encoder) -> None:
-        """No historical notice above the threshold returns an empty list."""
-        monkeypatch.setattr(
-            nlp_operators.util,
-            "cos_sim",
-            MagicMock(return_value=[[0.1, 0.2]]),
-        )
-
-        assert nlp_operators.detect_clone("novo", ["a", "b"]) == []

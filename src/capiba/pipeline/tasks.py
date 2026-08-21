@@ -1147,6 +1147,13 @@ def task_destination(
                     task_ids=f"download_{source.name}_texts",
                     key=f"raw_{source.name}",
                 )
+            elif spec.formula == "terms_collect":
+                # Records enriched with ``terms_bronze_file`` by the
+                # persist_<source>_terms task.
+                value = ti.xcom_pull(
+                    task_ids=f"persist_{source.name}_terms",
+                    key=f"raw_{source.name}",
+                )
             else:
                 value = ti.xcom_pull(
                     task_ids=f"crawl_{source.name}", key=f"raw_{source.name}"

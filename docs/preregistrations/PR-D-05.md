@@ -179,3 +179,11 @@ Após a aprovação humana deste registro, com TDD/BDD usual:
 - 2026-08-19: criação (rascunho para revisão humana), após chamada ao
   vivo ao endpoint `/v1/contratos` confirmando os campos `valorInicial`,
   `valorAcumulado` e `numeroRetificacao` no payload.
+- 2026-08-21: emenda de tolerância da âncora `value_ratio` (P1). O
+  gerador sintético arredonda `valorAcumulado` a centavos (realista —
+  moeda), o que desloca a razão em até 0,005/`estimated_min` =
+  0,005/1.000 = 5e-6 (observado: 3,5e-6); desde que o `value_ratio`
+  passou a ser emitido em precisão plena (fix de P7), a comparação
+  exata refutava P1 por ruído de arredondamento, não por semântica.
+  Declarado desvio tolerado de 1e-5 (absoluto, 2× o limite teórico) na
+  comparação da âncora — as demais comparações seguem exatas.
