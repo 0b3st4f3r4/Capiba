@@ -12,19 +12,34 @@ with bronze_payloads as (
     select dt, payload_json from {{ source('lake_bronze', 'raw_pncp_contract_updates') }}
 ),
 
+-- Parse each payload straight into a typed row with only the fields this
+-- model needs, exactly like contract_red_flags: casting to array(json)
+-- and extracting per element materializes every full contract dict in
+-- memory and OOMKilled Trino on real data (2026-08-20, exit 137).
 observations as (
     select
         b.dt as observed_on,
-        json_extract_scalar(c, '$.numeroControlePNCP') as pncp_id,
-        try(cast(json_extract_scalar(c, '$.valorInicial') as decimal(38, 4))) as initial_amount,
-        try(cast(json_extract_scalar(c, '$.valorAcumulado') as decimal(38, 4))) as accumulated_amount,
-        try(cast(substr(json_extract_scalar(c, '$.dataVigenciaFim'), 1, 10) as date)) as validity_end,
-        try(cast(json_extract_scalar(c, '$.numeroRetificacao') as integer)) as rectifications
+        t.pncp_id,
+        try(cast(t.initial_amount as decimal(38, 4))) as initial_amount,
+        try(cast(t.accumulated_amount as decimal(38, 4))) as accumulated_amount,
+        try(cast(substr(t.validity_end, 1, 10) as date)) as validity_end,
+        try(cast(t.rectifications as integer)) as rectifications
     from (
-        select dt, cast(json_parse(payload_json) as array(json)) as contracts
+        select
+            dt,
+            cast(json_parse(payload_json) as array(row(
+                numeroControlePNCP varchar,
+                valorInicial varchar,
+                valorAcumulado varchar,
+                dataVigenciaFim varchar,
+                numeroRetificacao varchar
+            ))) as contracts
         from bronze_payloads
     ) b
-    cross join unnest(b.contracts) as t(c)
+    cross join unnest(b.contracts) as t(
+        pncp_id, initial_amount, accumulated_amount, validity_end,
+        rectifications
+    )
 ),
 
 -- One row per contract: first positive valorInicial, last positive
@@ -66,7 +81,11 @@ select
     case
         when p.first_initial is null or p.last_accumulated is null
             then cast(null as double)
-        else round(cast(p.last_accumulated / p.first_initial as double), 4)
+        -- Full precision: rounding to 4 decimals collapsed tiny positive
+        -- ratios to 0.0 on real data (P7 domain violation, PR-D-05). Cast
+        -- to double BEFORE dividing: decimal division at limited scale
+        -- still rounds ratios < 1e-4 to zero (observed: 0.10/1,000,700).
+        else cast(p.last_accumulated as double) / cast(p.first_initial as double)
     end as value_ratio
 from {{ source('lake_silver', 'contracts') }} s
 left join per_contract p on p.pncp_id = s.id
