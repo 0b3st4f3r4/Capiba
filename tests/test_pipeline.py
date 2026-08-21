@@ -5,6 +5,7 @@ Responsibility: Validate atomic tasks and DAGs.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,7 @@ import pytest
 from capiba.config import DETECTION_ENTITY_THRESHOLD
 from capiba.pipeline.tasks import (
     _lake_run_date,
+    notice_clone_bronze_signals,
     persist_cnpj_entities,
     persist_contracts,
     task_dbt_run,
@@ -551,6 +553,66 @@ class TestTaskDetect:
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         assert "anomalous_geography" not in {s["signal_type"] for s in signals}
 
+    @patch("capiba.pipeline.tasks.notice_clone_bronze_signals")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_adds_notice_clone_signals(
+        self,
+        mock_lake: MagicMock,
+        mock_get_db: MagicMock,
+        mock_collusion: MagicMock,
+        mock_notice_clone: MagicMock,
+    ) -> None:
+        """Notice clone screening (PR-D-10 § 8, step 5; D-10b verdict):
+        signals over the bronze gazette texts join the detection output."""
+        mock_lake.read_silver_contracts.return_value = []
+        mock_lake.read_silver_entities.return_value = iter([])
+        mock_collusion.return_value = []
+        mock_notice_clone.return_value = [
+            {
+                "entity_type": "notice",
+                "entity_id": "pair-key",
+                "signal_type": "notice_clone",
+                "score": 0.9123,
+                "details": "{}",
+            }
+        ]
+
+        summary = task_detect(ds="2026-01-01")
+
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        notice = [s for s in signals if s["signal_type"] == "notice_clone"]
+        assert len(notice) == 1
+        assert notice[0]["entity_id"] == "pair-key"
+        assert summary["signals"] == len(signals)
+
+    @patch("capiba.pipeline.tasks.notice_clone_bronze_signals")
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_notice_clone_failure_keeps_other_signals(
+        self,
+        mock_lake: MagicMock,
+        mock_get_db: MagicMock,
+        mock_collusion: MagicMock,
+        mock_notice_clone: MagicMock,
+    ) -> None:
+        """A bronze/encoder failure must not abort the detection."""
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_lake.read_silver_entities.return_value = iter([])
+        mock_collusion.return_value = []
+        mock_notice_clone.side_effect = RuntimeError("encoder unavailable")
+
+        summary = task_detect(ds="2026-01-01")
+
+        assert summary["signals"] >= 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert "notice_clone" not in {s["signal_type"] for s in signals}
+
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_arango_failure_keeps_statistical_signals(
@@ -871,3 +933,113 @@ class TestRecordQualityBatch:
         mock_cls.side_effect = RuntimeError("redis down")
 
         _record_quality_batch("daily_ingestion", [{"id": "C001"}], {"total": 1})
+
+
+_GAZETTE_NOTICE = (
+    "AVISO DE LICITACAO\n"
+    "A Prefeitura Municipal de Alto Esperanca torna publico que realizara "
+    "pregao eletronico para contratacao de empresa de engenharia para execucao "
+    "de obras de pavimentacao asfaltica e drenagem pluvial em vias urbanas do "
+    "municipio, conforme as especificacoes do projeto basico e seus anexos."
+)
+
+
+class TestNoticeCloneBronzeSignals:
+    """Tests for the notice_clone bronze producer (PR-D-10 § 8, step 5).
+
+    Bronze gazette texts and the sentence encoder are mocked/stubbed — no
+    infra, no real model (the slow battery covers the pinned encoder).
+    """
+
+    @staticmethod
+    def _encode(texts: list[str]) -> list[list[float]]:
+        """Deterministic stub: identical texts get identical vectors."""
+        return [[float(len(text)), 1.0] for text in texts]
+
+    def _mock_lake(self, mock_lake: MagicMock, files: dict[str, str]) -> None:
+        mock_lake.list_all_bronze_files.return_value = sorted(files)
+        mock_lake.read_bronze_file.side_effect = lambda key: files[key].encode()
+
+    @patch("capiba.pipeline.tasks.default_encoder")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_exact_copy_across_editions_signals(
+        self, mock_lake: MagicMock, mock_encoder: MagicMock
+    ) -> None:
+        """A notice republished in a later edition signals with score 1.0."""
+        mock_encoder.side_effect = lambda model: self._encode
+        self._mock_lake(
+            mock_lake,
+            {
+                "querido_diario/files/dt=2026-01-10/2611606-2026-01-10-aaaaaaaaaaaa.txt": (
+                    _GAZETTE_NOTICE
+                ),
+                "querido_diario/files/dt=2026-08-20/2611606-2026-08-20-bbbbbbbbbbbb.txt": (
+                    _GAZETTE_NOTICE
+                ),
+            },
+        )
+
+        signals = notice_clone_bronze_signals()
+
+        assert len(signals) == 1
+        signal = signals[0]
+        assert signal["signal_type"] == "notice_clone"
+        assert signal["entity_type"] == "notice"
+        assert signal["score"] == 1.0
+        details = json.loads(signal["details"])
+        assert details["territory_id"] == "2611606"
+        assert details["new_date"] == "2026-08-20"  # latest date = reference
+        assert details["historical_date"] == "2026-01-10"
+
+    @patch("capiba.pipeline.tasks.default_encoder")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_historical_outside_the_window_never_signals(
+        self, mock_lake: MagicMock, mock_encoder: MagicMock
+    ) -> None:
+        """An exact copy older than the rolling window is not a candidate."""
+        mock_encoder.side_effect = lambda model: self._encode
+        self._mock_lake(
+            mock_lake,
+            {
+                "querido_diario/files/dt=2024-01-10/2611606-2024-01-10-aaaaaaaaaaaa.txt": (
+                    _GAZETTE_NOTICE
+                ),
+                "querido_diario/files/dt=2026-08-20/2611606-2026-08-20-bbbbbbbbbbbb.txt": (
+                    _GAZETTE_NOTICE
+                ),
+            },
+        )
+
+        assert notice_clone_bronze_signals() == []
+
+    @patch("capiba.pipeline.tasks.default_encoder")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_cross_territory_never_signals(
+        self, mock_lake: MagicMock, mock_encoder: MagicMock
+    ) -> None:
+        """The same text in another territory is out of the v1 scope."""
+        mock_encoder.side_effect = lambda model: self._encode
+        self._mock_lake(
+            mock_lake,
+            {
+                "querido_diario/files/dt=2026-01-10/2507507-2026-01-10-aaaaaaaaaaaa.txt": (
+                    _GAZETTE_NOTICE
+                ),
+                "querido_diario/files/dt=2026-08-20/2611606-2026-08-20-bbbbbbbbbbbb.txt": (
+                    _GAZETTE_NOTICE
+                ),
+            },
+        )
+
+        assert notice_clone_bronze_signals() == []
+
+    @patch("capiba.pipeline.tasks.default_encoder")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_empty_corpus_skips_the_encoder(
+        self, mock_lake: MagicMock, mock_encoder: MagicMock
+    ) -> None:
+        """No bronze texts (or only non-gazette keys): no encoder load."""
+        self._mock_lake(mock_lake, {"querido_diario/files/dt=2026-08-20/readme.txt": "x"})
+
+        assert notice_clone_bronze_signals() == []
+        mock_encoder.assert_not_called()

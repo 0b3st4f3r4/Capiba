@@ -567,11 +567,23 @@ def fp_rate_at(record: dict[str, Any], threshold: float) -> float:
 
 
 def evaluate(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Evaluates the pre-registered predictions P1-P7 over the records."""
+    """Evaluates the pre-registered predictions P1-P7 over the records.
+
+    P2 has two declarative forms: the legacy D-10 band (``min_score`` +
+    rank 1, refuted) and the recalibrated P2b of D-10b (signal +
+    ``rank_max``). The N1 ``expected`` block of the config selects the
+    form; everything else is unchanged.
+    """
     thresholds = config["thresholds"]
     tolerance = float(thresholds["anchor_tolerance"])
     cases = {c["id"]: c for c in config["synthetic"]["cases"]}
-    n1_min_score = float(cases["N1"]["expected"]["min_score"])
+    n1_expected = cases["N1"]["expected"]
+    # P2 forms: legacy (D-10, refuted) requires score >= min_score and
+    # rank == 1; P2b (D-10b) requires the signal and rank <= rank_max.
+    n1_min_score = (
+        float(n1_expected["min_score"]) if "min_score" in n1_expected else None
+    )
+    n1_rank_max = int(n1_expected.get("rank_max", 1))
     n6_expected = int(cases["N6"]["expected"]["units"])
     bands = config.get("bands", {})
     p3_band = bands.get("p3_min_recall")
@@ -615,7 +627,9 @@ def evaluate(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str,
             if rank.get("rank") != 1:
                 failures["P1"].append(f"seed {seed}: N0 rank {rank.get('rank')} != 1")
 
-        # P2 — N1 verbal clones: signaled, score >= min_score, rank 1.
+        # P2 — N1 verbal clones: signaled, plus the declared band of the
+        # config (legacy D-10: score >= min_score and rank 1; P2b/D-10b:
+        # rank <= rank_max, no score floor beyond the signal threshold).
         for pair, meta in meta_by_pair.items():
             if meta["case"] != "N1":
                 continue
@@ -624,12 +638,15 @@ def evaluate(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str,
             if signal is None:
                 failures["P2"].append(f"seed {seed}: N1 pair not signaled")
                 continue
-            if float(signal["score"]) < n1_min_score:
+            if n1_min_score is not None and float(signal["score"]) < n1_min_score:
                 failures["P2"].append(
                     f"seed {seed}: N1 score {signal['score']} < {n1_min_score}"
                 )
-            if rank.get("rank") != 1:
-                failures["P2"].append(f"seed {seed}: N1 rank {rank.get('rank')} != 1")
+            rank_value = rank.get("rank")
+            if rank_value is None or rank_value > n1_rank_max:
+                failures["P2"].append(
+                    f"seed {seed}: N1 rank {rank_value} > {n1_rank_max}"
+                )
 
         # P3 — N2 paraphrased clones: recall at the threshold >= band.
         if p3_band is not None:
@@ -689,12 +706,33 @@ def run_battery(
     """
     encode = encode or _encoder_for(config)
     out_dir.mkdir(parents=True, exist_ok=True)
+    threshold = float(config["thresholds"]["notice_clone_threshold"])
     records: list[dict[str, Any]] = []
     for seed in config["seeds"]:
         record = run_seed(config, seed, encode)
         with (out_dir / f"seed_{seed}.jsonl").open("w") as fh:
             for signal in record["signals"]:
                 fh.write(json.dumps(signal, default=str) + "\n")
+        # Raw measures per seed (scores and ranks of the planted pairs) —
+        # the declared evidence gap of only persisting the exploratory
+        # seed's raw measures is closed by writing them for every seed.
+        measures = {
+            "seed": seed,
+            "threshold": threshold,
+            "repeat_divergences": record["repeat_divergences"],
+            "n6_units": record["n6_units"],
+            "n2_recall": recall_at(record, "N2", threshold),
+            "fp_rate": fp_rate_at(record, threshold),
+        }
+        for case in ("n0", "n1", "n2"):
+            measures[case] = [
+                {"similarity": r["similarity"], "rank": r["rank"]}
+                for r in record["ranks"]
+                if r["case"] == case.upper()
+            ]
+        (out_dir / f"measures_seed_{seed}.json").write_text(
+            json.dumps(measures, indent=2, default=str) + "\n"
+        )
         records.append(record)
 
     summary = evaluate(config, records)

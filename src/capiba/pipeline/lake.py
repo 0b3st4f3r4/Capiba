@@ -596,6 +596,31 @@ def list_bronze_files(source: str, run_date: date | None = None) -> list[str]:
     return keys
 
 
+def list_all_bronze_files(source: str) -> list[str]:
+    """Lists every raw file key of a source, across all run-date partitions.
+
+    Counterpart of ``list_bronze_files`` for readers that need the full
+    accumulated corpus (e.g. the ``notice_clone`` producer, whose rolling
+    window spans partitions): keys live under ``<source>/files/``.
+
+    Args:
+        source: Source name (e.g. ``querido_diario``).
+
+    Returns:
+        Object keys (possibly empty), sorted for determinism.
+    """
+    prefix = f"{source}/files/"
+    keys = [
+        obj.object_name
+        for obj in get_client().list_objects(
+            LAKE_BUCKET_BRONZE, prefix=prefix, recursive=True
+        )
+        if obj.object_name is not None
+    ]
+    logger.info("Bronze files listed: %s (%d keys)", prefix, len(keys))
+    return sorted(keys)
+
+
 def read_bronze_file(key: str) -> bytes:
     """Reads back a raw file uploaded with ``write_bronze_file``.
 

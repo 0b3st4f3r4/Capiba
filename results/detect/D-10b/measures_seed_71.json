@@ -1,0 +1,86 @@
+{
+  "seed": 71,
+  "threshold": 0.85,
+  "repeat_divergences": 0,
+  "n6_units": 12,
+  "n2_recall": 1.0,
+  "fp_rate": 0.06485188150520416,
+  "n0": [
+    {
+      "similarity": 1.0,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9999999999999999,
+      "rank": 1
+    }
+  ],
+  "n1": [
+    {
+      "similarity": 0.929339814244478,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9021258435274385,
+      "rank": 4
+    },
+    {
+      "similarity": 0.9661356748909744,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9338536382740814,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9110489537059354,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9718056843574723,
+      "rank": 2
+    },
+    {
+      "similarity": 0.9969846865368733,
+      "rank": 1
+    },
+    {
+      "similarity": 0.951223977112383,
+      "rank": 1
+    }
+  ],
+  "n2": [
+    {
+      "similarity": 0.9180905711712606,
+      "rank": 4
+    },
+    {
+      "similarity": 0.9309865278898547,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9305310266236436,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9500026950547994,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9436592365759265,
+      "rank": 3
+    },
+    {
+      "similarity": 0.9075551512700388,
+      "rank": 1
+    },
+    {
+      "similarity": 0.9214687148142928,
+      "rank": 1
+    },
+    {
+      "similarity": 0.8845127108036858,
+      "rank": 4
+    }
+  ]
+}

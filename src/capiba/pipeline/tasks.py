@@ -32,6 +32,10 @@ from capiba.config import (
     DETECTION_ENTITY_THRESHOLD,
     DETECTION_GEOGRAPHY_MAX_DISTANCE_KM,
     DETECTION_GEOGRAPHY_SCORE_REFERENCE,
+    DETECTION_NOTICE_CLONE_ENCODER,
+    DETECTION_NOTICE_CLONE_MIN_CHARS,
+    DETECTION_NOTICE_CLONE_THRESHOLD,
+    DETECTION_NOTICE_CLONE_WINDOW_DAYS,
     DETECTION_POLITICAL_MIN_DONATION,
     DETECTION_POLITICAL_MIN_SHARE,
     DETECTION_POLITICAL_SCORE_REFERENCE,
@@ -45,6 +49,12 @@ from capiba.detection.graphs import (
     collusion_eligibility,
     pair_buyers_from_eligibility,
     projected_pair_count,
+)
+from capiba.detection.notice_clone import (
+    Notice,
+    default_encoder,
+    notice_clone_signals,
+    notice_id,
 )
 from capiba.detection.political import political_connection_signals
 from capiba.detection.screening import sanctioned_supplier_signals
@@ -67,6 +77,7 @@ from capiba.ingestion.crawler_querido_diario import (
     download_gazette_text,
     text_file_name,
 )
+from capiba.ingestion.gazette_segments import DEFAULT_MARKERS, segment_edition
 from capiba.ingestion.normalizer import Contract
 from capiba.ingestion.persistence import bulk_upsert_cnpj, bulk_upsert_contracts
 from capiba.ingestion.validator import checksum, detect_duplicates
@@ -545,6 +556,62 @@ def detect_fraud_signals(contracts: list[dict[str, Any]]) -> list[dict[str, Any]
     return signals
 
 
+# Bronze gazette text file name (``text_file_name``):
+# ``<territory_id>-<date>-<sha256(url)[:12]>.txt``.
+_BRONZE_GAZETTE_FILE = re.compile(
+    r"^(?P<territory>\d+)-(?P<date>\d{4}-\d{2}-\d{2})-(?P<digest>[0-9a-f]{12})\.txt$"
+)
+
+
+def notice_clone_bronze_signals() -> list[dict[str, Any]]:
+    """Computes ``notice_clone`` signals over the bronze gazette texts.
+
+    Producer of the PR-D-10 § 8 (step 5) integration, enabled by the D-10b
+    verdict (``docs/results/R-D-10b.md``): reads the accumulated
+    ``querido_diario`` texts (all run-date partitions), segments each
+    edition (``gazette_segments``) and emits the signal with the
+    pre-registered gates (``DETECTION_NOTICE_CLONE_*``). The "new" notices
+    of the run are the ones published on the latest gazette date of the
+    corpus (``reference_date`` semantics of ``notice_clone_signals``) —
+    pairs over older dates were emitted by previous runs and deduplicated
+    by the stable triage key. The edition component of the notice id is
+    the file digest (unique and deterministic per gazette).
+
+    Returns:
+        Signal rows (empty when the corpus has no candidate pair).
+    """
+    notices: list[Notice] = []
+    for key in lake.list_all_bronze_files("querido_diario"):
+        match = _BRONZE_GAZETTE_FILE.match(key.rsplit("/", 1)[-1])
+        if match is None:
+            continue
+        territory = match.group("territory")
+        gazette_date = date.fromisoformat(match.group("date"))
+        text = lake.read_bronze_file(key).decode("utf-8")
+        for index, segment in enumerate(segment_edition(text, DEFAULT_MARKERS)):
+            notices.append(
+                Notice(
+                    notice_id=notice_id(
+                        territory, gazette_date, match.group("digest"), index
+                    ),
+                    territory_id=territory,
+                    date=gazette_date,
+                    text=segment,
+                )
+            )
+    if not notices:
+        return []
+    reference_date = max(notice.date for notice in notices)
+    return notice_clone_signals(
+        notices,
+        encode=default_encoder(DETECTION_NOTICE_CLONE_ENCODER),
+        threshold=DETECTION_NOTICE_CLONE_THRESHOLD,
+        window_days=DETECTION_NOTICE_CLONE_WINDOW_DAYS,
+        min_chars=DETECTION_NOTICE_CLONE_MIN_CHARS,
+        reference_date=reference_date,
+    )
+
+
 def task_detect(**context: Any) -> dict[str, Any]:
     """Task: compute fraud signals over the silver contracts (gold table).
 
@@ -635,6 +702,14 @@ def task_detect(**context: Any) -> dict[str, Any]:
         )
     except Exception as e:
         logger.warning("Geography detection unavailable (silver geo chain): %s", e)
+
+    # Best-effort: notice_clone screening (PR-D-10 § 8, step 5 — enabled
+    # by the D-10b verdict) never fails the task (the bronze gazette
+    # texts or the sentence encoder may be unavailable).
+    try:
+        signals.extend(notice_clone_bronze_signals())
+    except Exception as e:
+        logger.warning("Notice clone detection unavailable (bronze QD texts): %s", e)
 
     # Best-effort: graph signals never fail the task (ArangoDB may be down).
     graph_snapshot: dict[str, Any] | None = None

@@ -5,9 +5,9 @@
   2026-08-21; execução oficial da bateria ainda pendente)
 - **Criado em**: 2026-08-21
 - **Última atualização**: 2026-08-21
-- **Status**: rascunho para adjudicação humana — direção (a) proposta com
-  justificativa (seção 3); a decisão final é humana. **Nenhuma execução
-  neste refinamento**
+- **Status**: aprovado (decisão humana, 2026-08-21) e **executado** —
+  bateria D-10b **success** nas 5 seeds; resultados em
+  `docs/results/R-D-10b.md`
 - **Alvo**: a predição P2 do sinal `notice_clone` (clones verbais, caso
   N1) — re-calibrada para o regime real do encoder pinado. A semântica do
   sinal é **intocada**: limiar estrito 0,85, veto de reedição, disciplina
@@ -154,3 +154,17 @@ habilita, não autoriza automaticamente.
   0,85 inalterado, semântica do sinal intocada; direção (b) registrada
   como gatilho de PR-D-10c. `experiments/detect/D-10b.json` criado junto.
   **Decisão final humana pendente; nenhuma execução neste refinamento.**
+- 2026-08-21: **aprovado e executado**. Bateria D-10b oficial (encoder
+  pinado real, CPU, 5 seeds): **success** — P2b satisfeita em todas as
+  seeds (scores N1 0,8599–0,9985, todos > 0,85; rank máximo 4, seed 71,
+  exatamente na borda ancorada), P1/P3/P4/P5/P6a/P7 confirmadas
+  inalteradas (revocação N2 0,75–1,0; FP 0,0488–0,0649; 0 divergências
+  de repetição). Implementação: apenas a **avaliação** de P2 do runner
+  passou a ler `rank_max` (forma legada `min_score` + rank 1 preservada
+  para o D-10 histórico); `notice_clone.py` intocado; o runner passou a
+  persistir as **medidas brutas de todas as seeds**
+  (`measures_seed_<n>.json`), corrigindo a lacuna declarada na seção 2.
+  Resultados completos em `docs/results/R-D-10b.md`; teste de regime slow
+  re-pinado para o veredito success. O sucesso habilita o produtor
+  best-effort no `task_detect` (PR-D-10 § 8, passo 5) e mantém P6b/P8
+  pendentes da amostra real anotada.

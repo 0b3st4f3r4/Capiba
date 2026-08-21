@@ -95,6 +95,14 @@ def test_run_battery_success_end_to_end(tmp_path: Path) -> None:
         assert all(s["signal_type"] == "notice_clone" for s in signals)
         # The N0 exact copy always signals with score 1.0.
         assert any(s["score"] == 1.0 for s in signals)
+        # Raw measures are persisted per seed (PR-D-10b evidence gap).
+        measures = json.loads((tmp_path / f"measures_seed_{seed}.json").read_text())
+        assert measures["seed"] == seed
+        assert len(measures["n0"]) == 1
+        assert measures["n0"][0]["similarity"] == 1.0
+        assert len(measures["n1"]) == 2
+        assert len(measures["n2"]) == 2
+        assert measures["n6_units"] == 12
 
 
 def test_generate_population_deterministic_per_seed() -> None:
@@ -123,6 +131,30 @@ def test_generate_population_structure() -> None:
     # N5 = remaining base notices: 30 - (1 + 2 + 2) historical sources.
     n6 = [e for e in population["editions"] if e["is_n6"]]
     assert len(n6) == 1
+
+
+def test_evaluate_p2b_rank_max_form() -> None:
+    """P2b (D-10b): rank_max replaces the min_score + rank-1 band.
+
+    With the stub encoder the N1 verbal clones rank 1, so rank_max 1
+    passes; rank_max 0 refutes P2 without touching the other predictions.
+    """
+    config = json.loads(json.dumps(FAST_CONFIG))
+    for case in config["synthetic"]["cases"]:
+        if case["id"] == "N1":
+            case["expected"] = {"signal": True, "rank_max": 1}
+    record = battery_notice_clone.run_seed(config, 7, stub_encode)
+
+    summary = battery_notice_clone.evaluate(config, [record])
+    assert summary["predictions"]["P2"]["verdict"] == "success"
+
+    strict = json.loads(json.dumps(config))
+    for case in strict["synthetic"]["cases"]:
+        if case["id"] == "N1":
+            case["expected"] = {"signal": True, "rank_max": 0}
+    summary = battery_notice_clone.evaluate(strict, [record])
+    assert summary["predictions"]["P2"]["verdict"] == "refuted"
+    assert summary["verdict"] == "refuted"
 
 
 def test_evaluate_refutes_on_dropped_anchor() -> None:
