@@ -86,3 +86,6 @@ charts/*/Chart.lock
 
 # cache de amostragem de benchmarks externos (regenerável pela bateria)
 results/detect/*/pairs_sample*.jsonl
+
+# Temporário
+*.temp.md
