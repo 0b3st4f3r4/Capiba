@@ -138,13 +138,10 @@ Trino (`lake.delete_silver_entities_partition`; falha aborta sem append)
 (`lake.write_silver`) é **upsert-por-id** (DELETE via Trino dos ids do
 lote + append; no catálogo sqlite offline degrada para append puro). A
 escrita no gold `fraud_signals` (`lake.write_fraud_signals`) é
-**replace-por-partição** (DELETE via Trino de `dt=<run_date>` + append;
-offline, append puro) — attempt reenfileirado do `detect` não duplica
-sinais. Todo DELETE via Trino seguido de append pyiceberg exige
-`table.refresh()` entre os dois: o DELETE comita um snapshot novo e o
-handle carregado antes dele é rejeitado pelo Lakekeeper
-(CatalogCommitConflicts, "snapshot has changed" — run real de
-2026-08-21). Como
+**replace-por-partição** (DELETE de `dt=<run_date>` + append; offline,
+append puro). Todo DELETE via Trino seguido de append pyiceberg exige
+`table.refresh()` entre os dois — o DELETE comita um snapshot novo e o
+handle antigo é rejeitado (CatalogCommitConflicts, 2026-08-21). Como
 DELETE+append não é atômico, as DAGs da factory usam `max_active_runs=1`
 (runs sobrepostas duplicavam linhas — observado em dt=2026-08-18/19).
 Atenção: **backfills ignoram o `max_active_runs` da DAG** — o Airflow 3 usa
@@ -166,15 +163,12 @@ janela entre delete e optimize quebraria a leitura — risco anotado em
 silver — é a "run final" após um backfill) seguem DAGs imperativas.
 As tasks pesadas de memória (crawls `contracts_default`, normalizes,
 destinos lake/grafo da factory e o `detect`) rodam no **pool
-`heavy_lake` (1 slot)**: o deploy executa scheduler + tasks num único
-container e picos concorrentes (detect ~2 GB + normalize/crawl do
-`daily_pncp`) OOMKillavam o pod em volume real (2026-08-21). O pool é
-criado pelo init container `airflow-db-init`
-(`airflow pools set heavy_lake 1`, idempotente) e referenciado via
-`HEAVY_POOL` em `dags/pipeline_factory.py` e `dags/gold_detection.py`.
-Na mesma linha, `AIRFLOW__CORE__PARALLELISM: "8"` no configmap do
-Airflow: cada slot do LocalExecutor mantém um worker idle (~164 MiB),
-e os 32 default custavam ~5 GiB de baseline dentro do container.
+`heavy_lake` (1 slot)** — picos concorrentes OOMKillavam o pod em volume
+real (2026-08-21); criado pelo init container `airflow-db-init`
+(`airflow pools set heavy_lake 1`) e referenciado via `HEAVY_POOL` em
+`dags/pipeline_factory.py` e `dags/gold_detection.py`. Na mesma linha,
+`AIRFLOW__CORE__PARALLELISM: "8"`: cada slot do LocalExecutor mantém um
+worker idle (~164 MiB; os 32 default custavam ~5 GiB de baseline).
 Transformações nomeadas em `src/capiba/transformations/` (um módulo por
 transformação, `transform(records, **params)`).
 
@@ -193,13 +187,12 @@ silver `establishments` (TOM) → `rfb_municipalities` → referência
 vendored — best-effort, funções puras injetáveis
 (`geography.buyer_geo_fields`, `geography.build_supplier_geo_index`).
 A leitura de `establishments` na persistência é **seletiva**
-(`lake.read_establishments_for_cnpjs`, como no `task_detect`): o scan
-pyiceberg da tabela RFB completa OOMKillou o pod do Airflow nos
-backfills de maio (2026-08-21, worker a >7,7 GB).
+(`lake.read_establishments_for_cnpjs`, como no `task_detect`) — o scan
+da RFB completa OOMKillou o pod (2026-08-21).
 
 O sinal `anomalous_geography` (contrato PR-D-09 §3, validado no sintético
-pela bateria D-09, `docs/results/R-D-09.md`, 5/5; P6/volume real
-pendentes) vive em `detection/geography.py` (puro, sobre o silver):
+pela bateria D-09 e no volume real por P6 — `docs/results/R-D-09.md`,
+2026-08-21) vive em `detection/geography.py` (puro, sobre o silver):
 haversine R = 6371,0 km entre sedes municipais, gate estrito
 `DETECTION_GEOGRAPHY_MAX_DISTANCE_KM` (default 100 km), score
 `round(min(1.0, distância / DETECTION_GEOGRAPHY_SCORE_REFERENCE), 4)`
@@ -330,11 +323,9 @@ dependentes de TSE** (`political_connections`) enquanto as silvers
 `campaign_donations`/`candidacies` não existirem
 (`lake.silver_table_exists`; sem isso o TABLE_NOT_FOUND derrubava a DAG
 inteira antes do primeiro load da `monthly_tse`) **e sempre exclui os
-marts horários** (`pod_usage_hourly`/`platform_cost_daily`,
-`_HOURLY_OWNED_MARTS`): eles são refrescados pelo próprio pipeline
-horário e dois dbt commits concorrentes na mesma tabela Iceberg são
-rejeitados pelo Lakekeeper ("Cannot assign a new UUID" — colisão real
-da gold com a run horária das 07:07 em 2026-08-21).
+marts horários** (`_HOURLY_OWNED_MARTS`, refrescados pelo próprio
+pipeline horário — commits dbt concorrentes na mesma tabela Iceberg são
+rejeitados pelo Lakekeeper, 2026-08-21).
 
 ## Infra e convenções
 
