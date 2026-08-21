@@ -110,8 +110,12 @@ via Akamai Bot Manager (403). Os dumps
 `capiba-bronze/tse/reference/` (upload manual via browser; sha256 no R-D-08b);
 `download_tse_dump` resolve a âncora pelo ano da run
 (`params.year`/`TSE_ELECTION_YEAR`) e falha com mensagem clara se ela não
-existir. Multi-ano: o normalize deleta por (dt, `election_year`); demais
-fontes deletam a partição inteira. Normalize streaming grava as silvers
+existir. Multi-ano: o normalize deleta por (dt, `election_year`) e o resume
+do download só reentra no manifest os arquivos do próprio ano (anos
+distintos compartilham a partição `dt=<run>` do bronze); demais
+fontes deletam a partição inteira. Layout republicado pelo TSE em 2026
+(`DS_SIT_TOT_TURNO`/`SG_UE`) aceito junto ao antigo. Normalize streaming
+grava as silvers
 `campaign_donations` e `candidacies`; documentos completos no silver —
 mascaramento é preocupação do mart gold (PR-D-08 §2).
 

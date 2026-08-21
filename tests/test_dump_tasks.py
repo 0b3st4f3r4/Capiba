@@ -186,3 +186,54 @@ class TestTaskDownloadSource:
 
         assert {f["file"] for f in payload["files"]} == {"Empresas0.zip", "Cnaes.zip"}
         mocked_lake["write_bronze_file"].assert_not_called()
+
+    def test_year_scoped_source_resumes_only_its_own_year(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mocked_lake: dict[str, MagicMock],
+    ) -> None:
+        """TSE: files of another election year in the same partition are
+        neither skipped nor re-entered into the manifest (they belong to a
+        different year-scoped run; the normalize delete is year-scoped)."""
+        from capiba.pipeline.registry import SOURCE_REGISTRY, SourceDef
+        from capiba.pipeline.tasks import task_download_source
+
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(
+            """\
+name: tse_task
+window: previous_month
+sources:
+  - name: tse
+    params:
+      year: 2022
+formula: file_dump
+destinations: [lake_bronze]
+""",
+            encoding="utf-8",
+        )
+        # Same dt partition holds the 2024 files of an earlier run.
+        mocked_lake["list_bronze_files"].return_value = [
+            "tse/files/dt=2026-08-02/prestacao_de_contas_eleitorais_candidatos_2024.zip",
+            "tse/files/dt=2026-08-02/consulta_cand_2024.zip",
+        ]
+        download = MagicMock(
+            side_effect=_fake_download(
+                {
+                    "prestacao_de_contas_eleitorais_candidatos_2022.zip": b"PK-2022",
+                    "consulta_cand_2022.zip": b"PK-cand-2022",
+                }
+            )
+        )
+        monkeypatch.setitem(SOURCE_REGISTRY, "tse", SourceDef(download=download))
+        ti = MagicMock()
+
+        payload = task_download_source("tse", str(spec_path), ti=ti, ds="2026-08-02")
+
+        # The 2024 files do not contaminate the manifest nor the skip set.
+        assert download.call_args.kwargs["skip"] == set()
+        assert {f["file"] for f in payload["files"]} == {
+            "prestacao_de_contas_eleitorais_candidatos_2022.zip",
+            "consulta_cand_2022.zip",
+        }

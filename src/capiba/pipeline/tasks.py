@@ -502,7 +502,12 @@ def task_download_source(
 
     # Resume support: files already uploaded to the bronze layer by a
     # previous attempt are skipped and re-entered into the manifest (the
-    # download tempdir does not survive a pod restart).
+    # download tempdir does not survive a pod restart). Year-scoped
+    # sources (TSE — params.year) only resume the files of their own
+    # election year: two years share the bronze partition ``dt=<run>``,
+    # and resuming the other year's files would re-append them to the
+    # silver while the normalize delete is scoped to this run's year
+    # (2024 rows doubled by the 2022 run of 2026-08-21).
     existing: dict[str, str] = {}
     try:
         existing = {
@@ -515,6 +520,10 @@ def task_download_source(
             source_name,
             exc,
         )
+    year = source.params.get("year")
+    if year is not None:
+        suffix = f"_{year}.zip"
+        existing = {n: k for n, k in existing.items() if n.endswith(suffix)}
 
     manifest: list[dict[str, Any]] = [
         {"file": name, "bytes": None, "sha256": None, "lake_key": key}
