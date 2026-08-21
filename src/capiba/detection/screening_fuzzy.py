@@ -30,7 +30,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from capiba.detection.entities import documents_match, name_similarity
+import numpy as np
+
+from capiba.detection.entities import documents_match, name_similarity, normalize_name
 from capiba.detection.screening import _as_date, _vigent_at
 from capiba.detection.signals import SignalType
 
@@ -40,6 +42,30 @@ WEIGHT_NAME = 0.6
 WEIGHT_MASKED_DOCUMENT = 0.4
 DOC_ASSISTED_THRESHOLD = 0.85
 NAME_ONLY_THRESHOLD = 0.95
+
+# Exact-recall prefilter (character-multiset upper bound). The name feature
+# is the SequenceMatcher ratio of the normalized names, 2M/(la+lb), and M
+# is bounded by the character-multiset overlap (each matched char consumes
+# one occurrence from both strings). A pair whose bound stays below the
+# ratio its regime requires provably scores None, so it is skipped without
+# ever running SequenceMatcher — the bound is vectorized with numpy over
+# the candidate set. Without it the screening is O(suppliers x sanctions)
+# at ~50 us per pair: 570M pairs on real volume (2026-08-21: 70k documented
+# suppliers x 8k documentless sanctions) would take hours.
+_BOUND_EPS = 1e-9
+_CHAR_TO_IDX = (
+    {chr(ord("A") + i): i for i in range(26)}
+    | {str(d): 26 + d for d in range(10)}
+    | {" ": 36}
+)
+
+
+def _name_vector(normalized: str) -> np.ndarray:
+    """Character counts of a normalized name (only [A-Z0-9 ] survive it)."""
+    vector = np.zeros(len(_CHAR_TO_IDX), dtype=np.int64)
+    for char in normalized:
+        vector[_CHAR_TO_IDX[char]] += 1
+    return vector
 
 
 def _full_document(record: dict[str, Any]) -> str | None:
@@ -139,11 +165,11 @@ def sanctioned_name_match_signals(
     # lookup is indexed by document — the old contracts × sanctions scan
     # is O(N·M) and does not finish on real volume (205k × 37k).
     sanctions_by_document: dict[str, list[dict[str, Any]]] = {}
-    docless_sanctions: list[dict[str, Any]] = []  # masked document or none
-    for sanction in sanctions:
+    docless_indexes_list: list[int] = []  # masked document or none
+    for index, sanction in enumerate(sanctions):
         document = _full_document(sanction)
         if document is None:
-            docless_sanctions.append(sanction)
+            docless_indexes_list.append(index)
         else:
             sanctions_by_document.setdefault(document, []).append(sanction)
 
@@ -177,17 +203,60 @@ def sanctioned_name_match_signals(
     # document is a veto (PR-D-06b § 3) and the same document is an exact
     # match — only documentless sanctions (masked or none) can signal. A
     # documentless supplier is never vetoed, so every sanction is a
-    # candidate.
+    # candidate. Within the candidate set, the character-multiset bound
+    # (see top of module) drops the pairs that provably cannot reach the
+    # ratio their regime requires — exact recall, no SequenceMatcher run.
+    norm_names = [normalize_name(sanction.get("sanctioned_name")) for sanction in sanctions]
+    name_vectors = (
+        np.stack([_name_vector(name) for name in norm_names])
+        if sanctions
+        else np.zeros((0, len(_CHAR_TO_IDX)), dtype=np.int64)
+    )
+    name_lengths = np.array([len(name) for name in norm_names], dtype=np.int64)
+    has_masked = np.array(
+        [bool(sanction.get("masked_document")) for sanction in sanctions]
+    )
+    all_indexes = np.arange(len(sanctions))
+    docless_indexes = np.array(docless_indexes_list, dtype=np.int64)
+    # Doc-assisted pairs score 0.6 * name_sim + 0.4 and emit at >= 0.85, so
+    # they require name_sim >= 0.75 with the default weights; every other
+    # pair is name-only and requires name_sim >= name_only_threshold.
+    required_doc = (
+        max((doc_assisted_threshold - document_weight) / name_weight, 0.0)
+        if name_weight > 0
+        else 0.0
+    )
+    bound_cache: dict[tuple[str, bool], np.ndarray] = {}
+
     hits: dict[tuple[str, str], dict[str, Any]] = {}
     for entity_id, variants in suppliers.items():
         for variant in variants.values():
             supplier = variant["supplier"]
-            candidates = (
-                sanctions
-                if _full_document(supplier) is None
-                else docless_sanctions
-            )
-            for sanction in candidates:
+            supplier_norm = normalize_name(supplier.get("legal_name"))
+            if not supplier_norm:
+                continue
+            docless_supplier = _full_document(supplier) is None
+            cache_key = (supplier_norm, docless_supplier)
+            survivor_indexes = bound_cache.get(cache_key)
+            if survivor_indexes is None:
+                indexes = all_indexes if docless_supplier else docless_indexes
+                bound = (
+                    2.0
+                    * np.minimum(_name_vector(supplier_norm), name_vectors[indexes]).sum(
+                        axis=1
+                    )
+                    / (len(supplier_norm) + name_lengths[indexes])
+                )
+                if docless_supplier:
+                    required = np.full(len(indexes), name_only_threshold)
+                else:
+                    required = np.where(
+                        has_masked[indexes], required_doc, name_only_threshold
+                    )
+                survivor_indexes = indexes[bound >= required - _BOUND_EPS]
+                bound_cache[cache_key] = survivor_indexes
+            for index in survivor_indexes:
+                sanction = sanctions[int(index)]
                 if (entity_id, str(sanction["id"])) in exact:
                     continue
                 score = fuzzy_match_score(

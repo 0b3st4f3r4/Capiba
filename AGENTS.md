@@ -193,7 +193,11 @@ Sinais best-effort emitidos no `task_detect` (nunca derrubam a task):
   `sanctioned_name_match` (screening fuzzy, `detection/screening_fuzzy.py`
   — validado por D-06b, `docs/results/R-D-06b.md`: veto por documento
   divergente, score 0,6 nome + 0,4 documento, limiares 0,85/0,95), sobre a
-  silver `sanctions`.
+  silver `sanctions`. Os pares candidatos passam por um **prefilter
+  vetorizado exato** (cota superior da ratio do SequenceMatcher via
+  interseção de multiset de caracteres; equivalência bit-a-bit guardada
+  por `TestIndexedImplementationEquivalence`) — o produto cruzado
+  documentless levaria horas em volume real (570M pares em 2026-08-21).
 - `political_connection` (`detection/political.py`, contrato PR-D-08 §3 —
   validado no sintético por D-08, `docs/results/R-D-08.md`, P8/volume real
   pendentes): doador de campanha de prefeito eleito (match exato por

@@ -162,6 +162,18 @@ class TestSanctionedNameMatchSignals:
         second = sanctioned_name_match_signals(contracts, [_sanction()])
         assert first == second
 
+    def test_prefilter_keeps_pairs_without_shared_tokens(self) -> None:
+        # Regression guard for the character-multiset prefilter: the bound
+        # is over character counts, not tokens, so a pair with high name
+        # similarity but disjoint tokens (every token slightly mutated,
+        # ratio ~0.846) still reaches fuzzy_match_score and emits — token
+        # blocking would drop it. Doc-assisted regime: 0.6 * 0.8462 + 0.4.
+        sanction = _sanction(name="AAAAAA BBBBBB")
+        contract = _contract(name="AAAAAB BBBBBA")
+        signals = sanctioned_name_match_signals([contract], [sanction])
+        assert len(signals) == 1
+        assert signals[0]["score"] == round(0.6 * 0.8461538461538461 + 0.4, 4)
+
 
 def _naive_reference(
     contracts: list[dict[str, Any]], sanctions: list[dict[str, Any]]
