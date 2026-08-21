@@ -1195,6 +1195,10 @@ def write_fraud_signals(
             # Delete-half first: a failure here aborts before the append,
             # so rows are never duplicated (see the docstring).
             delete_fraud_signals_partition(partition)
+            # The Trino DELETE commits a new snapshot; without a refresh the
+            # append commits against the stale one and the catalog rejects it
+            # ("Branch or tag `main`'s snapshot has changed", 2026-08-21).
+            table = table.refresh()
         table.append(pa.Table.from_pylist(rows, schema=_arrow_schema(table)))
     logger.info("Gold Iceberg table appended: fraud_signals (%d rows)", len(rows))
     return f"{ICEBERG_NAMESPACE}.fraud_signals"

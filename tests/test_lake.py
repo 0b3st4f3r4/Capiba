@@ -445,6 +445,7 @@ def _gold_cluster_mocks(
     mock_table = MagicMock()
     mock_table.schema.return_value = lake.FRAUD_SIGNALS_SCHEMA
     mock_table.append.side_effect = lambda _pa: order.append("append")
+    mock_table.refresh.return_value = mock_table
     mock_catalog = MagicMock()
     mock_catalog.load_table.return_value = mock_table
     mock_catalog.create_table_if_not_exists.return_value = mock_table
@@ -481,6 +482,7 @@ def test_write_fraud_signals_replaces_partition_in_cluster(
         "DELETE FROM gold.capiba.fraud_signals WHERE dt = DATE "
         f"'{RUN_DATE.isoformat()}'"
     )
+    mock_table.refresh.assert_called_once()  # snapshot muda com o DELETE
     mock_table.append.assert_called_once()
 
 
