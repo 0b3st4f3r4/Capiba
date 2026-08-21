@@ -148,7 +148,10 @@ class TestExport:
     def test_export_public_marts_covers_the_allowlist(self) -> None:
         client = _FakeMinio()
         summary = export_public_marts(
-            date(2026, 8, 20), run_query=_fake_run_query, client=client
+            date(2026, 8, 20),
+            run_query=_fake_run_query,
+            client=client,
+            list_tables=lambda: [f"capiba.{m}" for m in PUBLIC_MARTS],
         )
 
         assert summary["marts"] == len(PUBLIC_MARTS)
@@ -156,11 +159,34 @@ class TestExport:
         assert exported == set(PUBLIC_MARTS)
         assert "pod_usage_hourly" not in exported
 
+    def test_export_public_marts_skips_marts_without_gold_table(self) -> None:
+        """A mart excluded from the dbt run (source silvers missing, e.g.
+        TSE) has no gold table; the export skips it with a warning instead
+        of failing the whole batch."""
+        client = _FakeMinio()
+        present = [m for m in PUBLIC_MARTS if m != "political_connections"]
+        summary = export_public_marts(
+            date(2026, 8, 20),
+            run_query=_fake_run_query,
+            client=client,
+            list_tables=lambda: [f"capiba.{m}" for m in present],
+        )
+
+        assert summary["marts"] == len(present)
+        assert summary["skipped"] == ["political_connections"]
+        exported = {e["mart"] for e in summary["exports"]}
+        assert "political_connections" not in exported
+
     def test_task_uses_the_airflow_run_date(self) -> None:
         client = _FakeMinio()
         with (
             mock.patch.object(public_export.trino, "run_query", _fake_run_query),
             mock.patch.object(public_export.lake, "get_client", lambda: client),
+            mock.patch.object(
+                public_export.trino,
+                "list_iceberg_tables",
+                lambda catalog: [f"capiba.{m}" for m in PUBLIC_MARTS],
+            ),
         ):
             summary = task_export_public_marts(ds="2026-08-19")
         assert summary["run_date"] == "2026-08-19"

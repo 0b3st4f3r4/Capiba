@@ -257,7 +257,10 @@ via client MinIO do lake). Allowlist LGPD declarativa e **fail-closed** —
 `platform_cost_*`, `data_quality_*` = telemetria interna;
 `contract_red_flags` = `supplier_id` pode ser CPF completo);
 `political_connections` entra porque mascara CPF na origem. Mart novo sem
-classificação falha o guarda (`tests/test_public_export.py`). API pública
+classificação falha o guarda (`tests/test_public_export.py`). Mart
+liberado mas **sem tabela gold** (excluído do `dbt_run` por silvers
+fonte ausentes — ex.: TSE antes do primeiro load) é pulado com warning
+(`skipped` no sumário), sem derrubar o batch. API pública
 (`api/routers/public.py`, sem auth): `GET /v1/public/marts`,
 `GET /v1/public/marts/{name}/{csv|parquet}` (302 presignado, `?dt=` pina)
 e `GET /v1/public/methodology` (gerado do `_marts.yml` + specs YAML;

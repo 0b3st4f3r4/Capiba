@@ -214,6 +214,7 @@ def export_public_marts(
     *,
     run_query: Any = None,
     client: Any = None,
+    list_tables: Any = None,
 ) -> dict[str, Any]:
     """Exports every allowlisted gold mart to the public bucket.
 
@@ -221,19 +222,33 @@ def export_public_marts(
         run_date: Run date of the export (defaults to today, UTC).
         run_query: SQL runner (tests inject a fake).
         client: MinIO client (tests inject a fake).
+        list_tables: Gold table lister (defaults to
+            ``trino.list_iceberg_tables("gold")``; tests inject a fake).
 
     Returns:
-        Summary with the per-mart export results.
+        Summary with the per-mart export results and the marts skipped
+        because their gold table does not exist (excluded from the dbt
+        run — e.g. ``political_connections`` before the first TSE load).
     """
     day = run_date or datetime.now(UTC).date()
-    exports = [
-        export_mart(mart, day, run_query=run_query, client=client)
-        for mart in PUBLIC_MARTS
-    ]
+    if list_tables is None:
+        list_tables = lambda: trino.list_iceberg_tables("gold")  # noqa: E731
+    available = set(list_tables())
+    exports = []
+    skipped = []
+    for mart in PUBLIC_MARTS:
+        if f"capiba.{mart}" not in available:
+            logger.warning(
+                "Public export skipped: gold.capiba.%s does not exist", mart
+            )
+            skipped.append(mart)
+            continue
+        exports.append(export_mart(mart, day, run_query=run_query, client=client))
     return {
         "bucket": PUBLIC_EXPORT_BUCKET,
         "run_date": day.isoformat(),
         "marts": len(exports),
+        "skipped": skipped,
         "exports": exports,
     }
 
