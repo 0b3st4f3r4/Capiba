@@ -71,6 +71,17 @@ class TestRunDbt:
         assert args[-3:] == ["--select", "pod_usage_hourly", "platform_cost_daily"]
 
     @patch("dbt.cli.main.dbtRunner")
+    def test_run_dbt_with_exclude(self, mock_runner_cls: MagicMock) -> None:
+        """A model exclusion must be forwarded to ``--exclude``."""
+        result = MagicMock(success=True)
+        mock_runner_cls.return_value.invoke.return_value = result
+
+        run_dbt("run", exclude=["political_connections"])
+
+        args = mock_runner_cls.return_value.invoke.call_args.args[0]
+        assert args[-2:] == ["--exclude", "political_connections"]
+
+    @patch("dbt.cli.main.dbtRunner")
     def test_run_dbt_failure(self, mock_runner_cls: MagicMock) -> None:
         """A non-success dbt result must raise RuntimeError."""
         result = MagicMock(success=False)

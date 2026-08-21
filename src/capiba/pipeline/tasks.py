@@ -1109,6 +1109,14 @@ def task_gold_report(spec_path: str, **context: Any) -> dict[str, Any]:
     return {"key": key}
 
 
+# Marts that read the TSE silvers (campaign_donations/candidacies). Full
+# runs exclude them until the first monthly_tse load lands — the mart SQL
+# fails with TABLE_NOT_FOUND otherwise and would block the whole
+# gold_detection DAG.
+_TSE_SILVER_ENTITIES = ("campaign_donations", "candidacies")
+_TSE_DEPENDENT_MARTS = ["political_connections"]
+
+
 def task_dbt_run(select: list[str] | None = None, **context: Any) -> dict[str, Any]:
     """Task: build the gold Iceberg marts with dbt.
 
@@ -1117,17 +1125,33 @@ def task_dbt_run(select: list[str] | None = None, **context: Any) -> dict[str, A
 
     Args:
         select: Optional dbt model selection (``--select``); None builds
-            the whole project (used by ``gold_detection``).
+            the whole project (used by ``gold_detection``), excluding the
+            TSE-dependent marts while the TSE silver tables do not exist.
         context: Airflow context.
 
     Returns:
-        Execution summary (command, selection and project dir).
+        Execution summary (command, selection, exclusion and project dir).
     """
     from capiba.pipeline.dbt_runner import run_dbt
 
-    logger.info("Building gold marts with dbt (select: %s)", select or "all")
-    run_dbt("run", select=select)
-    return {"dbt": "run", "select": select or [], "project_dir": DBT_PROJECT_DIR}
+    exclude: list[str] = []
+    if select is None and any(
+        not lake.silver_table_exists(entity) for entity in _TSE_SILVER_ENTITIES
+    ):
+        exclude = _TSE_DEPENDENT_MARTS
+        logger.warning(
+            "TSE silver tables missing; excluding %s from the full dbt run",
+            exclude,
+        )
+    logger.info("Building gold marts with dbt (select: %s, exclude: %s)",
+                select or "all", exclude or "none")
+    run_dbt("run", select=select, exclude=exclude or None)
+    return {
+        "dbt": "run",
+        "select": select or [],
+        "exclude": exclude,
+        "project_dir": DBT_PROJECT_DIR,
+    }
 
 
 def task_run_pipeline(spec_path: str, **context: Any) -> dict[str, Any]:

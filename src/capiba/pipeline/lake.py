@@ -788,6 +788,24 @@ def write_silver(records: list[dict[str, Any]], run_date: date | None = None) ->
     return f"{ICEBERG_NAMESPACE}.contracts"
 
 
+def silver_table_exists(name: str) -> bool:
+    """Checks whether a silver Iceberg table exists in the catalog.
+
+    Args:
+        name: Table name inside the silver namespace (e.g. ``contracts``,
+            ``campaign_donations``).
+
+    Returns:
+        True when the table is registered in the catalog.
+    """
+    catalog = get_catalog(ICEBERG_WAREHOUSE_SILVER)
+    try:
+        catalog.load_table(f"{ICEBERG_NAMESPACE}.{name}")
+    except NoSuchTableError:
+        return False
+    return True
+
+
 def read_silver_contracts() -> list[dict[str, Any]]:
     """Reads every row of the silver ``contracts`` Iceberg table.
 

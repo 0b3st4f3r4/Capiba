@@ -182,6 +182,13 @@ def test_silver_table_has_dt_partition_spec(local_catalog: Path) -> None:
     assert spec.fields[0].name == "dt"
 
 
+def test_silver_table_exists(local_catalog: Path) -> None:
+    """False before the first write of the table, True once it exists."""
+    assert lake.silver_table_exists("contracts") is False
+    lake.write_silver([_contract("C001")], run_date=RUN_DATE)
+    assert lake.silver_table_exists("contracts") is True
+
+
 def test_write_bronze_file_key_layout_and_raw_bytes(mock_client: MagicMock) -> None:
     """Bronze file uploads keep raw bytes under <source>/files/dt=<date>/."""
     data = b"\x50\x4b fake-zip-bytes"

@@ -271,7 +271,11 @@ uma run regular. O post step `dbt_run` aceita mapping com `select`
 (vazio = projeto todo): pipelines frequentes declaram só os marts
 alimentados — o `hourly_pod_usage` roda `--select pod_usage_hourly
 platform_cost_daily` (run completo OOMKillava o Trino); o run completo
-fica com a `gold_detection`.
+fica com a `gold_detection` — que **exclui automaticamente os marts
+dependentes de TSE** (`political_connections`) enquanto as silvers
+`campaign_donations`/`candidacies` não existirem
+(`lake.silver_table_exists`; sem isso o TABLE_NOT_FOUND derrubava a DAG
+inteira antes do primeiro load da `monthly_tse`).
 
 ## Infra e convenções
 

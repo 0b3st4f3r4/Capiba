@@ -664,23 +664,56 @@ class TestTaskDetect:
 class TestTaskDbtRun:
     """Tests for the dbt run task."""
 
+    @patch("capiba.pipeline.lake.silver_table_exists", return_value=True)
     @patch("capiba.pipeline.dbt_runner.run_dbt")
-    def test_task_dbt_run(self, mock_run_dbt: MagicMock) -> None:
+    def test_task_dbt_run(self, mock_run_dbt: MagicMock, mock_exists: MagicMock) -> None:
         """The task must invoke dbt and return an execution summary."""
         from capiba.config import DBT_PROJECT_DIR
 
         summary = task_dbt_run()
 
-        mock_run_dbt.assert_called_once_with("run", select=None)
-        assert summary == {"dbt": "run", "select": [], "project_dir": DBT_PROJECT_DIR}
+        mock_run_dbt.assert_called_once_with("run", select=None, exclude=None)
+        assert summary == {
+            "dbt": "run",
+            "select": [],
+            "exclude": [],
+            "project_dir": DBT_PROJECT_DIR,
+        }
 
+    @patch("capiba.pipeline.lake.silver_table_exists", return_value=True)
     @patch("capiba.pipeline.dbt_runner.run_dbt")
-    def test_task_dbt_run_with_select(self, mock_run_dbt: MagicMock) -> None:
-        """A model selection must reach run_dbt and the summary."""
+    def test_task_dbt_run_with_select(
+        self, mock_run_dbt: MagicMock, mock_exists: MagicMock
+    ) -> None:
+        """A model selection must reach run_dbt and the summary — and skips
+        the TSE-silver existence check (the exclusion only applies to full
+        runs)."""
         summary = task_dbt_run(select=["pod_usage_hourly"])
 
-        mock_run_dbt.assert_called_once_with("run", select=["pod_usage_hourly"])
+        mock_run_dbt.assert_called_once_with(
+            "run", select=["pod_usage_hourly"], exclude=None
+        )
+        mock_exists.assert_not_called()
         assert summary["select"] == ["pod_usage_hourly"]
+
+    @patch("capiba.pipeline.dbt_runner.run_dbt")
+    def test_task_dbt_run_excludes_tse_marts_when_silvers_missing(
+        self, mock_run_dbt: MagicMock
+    ) -> None:
+        """Full runs exclude the TSE-dependent marts while the TSE silvers
+        do not exist (the mart SQL fails with TABLE_NOT_FOUND and would
+        block the whole gold_detection DAG before the first monthly_tse
+        load)."""
+        with patch(
+            "capiba.pipeline.lake.silver_table_exists",
+            side_effect=lambda entity: entity != "campaign_donations",
+        ):
+            summary = task_dbt_run()
+
+        mock_run_dbt.assert_called_once_with(
+            "run", select=None, exclude=["political_connections"]
+        )
+        assert summary["exclude"] == ["political_connections"]
 
 
 class TestTaskPostStep:
