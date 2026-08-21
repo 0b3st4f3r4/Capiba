@@ -149,6 +149,14 @@ janela entre delete e optimize quebraria a leitura — risco anotado em
 `lake_maintenance.py` (semanal: expire_snapshots + optimize) e
 `gold_detection.py` (diária 08:00 UTC: `dbt_run` → `detect` sobre TODO o
 silver — é a "run final" após um backfill) seguem DAGs imperativas.
+As tasks pesadas de memória (crawls `contracts_default`, normalizes,
+destinos lake/grafo da factory e o `detect`) rodam no **pool
+`heavy_lake` (1 slot)**: o deploy executa scheduler + tasks num único
+container e picos concorrentes (detect ~2 GB + normalize/crawl do
+`daily_pncp`) OOMKillavam o pod em volume real (2026-08-21). O pool é
+criado pelo init container `airflow-db-init`
+(`airflow pools set heavy_lake 1`, idempotente) e referenciado via
+`HEAVY_POOL` em `dags/pipeline_factory.py` e `dags/gold_detection.py`.
 Transformações nomeadas em `src/capiba/transformations/` (um módulo por
 transformação, `transform(records, **params)`).
 

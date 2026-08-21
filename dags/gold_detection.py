@@ -56,6 +56,13 @@ DWH_SERVING_MARTS = [
 GOLD_FRAUD_SIGNALS = Asset(uri="capiba://gold/fraud_signals")
 PUBLIC_MARTS_EXPORT = Asset(uri="capiba://public/marts")
 
+# One-slot pool serializing the memory-heavy lake tasks — keep in sync with
+# HEAVY_POOL in dags/pipeline_factory.py (DAG files do not import each
+# other). The detect holds the whole silver contracts table in memory and
+# shares one container with the ingestion tasks; concurrent peaks
+# OOMKilled the pod on real volume (2026-08-21).
+HEAVY_POOL = "heavy_lake"
+
 DEFAULT_ARGS = {
     "owner": "capiba",
     "depends_on_past": False,
@@ -84,6 +91,7 @@ with DAG(
     detect = PythonOperator(
         task_id="detect",
         python_callable=task_detect,
+        pool=HEAVY_POOL,
         inlets=[SILVER_CONTRACTS],
         outlets=[GOLD_FRAUD_SIGNALS],
     )

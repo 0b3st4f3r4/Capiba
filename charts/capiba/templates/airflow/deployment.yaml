@@ -103,6 +103,11 @@ spec:
             - |
               set -e
               airflow db migrate
+              # Memory-heavy tasks (dataset-wide crawls, normalizes, lake
+              # destinations, gold detect) share one container, so they run
+              # one at a time — concurrent peaks OOMKilled the pod on real
+              # volume (2026-08-21). Idempotent upsert.
+              airflow pools set heavy_lake 1 "Serializes memory-heavy lake tasks"
           volumeMounts:
             - name: synced
               mountPath: /opt/airflow/dags

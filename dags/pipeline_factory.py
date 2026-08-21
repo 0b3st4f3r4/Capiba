@@ -58,6 +58,14 @@ logger = logging.getLogger(__name__)
 
 PIPELINES_DIR = Path(__file__).resolve().parent / "pipelines"
 
+# One-slot pool serializing the memory-heavy lake tasks (dataset-wide
+# crawls, normalizes and lake/graph destinations): the Airflow deployment
+# runs scheduler + tasks in a single container, so concurrent peaks
+# OOMKilled the pod on real volume (2026-08-21). Created by the
+# airflow-db-init init container; keep gold_detection.py in sync (DAG files
+# do not import each other).
+HEAVY_POOL = "heavy_lake"
+
 DEFAULT_ARGS = {
     "owner": "capiba",
     "depends_on_past": False,
@@ -241,6 +249,10 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                 PythonOperator(
                     task_id=task_id,
                     python_callable=python_callable,
+                    # Contracts crawls hold the whole window in memory and
+                    # push it to XCom; entity/document crawls checkpoint per
+                    # page/file and stay light.
+                    pool=HEAVY_POOL if spec.formula == "contracts_default" else None,
                     inlets=[SOURCE_INLETS[source.name]]
                     if source.name in SOURCE_INLETS
                     else [],
@@ -269,6 +281,7 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                         source_name=source.name,
                         spec_path=str(spec_path),
                     ),
+                    pool=HEAVY_POOL,
                     outlets=shared_outlets,
                 )
                 src_task >> normalize
@@ -288,6 +301,7 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                         source_name=source.name,
                         spec_path=str(spec_path),
                     ),
+                    pool=HEAVY_POOL,
                     outlets=shared_outlets,
                 )
                 src_task >> normalize
@@ -300,6 +314,7 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                 python_callable=partial(
                     task_normalize_pipeline, spec_path=str(spec_path)
                 ),
+                pool=HEAVY_POOL,
                 outlets=shared_outlets,
             )
             for src_task in source_tasks:
@@ -312,6 +327,7 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                     python_callable=partial(
                         task_validate_pipeline, spec_path=str(spec_path)
                     ),
+                    pool=HEAVY_POOL,
                     outlets=shared_outlets,
                 )
                 normalize >> validate
@@ -358,16 +374,19 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                 python_callable = partial(
                     task_silver_entities_summary, spec_path=str(spec_path)
                 )
+                dest_pool = None
             else:
                 python_callable = partial(
                     task_destination,
                     destination_name=dest.name,
                     spec_path=str(spec_path),
                 )
+                dest_pool = HEAVY_POOL
             destination_tasks.append(
                 PythonOperator(
                     task_id=_destination_task_id(dest.name),
                     python_callable=python_callable,
+                    pool=dest_pool,
                     outlets=shared_outlets,
                 )
             )
@@ -390,6 +409,9 @@ def build_dag(spec: PipelineSpec, spec_path: Path) -> DAG:
                         spec_path=str(spec_path),
                         select=step.select or None,
                     ),
+                    # The detect post step holds the whole silver contracts
+                    # table; dbt_run is server-side and stays light.
+                    pool=HEAVY_POOL if step.name == "detect" else None,
                     outlets=shared_outlets,
                 )
             )

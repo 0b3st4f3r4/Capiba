@@ -151,6 +151,20 @@ class TestBuildDags:
         }
         assert dag.get_task("dbt_run").downstream_task_ids == {"destination_gold_report"}
 
+        # Memory-heavy tasks share the one-slot pool so their peaks never
+        # stack inside the single-container Airflow deployment.
+        for heavy_task_id in (
+            "crawl_pncp",
+            "normalize",
+            "validate",
+            "destination_lake_bronze",
+            "destination_lake_silver",
+            "destination_arangodb_graph",
+            "detect",
+        ):
+            assert dag.get_task(heavy_task_id).pool == "heavy_lake", heavy_task_id
+        assert dag.get_task("dbt_run").pool == "default_pool"
+
         crawl_task = dag.get_task("crawl_pncp")
         inlet_uris = {a.uri for a in crawl_task.inlets}
         assert inlet_uris == {"capiba://source/pncp"}
