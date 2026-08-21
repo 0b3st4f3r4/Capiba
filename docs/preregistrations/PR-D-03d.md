@@ -371,3 +371,20 @@ Após a aprovação humana deste registro, com TDD/BDD usual:
   `task_detect` ((5,2), K = 500): pendente de **decisão humana
   registrada**, que também decide o destino do backlog histórico
   (seção 3). Defaults e guarda de produção inalterados.
+- 2026-08-21: **decisão humana registrada — promoção autorizada.** A
+  semântica top-K é promovida ao `task_detect`: derivação **bloqueada**
+  (recall exato, D-03c) + `ranked_emission` com `DETECTION_COLLUSION_TOP_K`
+  (default 500, config nova em `src/capiba/config.py`); o pacote
+  `graph_batch` de produção grava o descriptor (`top_k`,
+  `qualified_count`). **Decisão sobre o backlog**: os 809.220 sinais
+  legados **não são reprocessados** — ficam como estão na fila; a próxima
+  run já emite top-K. **Divergência registrada (parâmetros de produção)**:
+  a bateria validou o ponto (5,2) e o §8 menciona a promoção "no ponto
+  selecionado", mas o §3 é explícito que os **defaults de produção de
+  `min_wins`/`min_buyers` não mudam** — o PR não fixa o ponto de produção.
+  A promoção aplica portanto os defaults vigentes (`MIN_WINS = 3`,
+  `MIN_BUYERS = 1`) **apenas com o truncamento top-K**; promover o ponto
+  (5,2) validado fica como refinamento futuro (candidato a PR-D-03e),
+  pois mudar os pisos exigiria decisão específica. A guarda
+  `DETECTION_COLLUSION_MAX_PAIRS` segue inalterada (derivação pulada acima
+  de 1M de pares projetados, snapshot preservado como evidência).

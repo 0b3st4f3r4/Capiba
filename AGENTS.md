@@ -247,8 +247,15 @@ Sinais best-effort emitidos no `task_detect` (nunca derrubam a task):
   evidência. D-03c (`docs/results/R-D-03c.md`): blocking de recall exato
   (`blocked_supplier_index`, predicado `|B(s)| ≥ min_buyers`) provado
   equivalente bit a bit, mas **refutado** nos pontos permissivos ((3,2)/(3,3)
-  seguem acima da guarda); PR-D-03d propõe emissão ranqueada com orçamento
-  editorial explícito (top-K declarado, prefixo bit a bit).
+  seguem acima da guarda); PR-D-03d (`docs/results/R-D-03d.md`, success
+  T1–T9) introduziu a emissão ranqueada com orçamento editorial —
+  **promovida à produção em 2026-08-21** (decisão humana registrada no PR):
+  o `task_detect` deriva bloqueado (`pair_buyers_from_eligibility_blocked`)
+  e emite top-`DETECTION_COLLUSION_TOP_K` (default 500; ordenação
+  buyer_count/wins_sum desc, par asc) com descriptor `top_k`/`qualified_count`
+  no pacote de evidência; backlog legado não reprocessado. Defaults de
+  min_wins/min_buyers inalterados — a bateria validou (5,2); promover o
+  ponto validado é candidato a PR-D-03e.
 - `notice_clone` (`detection/notice_clone.py`, PR-D-10): editais
   clonados/direcionados via NLP sobre os diários do Querido Diário —
   segmentação de edições (`ingestion/gazette_segments.py`), cosseno estrito >

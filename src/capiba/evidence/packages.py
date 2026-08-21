@@ -210,7 +210,9 @@ def store_signal_packages(
 
     Artifacts are content-addressed (SHA-256 object keys), so identical
     reruns converge to the same objects. When ``graph_snapshot`` is given
-    (``{"rows": eligibility rows, "min_wins": int}``), a graph batch
+    (``{"rows": eligibility rows, "min_wins": int}``, plus optional
+    ``min_buyers`` and — for the declared top-K emission, PR-D-03d —
+    ``top_k``/``qualified_count``), a graph batch
     package is stored as well and the graph-derived manifests reference it
     with ``reproducible: true`` (PR-D-03).
 
@@ -266,6 +268,8 @@ def store_signal_packages(
             graph_snapshot["min_wins"],
             run_date,
             int(graph_snapshot.get("min_buyers", 1)),
+            top_k=graph_snapshot.get("top_k"),
+            qualified_count=graph_snapshot.get("qualified_count"),
         )
         graph_result = storage.store(
             _canonical(graph_batch),

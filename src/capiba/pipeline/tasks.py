@@ -29,6 +29,7 @@ from capiba.config import (
     DETECTION_COLLUSION_MAX_PAIRS,
     DETECTION_COLLUSION_MIN_BUYERS,
     DETECTION_COLLUSION_MIN_WINS,
+    DETECTION_COLLUSION_TOP_K,
     DETECTION_ENTITY_THRESHOLD,
     DETECTION_GEOGRAPHY_MAX_DISTANCE_KM,
     DETECTION_GEOGRAPHY_SCORE_REFERENCE,
@@ -47,8 +48,9 @@ from capiba.detection.entities import resolve_entities
 from capiba.detection.geography import anomalous_geography_signals
 from capiba.detection.graphs import (
     collusion_eligibility,
-    pair_buyers_from_eligibility,
+    pair_buyers_from_eligibility_blocked,
     projected_pair_count,
+    ranked_emission,
 )
 from capiba.detection.notice_clone import (
     Notice,
@@ -725,7 +727,7 @@ def task_detect(**context: Any) -> dict[str, Any]:
         # Memory guard: the pair derivation is combinatorial per buyer and
         # explodes on real volume (9,6M pairs on 2026-08-21, OOMKilled the
         # pod); over the budget the eligibility snapshot is still stored as
-        # evidence, but no signals are derived (PR-D-03c pending).
+        # evidence, but no signals are derived.
         collusion_projected = projected_pair_count(eligibility)
         if collusion_projected > DETECTION_COLLUSION_MAX_PAIRS:
             logger.warning(
@@ -735,15 +737,24 @@ def task_detect(**context: Any) -> dict[str, Any]:
                 DETECTION_COLLUSION_MAX_PAIRS,
             )
         else:
-            pair_buyers = pair_buyers_from_eligibility(
+            # PR-D-03d (promoted by human decision of 2026-08-21): blocked
+            # derivation (exact recall, D-03c) + declared top-K ranked
+            # emission; the descriptor is recorded in the evidence package.
+            pair_buyers = pair_buyers_from_eligibility_blocked(
                 eligibility, DETECTION_COLLUSION_MIN_BUYERS
             )
+            emission = ranked_emission(
+                pair_buyers, eligibility, DETECTION_COLLUSION_TOP_K
+            )
+            graph_snapshot["top_k"] = emission["top_k"]
+            graph_snapshot["qualified_count"] = emission["qualified_count"]
+            emitted = emission["emission"]
             signals.extend(
                 collusion_signals(
-                    [set(pair) for pair, _ in pair_buyers],
+                    [set(entry["pair"]) for entry in emitted],
                     DETECTION_COLLUSION_MIN_WINS,
                     DETECTION_COLLUSION_MIN_BUYERS,
-                    dict(pair_buyers),
+                    {tuple(entry["pair"]): entry["buyers"] for entry in emitted},
                 )
             )
         # Editorial triage queue: new signals enter as pending_review.

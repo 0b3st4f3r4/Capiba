@@ -32,8 +32,8 @@ def graph_eligible_suppliers(
 ) -> None:
     """AQL rows of detect_collusion: both suppliers eligible for one buyer."""
     context["graph_rows"] = [
-        {"buyer": buyer, "supplier": s1},
-        {"buyer": buyer, "supplier": s2},
+        {"buyer": buyer, "supplier": s1, "wins": 3},
+        {"buyer": buyer, "supplier": s2, "wins": 3},
     ]
 
 

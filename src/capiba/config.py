@@ -259,6 +259,16 @@ DETECTION_COLLUSION_MIN_BUYERS = int(os.getenv("DETECTION_COLLUSION_MIN_BUYERS",
 # PR-D-03c pending). Operational guard, not a calibrated threshold.
 DETECTION_COLLUSION_MAX_PAIRS = int(os.getenv("DETECTION_COLLUSION_MAX_PAIRS", "1000000"))
 
+# Emission budget of the collusion_network signal (PR-D-03d: declared top-K
+# ranked emission over the blocked derivation — buyer_count desc, wins_sum
+# desc, pair asc — promoted to the detect post step by human decision of
+# 2026-08-21 after the D-03d success verdict, docs/results/R-D-03d.md). The
+# snapshot stays complete; the descriptor (top_k, qualified_count, coverage)
+# is recorded in the graph_batch evidence package. min_wins/min_buyers stay
+# at the standing defaults — the PR did not fix the production grid point
+# (the battery validated (5,2); divergence recorded in PR-D-03d Revisões).
+DETECTION_COLLUSION_TOP_K = int(os.getenv("DETECTION_COLLUSION_TOP_K", "500"))
+
 # Merge threshold for the same_as edges written by the entity resolution
 # after the CNPJ graph load. Calibrated by batteries D-07/D-07b
 # (PR-D-07/PR-D-07b); lowering or raising it requires a new pre-registration

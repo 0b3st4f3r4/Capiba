@@ -294,6 +294,77 @@ class TestTaskDetect:
         # The eligibility snapshot is still stored as evidence (PR-D-03c input).
         snapshot = self.mock_store_packages.call_args.kwargs["graph_snapshot"]
         assert snapshot["rows"] == mock_collusion.return_value
+        # Guard path unchanged: no derivation, no emission descriptor.
+        assert "top_k" not in snapshot
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_truncates_collusion_emission_to_top_k(
+        self,
+        mock_lake: MagicMock,
+        mock_get_db: MagicMock,
+        mock_collusion: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """PR-D-03d: only the declared top-K prefix is emitted, and the
+        descriptor (top_k, qualified_count) reaches the evidence snapshot."""
+        import capiba.pipeline.tasks as tasks_module
+
+        monkeypatch.setattr(tasks_module, "DETECTION_COLLUSION_TOP_K", 1)
+        mock_lake.read_silver_contracts.return_value = []
+        mock_collusion.return_value = [
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 5},
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 4},
+            {"buyer": "B2", "supplier": "91000000000001", "wins": 4},
+            {"buyer": "B2", "supplier": "91000000000002", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000003", "wins": 9},
+        ]
+
+        summary = task_detect(ds="2026-01-01")
+
+        # 3 qualified pairs ({1,2} in B1/B2, {1,3} and {2,3} in B1); the
+        # top-1 is {1,2} — the only pair with buyer_count 2.
+        assert summary["signals"] == 1
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert [s["entity_id"] for s in signals] == ["91000000000001+91000000000002"]
+        assert json.loads(signals[0]["details"])["buyers"] == ["B1", "B2"]
+        snapshot = self.mock_store_packages.call_args.kwargs["graph_snapshot"]
+        assert snapshot["top_k"] == 1
+        assert snapshot["qualified_count"] == 3
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_collusion_emission_order_deterministic(
+        self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
+    ) -> None:
+        """The emitted signals follow the declared ranking (buyer_count
+        desc, wins_sum desc, pair asc), byte-stable across runs."""
+        mock_lake.read_silver_contracts.return_value = []
+        mock_collusion.return_value = [
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 5},
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 3},
+            {"buyer": "B2", "supplier": "91000000000001", "wins": 4},
+            {"buyer": "B2", "supplier": "91000000000002", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000003", "wins": 9},
+        ]
+
+        task_detect(ds="2026-01-01")
+        first = [
+            s["entity_id"]
+            for s in mock_lake.write_fraud_signals.call_args.args[0]
+            if s["signal_type"] == "collusion_network"
+        ]
+        task_detect(ds="2026-01-01")
+        second = [
+            s["entity_id"]
+            for s in mock_lake.write_fraud_signals.call_args.args[0]
+            if s["signal_type"] == "collusion_network"
+        ]
+
+        assert first == second
+        assert first[0] == "91000000000001+91000000000002"  # buyer_count 2
 
     @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
@@ -700,12 +771,15 @@ class TestTaskDetect:
         assert args[1] == mock_lake.write_fraud_signals.call_args.args[0]
         assert args[2] == contracts
         assert args[3] == date(2026, 1, 1)
-        # Graph snapshot (PR-D-03): eligibility rows flow to the packages.
+        # Graph snapshot (PR-D-03): eligibility rows flow to the packages,
+        # with the top-K emission descriptor (PR-D-03d).
         graph_snapshot = self.mock_store_packages.call_args.kwargs["graph_snapshot"]
         assert graph_snapshot == {
             "rows": mock_collusion.return_value,
             "min_wins": 3,
             "min_buyers": 1,
+            "top_k": 500,
+            "qualified_count": 0,
         }
 
     @patch("capiba.pipeline.tasks.collusion_eligibility")
