@@ -8,6 +8,12 @@ metadata:
     {{- include "capiba.componentLabels" (dict "component" "airflow" "context" .) | nindent 4 }}
 data:
   AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+  # The LocalExecutor keeps one idle worker process per parallelism slot
+  # (~164 MiB RSS each): the default 32 slots alone cost ~5 GiB inside the
+  # single-container deployment and, summed with the task peaks, OOMKilled
+  # the pod repeatedly on real volume (2026-08-21). 8 slots suffice — the
+  # heavy_lake pool already serializes the memory-heavy tasks.
+  AIRFLOW__CORE__PARALLELISM: "8"
   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://{{ .Values.airflow.database.username }}:{{ .Values.airflow.database.password }}@{{ default (include "capiba.postgresql.fullname" .) .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.dbname }}"
   AIRFLOW__CORE__LOAD_EXAMPLES: "false"
   AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
