@@ -105,7 +105,11 @@ postgresql:
       memory: 256Mi
     limits:
       cpu: 500m
-      memory: 1Gi
+      # 1Gi was OOMKilled under the combined load of the Airflow
+      # metadata, Lakekeeper catalog and the dbt serving writes
+      # (2026-08-21, exit 137) — the dead Postgres took the Airflow
+      # scheduler down with it (queued runs, stuck DAGs).
+      memory: 2Gi
 
 # ArangoDB (multi-model: documents, graphs, vectors, full-text)
 arangodb:
