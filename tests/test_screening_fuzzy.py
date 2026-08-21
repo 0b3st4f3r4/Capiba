@@ -161,3 +161,123 @@ class TestSanctionedNameMatchSignals:
         first = sanctioned_name_match_signals(contracts, [_sanction()])
         second = sanctioned_name_match_signals(contracts, [_sanction()])
         assert first == second
+
+
+def _naive_reference(
+    contracts: list[dict[str, Any]], sanctions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Brute-force transcription of the PR-D-06b semantics (O(N·M)).
+
+    Reference for the equivalence property test: the optimized
+    ``sanctioned_name_match_signals`` (indexed by document, grouped by
+    supplier) must produce exactly this output on any input.
+    """
+    import json
+
+    from capiba.detection.screening import _as_date, _vigent_at
+
+    def _doc(record: dict[str, Any]) -> str | None:
+        document = record.get("cnpj") or record.get("cpf")
+        return str(document) if document else None
+
+    exact: set[tuple[str, str]] = set()
+    for contract in contracts:
+        supplier = contract.get("supplier") or {}
+        supplier_doc = _doc(supplier)
+        if supplier_doc is None:
+            continue
+        for sanction in sanctions:
+            if _doc(sanction) == supplier_doc:
+                exact.add((supplier_doc, str(sanction["id"])))
+
+    hits: dict[tuple[str, str], dict[str, Any]] = {}
+    for contract in contracts:
+        supplier = contract.get("supplier") or {}
+        if not supplier.get("legal_name"):
+            continue
+        signed_on = _as_date(contract.get("signature_date"))
+        if signed_on is None:
+            continue
+        entity_id = _doc(supplier) or str(supplier["legal_name"])
+        for sanction in sanctions:
+            if not _vigent_at(sanction, signed_on):
+                continue
+            if (entity_id, str(sanction["id"])) in exact:
+                continue
+            score = fuzzy_match_score(sanction, supplier)
+            if score is None:
+                continue
+            key = (entity_id, str(sanction["list_name"]))
+            hit = hits.setdefault(
+                key, {"sanctions": set(), "contracts": set(), "score": 0.0}
+            )
+            hit["sanctions"].add(str(sanction["id"]))
+            hit["contracts"].add(str(contract.get("id")))
+            hit["score"] = max(hit["score"], score)
+
+    return [
+        {
+            "entity_type": "supplier",
+            "entity_id": entity_id,
+            "signal_type": SignalType.SANCTIONED_NAME_MATCH,
+            "score": round(hit["score"], 4),
+            "details": json.dumps(
+                {
+                    "sanctions": sorted(hit["sanctions"]),
+                    "lists": [list_name],
+                    "contracts": len(hit["contracts"]),
+                    "match": "fuzzy",
+                },
+                sort_keys=True,
+            ),
+        }
+        for (entity_id, list_name), hit in sorted(hits.items())
+    ]
+
+
+class TestIndexedImplementationEquivalence:
+    """The indexed implementation must equal the naive O(N·M) reference."""
+
+    def _corpus(self, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        import random
+
+        rng = random.Random(seed)
+        names = [
+            "MARIA DE FATIMA PEREIRA",
+            "MARIA DE FATIMA PEREIRA SOUZA",
+            "PEREIRA MARIA DE FATIMA",
+            "JOSE RAIMUNDO SILVA",
+            "EMPRESA QUALQUER LTDA",
+            "EMPRESA QUALQUER LTDA ME",
+            "JORGE HENRIQUE AMORIM",
+        ]
+        docs = ["12343515100", "99900011122", "11111111000111", None]
+        sanctions = [
+            _sanction(
+                sanction_id=f"s-{i}",
+                name=rng.choice(names),
+                list_name=rng.choice(["ceaf", "ceis", "cnep"]),
+                masked=rng.choice([MASKED, "***999888**", None]),
+                cpf=rng.choice(docs),
+                start=rng.choice(["2025-01-01", "2026-01-01"]),
+                end=rng.choice([None, "2026-06-30"]),
+            )
+            for i in range(15)
+        ]
+        contracts = [
+            _contract(
+                f"C{i}",
+                name=rng.choice(names),
+                cpf=rng.choice(docs),
+                signed=rng.choice(["2026-03-10", "2024-12-31", "2026-08-01"]),
+            )
+            for i in range(30)
+        ]
+        return contracts, sanctions
+
+    def test_matches_the_naive_reference_on_random_corpora(self) -> None:
+        for seed in range(20):
+            contracts, sanctions = self._corpus(seed)
+            assert sanctioned_name_match_signals(contracts, sanctions) == (
+                _naive_reference(contracts, sanctions)
+            ), f"divergence on seed {seed}"

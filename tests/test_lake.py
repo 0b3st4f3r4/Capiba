@@ -586,9 +586,9 @@ class TestReadEstablishmentsForCnpjs:
         mock_query = MagicMock(return_value=[])
         monkeypatch.setattr(lake.trino, "run_query", mock_query)
 
-        lake.read_establishments_for_cnpjs({f"{i:014d}" for i in range(1200)})
+        lake.read_establishments_for_cnpjs({f"{i:014d}" for i in range(12000)})
 
-        assert mock_query.call_count == 3  # batches of 500
+        assert mock_query.call_count == 3  # batches of 5000
 
     def test_missing_table_reads_as_empty(
         self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch

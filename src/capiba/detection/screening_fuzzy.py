@@ -135,48 +135,85 @@ def sanctioned_name_match_signals(
         for-bit determinism).
     """
     # Factual priority (PR-D-06b § 2): suppliers with an exact document
-    # match on a sanction never get a fuzzy signal for that sanction.
+    # match on a sanction never get a fuzzy signal for that sanction. The
+    # lookup is indexed by document — the old contracts × sanctions scan
+    # is O(N·M) and does not finish on real volume (205k × 37k).
+    sanctions_by_document: dict[str, list[dict[str, Any]]] = {}
+    docless_sanctions: list[dict[str, Any]] = []  # masked document or none
+    for sanction in sanctions:
+        document = _full_document(sanction)
+        if document is None:
+            docless_sanctions.append(sanction)
+        else:
+            sanctions_by_document.setdefault(document, []).append(sanction)
+
     exact: set[tuple[str, str]] = set()
+    # entity_id -> variant key -> {"supplier", "contracts"}: the same
+    # entity (document or bare name) can appear with different supplier
+    # payloads across contracts, and the naive semantics scores each
+    # contract with its own supplier row — variants keep that exact.
+    suppliers: dict[str, dict[str, Any]] = {}
     for contract in contracts:
         supplier = contract.get("supplier") or {}
         supplier_doc = _full_document(supplier)
-        if supplier_doc is None:
-            continue
-        for sanction in sanctions:
-            if _full_document(sanction) == supplier_doc:
+        if supplier_doc is not None:
+            for sanction in sanctions_by_document.get(supplier_doc, []):
                 exact.add((supplier_doc, str(sanction["id"])))
-
-    hits: dict[tuple[str, str], dict[str, Any]] = {}
-    for contract in contracts:
-        supplier = contract.get("supplier") or {}
         if not supplier.get("legal_name"):
             continue
         signed_on = _as_date(contract.get("signature_date"))
         if signed_on is None:
             continue
-        entity_id = _full_document(supplier) or str(supplier["legal_name"])
-        for sanction in sanctions:
-            if not _vigent_at(sanction, signed_on):
-                continue
-            if (entity_id, str(sanction["id"])) in exact:
-                continue
-            score = fuzzy_match_score(
-                sanction,
-                supplier,
-                name_weight=name_weight,
-                document_weight=document_weight,
-                doc_assisted_threshold=doc_assisted_threshold,
-                name_only_threshold=name_only_threshold,
+        entity_id = supplier_doc or str(supplier["legal_name"])
+        variants = suppliers.setdefault(entity_id, {})
+        variant = variants.setdefault(
+            json.dumps(supplier, sort_keys=True, default=str),
+            {"supplier": supplier, "contracts": []},
+        )
+        variant["contracts"].append((str(contract.get("id")), signed_on))
+
+    # Candidate restriction (same result, no full cross product): when the
+    # supplier has a full document, any sanction with a different full
+    # document is a veto (PR-D-06b § 3) and the same document is an exact
+    # match — only documentless sanctions (masked or none) can signal. A
+    # documentless supplier is never vetoed, so every sanction is a
+    # candidate.
+    hits: dict[tuple[str, str], dict[str, Any]] = {}
+    for entity_id, variants in suppliers.items():
+        for variant in variants.values():
+            supplier = variant["supplier"]
+            candidates = (
+                sanctions
+                if _full_document(supplier) is None
+                else docless_sanctions
             )
-            if score is None:
-                continue
-            key = (entity_id, str(sanction["list_name"]))
-            hit = hits.setdefault(
-                key, {"sanctions": set(), "contracts": set(), "score": 0.0}
-            )
-            hit["sanctions"].add(str(sanction["id"]))
-            hit["contracts"].add(str(contract.get("id")))
-            hit["score"] = max(hit["score"], score)
+            for sanction in candidates:
+                if (entity_id, str(sanction["id"])) in exact:
+                    continue
+                score = fuzzy_match_score(
+                    sanction,
+                    supplier,
+                    name_weight=name_weight,
+                    document_weight=document_weight,
+                    doc_assisted_threshold=doc_assisted_threshold,
+                    name_only_threshold=name_only_threshold,
+                )
+                if score is None:
+                    continue
+                matched = [
+                    contract_id
+                    for contract_id, signed_on in variant["contracts"]
+                    if _vigent_at(sanction, signed_on)
+                ]
+                if not matched:
+                    continue
+                key = (entity_id, str(sanction["list_name"]))
+                hit = hits.setdefault(
+                    key, {"sanctions": set(), "contracts": set(), "score": 0.0}
+                )
+                hit["sanctions"].add(str(sanction["id"]))
+                hit["contracts"].update(matched)
+                hit["score"] = max(hit["score"], score)
 
     return [
         {

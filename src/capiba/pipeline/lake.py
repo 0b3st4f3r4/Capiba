@@ -949,7 +949,9 @@ def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
         yield batch.to_pylist()
 
 
-_TRINO_IN_BATCH = 500  # CNPJs per IN clause (Trino literal batch)
+_TRINO_IN_BATCH = 5000  # CNPJs per IN clause (Trino literal batch); each
+# batch is a full scan of the establishments table (~20s on 72M rows), so
+# few large batches beat many small ones.
 
 
 def read_establishments_for_cnpjs(cnpjs: Collection[str]) -> list[dict[str, Any]]:
