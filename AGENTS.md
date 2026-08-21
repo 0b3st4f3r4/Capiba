@@ -139,6 +139,13 @@ Trino (`lake.delete_silver_entities_partition`; falha aborta sem append)
 lote + append; no catálogo sqlite offline degrada para append puro). Como
 DELETE+append não é atômico, as DAGs da factory usam `max_active_runs=1`
 (runs sobrepostas duplicavam linhas — observado em dt=2026-08-18/19).
+Efeito colateral dos deletes Trino: o scan pyiceberg **não decodifica os
+delete files** ("DecodeArrow of DictAccumulator", pyarrow 25.0.1) —
+`lake.read_silver_contracts` lê via **Trino** no cluster (o scan local só
+vale no catálogo sqlite offline); `read_silver_entities` segue pyiceberg
+streaming (deletes de dump são compactados pelo optimize semanal; uma
+janela entre delete e optimize quebraria a leitura — risco anotado em
+`docs/gaps.md`).
 `lake_maintenance.py` (semanal: expire_snapshots + optimize) e
 `gold_detection.py` (diária 08:00 UTC: `dbt_run` → `detect` sobre TODO o
 silver — é a "run final" após um backfill) seguem DAGs imperativas.
@@ -204,6 +211,11 @@ Sinais best-effort emitidos no `task_detect` (nunca derrubam a task):
   `DETECTION_COLLUSION_MIN_WINS` (default 3, placeholder validado por
   D-02; calibração em volume real D-03/D-03b **inconclusiva** — pares
   explodem no regime real; próximo refinamento PR-D-03c) e score binário.
+  Guarda operacional: a derivação de pares é **pulada** quando a projeção
+  (Σ C(n,2) por comprador, `graphs.projected_pair_count`) excede
+  `DETECTION_COLLUSION_MAX_PAIRS` (default 1.000.000) — 9,6M pares
+  OOMKillaram o pod do Airflow na primeira run real (2026-08-21); o
+  snapshot de elegibilidade segue gravado como evidência.
 
 Grafo na API: `GET /v1/graph/ownership/{cnpj}` (aresta FtM `ownership`;
 CNPJ normalizado para `cnpj_basico`), `GET /v1/graph/partners/{siafi_code}`

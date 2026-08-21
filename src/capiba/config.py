@@ -245,6 +245,14 @@ DETECTION_COLLUSION_MIN_WINS = int(os.getenv("DETECTION_COLLUSION_MIN_WINS", "3"
 # volume and a human decision promotes the calibrated values.
 DETECTION_COLLUSION_MIN_BUYERS = int(os.getenv("DETECTION_COLLUSION_MIN_BUYERS", "1"))
 
+# Safety budget for the collusion pair derivation (pairs = sum of C(n, 2)
+# per buyer over the eligibility rows). Above it the detect step skips the
+# derivation with a warning instead of dying — on real volume the
+# combinations explode (9,6M pairs on 2026-08-21, OOMKilled the Airflow
+# pod) and the semantics await recalibration (D-03/D-03b inconclusive,
+# PR-D-03c pending). Operational guard, not a calibrated threshold.
+DETECTION_COLLUSION_MAX_PAIRS = int(os.getenv("DETECTION_COLLUSION_MAX_PAIRS", "1000000"))
+
 # Merge threshold for the same_as edges written by the entity resolution
 # after the CNPJ graph load. Calibrated by batteries D-07/D-07b
 # (PR-D-07/PR-D-07b); lowering or raising it requires a new pre-registration

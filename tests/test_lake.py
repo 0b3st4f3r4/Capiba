@@ -268,6 +268,47 @@ def test_read_silver_contracts_without_table(local_catalog: Path) -> None:
     assert lake.read_silver_contracts() == []
 
 
+def test_read_silver_contracts_trino(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cluster path: the read goes through Trino, not the pyiceberg scan.
+
+    The upsert-by-id writes Trino positional delete files that the pinned
+    pyarrow cannot decode ("DecodeArrow of DictAccumulator for
+    DeltaLengthByteArrayDecoder") — the pyiceberg scan broke on the real
+    silver (2026-08-21) and the detect ran silently over zero contracts.
+    """
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+    mock_catalog = MagicMock()
+    monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+    expected = [{"id": "C001", "buyer": {"siafi_code": "26000"}}]
+    mock_query = MagicMock(return_value=expected)
+    monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+    rows = lake.read_silver_contracts()
+
+    assert rows == expected
+    sql = mock_query.call_args.args[0]
+    assert "FROM silver.capiba.contracts" in sql
+
+
+def test_read_silver_contracts_trino_without_table(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cluster path with a missing table reads as empty, without querying."""
+    from pyiceberg.exceptions import NoSuchTableError
+
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+    mock_catalog = MagicMock()
+    mock_catalog.load_table.side_effect = NoSuchTableError("nope")
+    monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+    mock_query = MagicMock()
+    monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+    assert lake.read_silver_contracts() == []
+    mock_query.assert_not_called()
+
+
 def test_read_fraud_signals_roundtrip(local_catalog: Path) -> None:
     """Reads back every row written to the gold fraud_signals table."""
     signals = [

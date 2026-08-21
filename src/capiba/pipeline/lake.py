@@ -809,8 +809,17 @@ def silver_table_exists(name: str) -> bool:
 def read_silver_contracts() -> list[dict[str, Any]]:
     """Reads every row of the silver ``contracts`` Iceberg table.
 
+    In the cluster the read goes through Trino: the upsert-by-id writes
+    positional delete files whose encoding the pinned pyarrow cannot
+    decode ("DecodeArrow of DictAccumulator for
+    DeltaLengthByteArrayDecoder"), breaking the pyiceberg scan on the
+    real silver (2026-08-21). Offline (SQLite catalog) there are no
+    Trino-side deletes, so the local scan stands.
+
     Returns:
         Contract rows as dicts (empty when the table does not exist yet).
+        Trino returns ROW fields as dicts and DECIMAL/date values as
+        strings; the detection consumers coerce both.
     """
     catalog = get_catalog(ICEBERG_WAREHOUSE_SILVER)
     try:
@@ -818,6 +827,10 @@ def read_silver_contracts() -> list[dict[str, Any]]:
     except NoSuchTableError:
         logger.info("Silver contracts table not found; nothing to read")
         return []
+    if not ICEBERG_CATALOG_URI.startswith("sqlite"):
+        return trino.run_query(
+            f"SELECT * FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contracts"  # nosec: B608
+        )
     rows = table.scan().to_pandas().to_dict("records")
     return cast(list[dict[str, Any]], rows)
 

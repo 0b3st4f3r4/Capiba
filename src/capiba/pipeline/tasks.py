@@ -25,6 +25,7 @@ import pandas as pd
 
 from capiba.config import (
     DBT_PROJECT_DIR,
+    DETECTION_COLLUSION_MAX_PAIRS,
     DETECTION_COLLUSION_MIN_BUYERS,
     DETECTION_COLLUSION_MIN_WINS,
     DETECTION_ENTITY_THRESHOLD,
@@ -39,7 +40,11 @@ from capiba.db.arangodb import get_capiba_db
 from capiba.db.triage import register_signals
 from capiba.detection.entities import resolve_entities
 from capiba.detection.geography import anomalous_geography_signals
-from capiba.detection.graphs import collusion_eligibility, pair_buyers_from_eligibility
+from capiba.detection.graphs import (
+    collusion_eligibility,
+    pair_buyers_from_eligibility,
+    projected_pair_count,
+)
 from capiba.detection.political import political_connection_signals
 from capiba.detection.screening import sanctioned_supplier_signals
 from capiba.detection.screening_fuzzy import sanctioned_name_match_signals
@@ -532,25 +537,39 @@ def task_detect(**context: Any) -> dict[str, Any]:
 
     # Best-effort: graph signals never fail the task (ArangoDB may be down).
     graph_snapshot: dict[str, Any] | None = None
+    collusion_projected: int | None = None
     try:
         db = get_capiba_db()
         eligibility = collusion_eligibility(db, min_wins=DETECTION_COLLUSION_MIN_WINS)
-        pair_buyers = pair_buyers_from_eligibility(
-            eligibility, DETECTION_COLLUSION_MIN_BUYERS
-        )
         graph_snapshot = {
             "rows": eligibility,
             "min_wins": DETECTION_COLLUSION_MIN_WINS,
             "min_buyers": DETECTION_COLLUSION_MIN_BUYERS,
         }
-        signals.extend(
-            collusion_signals(
-                [set(pair) for pair, _ in pair_buyers],
-                DETECTION_COLLUSION_MIN_WINS,
-                DETECTION_COLLUSION_MIN_BUYERS,
-                dict(pair_buyers),
+        # Memory guard: the pair derivation is combinatorial per buyer and
+        # explodes on real volume (9,6M pairs on 2026-08-21, OOMKilled the
+        # pod); over the budget the eligibility snapshot is still stored as
+        # evidence, but no signals are derived (PR-D-03c pending).
+        collusion_projected = projected_pair_count(eligibility)
+        if collusion_projected > DETECTION_COLLUSION_MAX_PAIRS:
+            logger.warning(
+                "Collusion pair derivation skipped: %d projected pairs over "
+                "the budget %d (snapshot kept for evidence)",
+                collusion_projected,
+                DETECTION_COLLUSION_MAX_PAIRS,
             )
-        )
+        else:
+            pair_buyers = pair_buyers_from_eligibility(
+                eligibility, DETECTION_COLLUSION_MIN_BUYERS
+            )
+            signals.extend(
+                collusion_signals(
+                    [set(pair) for pair, _ in pair_buyers],
+                    DETECTION_COLLUSION_MIN_WINS,
+                    DETECTION_COLLUSION_MIN_BUYERS,
+                    dict(pair_buyers),
+                )
+            )
         # Editorial triage queue: new signals enter as pending_review.
         register_signals(db, signals)
     except Exception as e:
@@ -578,7 +597,10 @@ def task_detect(**context: Any) -> dict[str, Any]:
     # Best-effort: alerts never fail the task.
     notify_fraud_signals(signals, run_date)
 
-    return {"signals": len(signals)}
+    summary: dict[str, Any] = {"signals": len(signals)}
+    if collusion_projected is not None:
+        summary["collusion_projected_pairs"] = collusion_projected
+    return summary
 
 
 def _load_spec(spec_path: str) -> Any:

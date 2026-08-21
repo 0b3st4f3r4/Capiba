@@ -39,7 +39,10 @@ evidências) dentro de cada item.
    coube no orçamento de triagem (próximo refinamento: PR-D-03c);
    best-effort, pois ArangoDB fora do ar não derruba a task) e a API expõe
    `GET /v1/graph/ownership/{cnpj}?max_depth=3` (router `api/routers/graph.py`,
-   503 com ArangoDB indisponível). `anomalous_geography` está **ativado**
+   503 com ArangoDB indisponível). Guarda operacional (2026-08-21): a
+   derivação de pares é pulada acima de `DETECTION_COLLUSION_MAX_PAIRS`
+   (default 1M) — 9,6M pares projetados no grafo real OOMKillaram o pod;
+   o snapshot de elegibilidade segue gravado como evidência para o PR-D-03c. `anomalous_geography` está **ativado**
    (O6): a fatia 1 entregou a infra (referência vendored de municípios em
    `src/capiba/ingestion/geography.py` + CSV MIT em
    `src/capiba/ingestion/reference/`, silvers `municipalities` —
@@ -92,6 +95,16 @@ evidências) dentro de cada item.
    (`select: [pod_usage_hourly, platform_cost_daily]`) — o run completo
    horário OOMKillava o Trino no mart `contract_red_flags`; o projeto
    inteiro segue com a `gold_detection` diária.
+5. (aberto) **Janela de leitura pyiceberg × delete files Trino.** O pyarrow
+   pinado (25.0.1) não decodifica os positional delete files escritos pelo
+   Trino ("DecodeArrow of DictAccumulator") — detectado em 2026-08-21, quando
+   o `detect` rodou silenciosamente sobre zero contratos. Mitigado para
+   `contracts` (leitura via Trino em `lake.read_silver_contracts`), mas as
+   silvers de dump (`companies`/`establishments`/`partners`) levam DELETE de
+   partição a cada retry de normalize e seguem lidas via scan pyiceberg
+   streaming (carga do grafo): entre um delete e o `optimize` semanal da
+   `lake_maintenance`, a leitura quebra. Correções possíveis: rodar
+   `optimize` ao fim do normalize, ou ler via Trino com paginação.
 
 ## Médio: qualidade e observabilidade
 

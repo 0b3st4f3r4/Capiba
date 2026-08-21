@@ -17,6 +17,7 @@ from capiba.detection.graphs import (
     pair_buyers_from_eligibility,
     pairs_from_eligibility,
     partners_of_buyer,
+    projected_pair_count,
     trace_ownership,
 )
 
@@ -127,6 +128,12 @@ class TestPairBuyersFromEligibility:
     def test_empty_rows_yield_no_pairs(self) -> None:
         """No eligible rows, no pairs."""
         assert pair_buyers_from_eligibility([], min_buyers=2) == []
+
+    def test_projected_pair_count(self) -> None:
+        """The projection sums C(n, 2) per buyer — the memory driver of the
+        derivation on real volume (9,6M pairs on 2026-08-21, OOMKill)."""
+        assert projected_pair_count(self.ROWS) == 3 + 1 + 1
+        assert projected_pair_count([]) == 0
 
 
 class TestDetectCollusion:

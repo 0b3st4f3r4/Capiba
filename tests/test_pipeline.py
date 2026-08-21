@@ -260,6 +260,42 @@ class TestTaskDetect:
     @patch("capiba.pipeline.tasks.collusion_eligibility")
     @patch("capiba.pipeline.tasks.get_capiba_db")
     @patch("capiba.pipeline.tasks.lake")
+    def test_task_detect_skips_collusion_over_the_pairs_budget(
+        self,
+        mock_lake: MagicMock,
+        mock_get_db: MagicMock,
+        mock_collusion: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A combinatorial pair explosion (real volume, D-03/D-03b
+        inconclusive, PR-D-03c pending) is skipped, not OOMKilled: no
+        collusion signals, the eligibility snapshot still reaches the
+        evidence packages."""
+        import capiba.pipeline.tasks as tasks_module
+
+        monkeypatch.setattr(tasks_module, "DETECTION_COLLUSION_MAX_PAIRS", 2)
+        mock_lake.read_silver_contracts.return_value = [
+            _silver_contract(f"C{i:03d}", supplier_cnpj=f"1111111100019{i}")
+            for i in range(3)
+        ]
+        mock_collusion.return_value = [
+            {"buyer": "B1", "supplier": "91000000000001", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000002", "wins": 4},
+            {"buyer": "B1", "supplier": "91000000000003", "wins": 4},
+        ]
+
+        summary = task_detect(ds="2026-01-01")
+
+        signals = mock_lake.write_fraud_signals.call_args.args[0]
+        assert "collusion_network" not in {s["signal_type"] for s in signals}
+        assert summary["collusion_projected_pairs"] == 3
+        # The eligibility snapshot is still stored as evidence (PR-D-03c input).
+        snapshot = self.mock_store_packages.call_args.kwargs["graph_snapshot"]
+        assert snapshot["rows"] == mock_collusion.return_value
+
+    @patch("capiba.pipeline.tasks.collusion_eligibility")
+    @patch("capiba.pipeline.tasks.get_capiba_db")
+    @patch("capiba.pipeline.tasks.lake")
     def test_task_detect_adds_sanctioned_supplier_signals(
         self, mock_lake: MagicMock, mock_get_db: MagicMock, mock_collusion: MagicMock
     ) -> None:
@@ -641,7 +677,7 @@ class TestTaskDetect:
 
         summary = task_detect(ds="2026-01-01")
 
-        assert summary == {"signals": 0}
+        assert summary == {"signals": 0, "collusion_projected_pairs": 0}
         mock_lake.write_fraud_signals.assert_not_called()
 
     @patch("capiba.pipeline.tasks.collusion_eligibility")

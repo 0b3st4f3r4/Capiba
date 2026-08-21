@@ -62,6 +62,19 @@ def collusion_eligibility(
     return sorted(rows, key=lambda row: (row["buyer"], row["supplier"]))
 
 
+def projected_pair_count(rows: list[dict[str, Any]]) -> int:
+    """Number of pairs the derivation would build: sum of C(n, 2) per buyer.
+
+    Memory guard for ``pair_buyers_from_eligibility``: on real volume the
+    per-buyer combinations explode (9,6M pairs on 2026-08-21, OOMKilling
+    the Airflow pod), so the task projects the count before deriving.
+    """
+    suppliers_by_buyer: dict[str, int] = {}
+    for row in rows:
+        suppliers_by_buyer[row["buyer"]] = suppliers_by_buyer.get(row["buyer"], 0) + 1
+    return sum(n * (n - 1) // 2 for n in suppliers_by_buyer.values())
+
+
 def pair_buyers_from_eligibility(
     rows: list[dict[str, Any]], min_buyers: int = 1
 ) -> list[tuple[tuple[str, str], list[str]]]:
