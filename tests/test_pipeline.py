@@ -450,16 +450,6 @@ class TestTaskDetect:
             "sanctions": [],
             "campaign_donations": [],
             "candidacies": [],
-            "establishments": [
-                [
-                    {
-                        "cnpj": "11111111000111",
-                        "municipio": "2531",
-                        "uf": "PE",
-                        "is_matriz": True,
-                    }
-                ]
-            ],
             "rfb_municipalities": [[{"tom_code": "2531", "name": "RECIFE"}]],
             "municipalities": [
                 [
@@ -473,11 +463,20 @@ class TestTaskDetect:
         mock_lake.read_silver_entities.side_effect = lambda entity: iter(
             batches[entity]
         )
+        # The establishments read is selective: only the supplier CNPJs of
+        # the contracts (the full RFB table OOMKills the pod).
+        mock_lake.read_establishments_for_cnpjs.return_value = [
+            {"cnpj": "11111111000111", "municipio": "2531", "uf": "PE",
+             "is_matriz": True}
+        ]
         mock_collusion.return_value = []
 
         summary = task_detect(ds="2026-01-01")
 
         mock_lake.load_municipalities.assert_called_once()
+        mock_lake.read_establishments_for_cnpjs.assert_called_once_with(
+            {"11111111000111"}
+        )
         signals = mock_lake.write_fraud_signals.call_args.args[0]
         geo = [s for s in signals if s["signal_type"] == "anomalous_geography"]
         assert len(geo) == 1
@@ -505,6 +504,9 @@ class TestTaskDetect:
             return iter(batches[entity])
 
         mock_lake.read_silver_entities.side_effect = _read
+        mock_lake.read_establishments_for_cnpjs.side_effect = FileNotFoundError(
+            "no table"
+        )
         mock_collusion.return_value = []
 
         summary = task_detect(ds="2026-01-01")

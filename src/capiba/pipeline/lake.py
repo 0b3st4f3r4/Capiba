@@ -26,7 +26,7 @@ import logging
 import os
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -947,6 +947,62 @@ def read_silver_entities(entity: str) -> Iterator[list[dict[str, Any]]]:
         return
     for batch in table.scan().to_arrow_batch_reader():
         yield batch.to_pylist()
+
+
+_TRINO_IN_BATCH = 500  # CNPJs per IN clause (Trino literal batch)
+
+
+def read_establishments_for_cnpjs(cnpjs: Collection[str]) -> list[dict[str, Any]]:
+    """Reads the silver ``establishments`` rows of the given CNPJs only.
+
+    The full establishments table holds tens of millions of RFB rows;
+    materializing it to resolve the supplier CNPJs of the contracts
+    OOMKilled the Airflow pod on the first real detect run (2026-08-21,
+    exit 137). The selective read goes through Trino (batched ``IN`` over
+    digits-only literals); offline (SQLite catalog) it degrades to the
+    streaming scan with a filter, bounded on small local data.
+
+    Args:
+        cnpjs: Supplier CNPJs (14 digits after normalization; other
+            values are ignored).
+
+    Returns:
+        Establishment rows (``cnpj``, ``municipio``, ``uf``,
+        ``is_matriz``) of the given CNPJs; empty when none qualifies or
+        the table does not exist yet.
+    """
+    wanted = {re.sub(r"\D", "", str(cnpj or "")) for cnpj in cnpjs}
+    wanted = {cnpj for cnpj in wanted if len(cnpj) == 14}
+    if not wanted:
+        return []
+    if ICEBERG_CATALOG_URI.startswith("sqlite"):
+        return [
+            row
+            for batch in read_silver_entities("establishments")
+            for row in batch
+            if re.sub(r"\D", "", str(row.get("cnpj") or "")) in wanted
+        ]
+    catalog = get_catalog(ICEBERG_WAREHOUSE_SILVER)
+    try:
+        catalog.load_table(f"{ICEBERG_NAMESPACE}.establishments")
+    except NoSuchTableError:
+        logger.info("Silver establishments table not found; nothing to read")
+        return []
+    rows: list[dict[str, Any]] = []
+    ordered = sorted(wanted)
+    for offset in range(0, len(ordered), _TRINO_IN_BATCH):
+        chunk = ordered[offset : offset + _TRINO_IN_BATCH]
+        # CNPJs are digits-only after the normalization above, so the
+        # literals cannot break out of the IN clause.
+        literal = ", ".join(f"'{cnpj}'" for cnpj in chunk)
+        rows.extend(
+            trino.run_query(
+                "SELECT cnpj, municipio, uf, is_matriz"
+                f" FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.establishments"
+                f" WHERE cnpj IN ({literal})"  # nosec: B608
+            )
+        )
+    return rows
 
 
 def load_municipalities(run_date: date | None = None) -> str:

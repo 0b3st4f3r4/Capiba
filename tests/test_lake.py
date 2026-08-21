@@ -535,6 +535,96 @@ def test_read_silver_entities_without_table(local_catalog: Path) -> None:
     assert list(lake.read_silver_entities("partners")) == []
 
 
+class TestReadEstablishmentsForCnpjs:
+    """Selective read of silver establishments by supplier CNPJ.
+
+    The full establishments table holds tens of millions of RFB rows;
+    materializing it to resolve the supplier CNPJs of the contracts
+    OOMKilled the Airflow pod on the first real detect run (2026-08-21).
+    """
+
+    def test_empty_or_invalid_input_reads_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        assert lake.read_establishments_for_cnpjs(set()) == []
+        assert lake.read_establishments_for_cnpjs({"nao-e-cnpj", "123"}) == []
+        mock_query.assert_not_called()
+
+    def test_cluster_path_queries_trino_with_digits_only_literals(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog"
+        )
+        mock_catalog = MagicMock()
+        monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+        expected = [
+            {"cnpj": "12345678000199", "municipio": "2531", "uf": "PE",
+             "is_matriz": True}
+        ]
+        mock_query = MagicMock(return_value=expected)
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        rows = lake.read_establishments_for_cnpjs({"12.345.678/0001-99"})
+
+        assert rows == expected
+        sql = mock_query.call_args.args[0]
+        assert "FROM silver.capiba.establishments" in sql
+        assert "WHERE cnpj IN ('12345678000199')" in sql
+
+    def test_cluster_path_batches_large_inputs(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog"
+        )
+        mock_catalog = MagicMock()
+        monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+        mock_query = MagicMock(return_value=[])
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        lake.read_establishments_for_cnpjs({f"{i:014d}" for i in range(1200)})
+
+        assert mock_query.call_count == 3  # batches of 500
+
+    def test_missing_table_reads_as_empty(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pyiceberg.exceptions import NoSuchTableError
+
+        monkeypatch.setattr(
+            lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog"
+        )
+        mock_catalog = MagicMock()
+        mock_catalog.load_table.side_effect = NoSuchTableError("nope")
+        monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+        mock_query = MagicMock()
+        monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+        assert lake.read_establishments_for_cnpjs({"12345678000199"}) == []
+        mock_query.assert_not_called()
+
+    def test_offline_filters_the_streaming_scan(
+        self, local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = [
+            {"cnpj": "12345678000199", "municipio": "2531", "uf": "PE",
+             "is_matriz": True},
+            {"cnpj": "99999999000199", "municipio": "7107", "uf": "SP",
+             "is_matriz": True},
+        ]
+        monkeypatch.setattr(
+            lake, "read_silver_entities", lambda entity: iter([rows])
+        )
+
+        result = lake.read_establishments_for_cnpjs({"12.345.678/0001-99"})
+
+        assert result == [rows[0]]
+
+
 _MUNICIPALITY_ROWS = [
     {
         "ibge_code": "2611606",

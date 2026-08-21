@@ -169,7 +169,12 @@ haversine R = 6371,0 km entre sedes municipais, gate estrito
 (default 1000 km) — placeholders pré-registrados (mudança exige PR-D-09b);
 um sinal por (fornecedor PJ, município comprador); PF e pares com elo de
 de-para ausente nunca sinalizam. Emissão best-effort no `task_detect`
-(carrega `municipalities` idempotente antes). O operador AQL legado
+(carrega `municipalities` idempotente antes). A leitura da silver
+`establishments` é **seletiva** (`lake.read_establishments_for_cnpjs` —
+IN batches via Trino sobre os CNPJs PJ dos contratos; offline degrada
+para o scan streaming com filtro): a tabela RFB completa (dezenas de
+milhões de linhas) materializada OOMKillou o pod do Airflow na primeira
+run real do detect (2026-08-21). O operador AQL legado
 `graphs.anomalous_geography` foi removido (morto — vértices `bid`
 inexistentes; decisão em Revisões do PR-D-09).
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -498,12 +499,16 @@ def task_detect(**context: Any) -> dict[str, Any]:
     # Best-effort: anomalous geography screening (PR-D-09) never fails
     # the task (the silver RFB/reference tables may not exist yet). The
     # municipality reference is loaded idempotently first, so a fresh
-    # cluster needs no extra DAG run.
+    # cluster needs no extra DAG run. The establishments read is
+    # selective (supplier CNPJs of the contracts only) — the full RFB
+    # table has tens of millions of rows and OOMKills the pod.
     try:
         lake.load_municipalities(run_date=run_date)
-        establishments = [
-            row for batch in lake.read_silver_entities("establishments") for row in batch
-        ]
+        supplier_cnpjs = {
+            re.sub(r"\D", "", str((contract.get("supplier") or {}).get("cnpj") or ""))
+            for contract in contracts
+        }
+        establishments = lake.read_establishments_for_cnpjs(supplier_cnpjs)
         rfb_municipalities = [
             row
             for batch in lake.read_silver_entities("rfb_municipalities")
