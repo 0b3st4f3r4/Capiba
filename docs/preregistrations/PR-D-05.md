@@ -2,8 +2,11 @@
 
 - **Pré-registro**: bateria D-05
 - **Criado em**: 2026-08-19
-- **Última atualização**: 2026-08-19
-- **Status**: registrado, aprovado em 2026-08-19, não executado
+- **Última atualização**: 2026-08-21
+- **Status**: executado — sintético 5/5; etapa real (2026-08-21,
+  `docs/results/R-D-05.md` § 4): P6 satisfeita, P7 refutada e corrigida,
+  **P8 refutada** (cobertura 23,54% < 50%) → forma corrigida em
+  `docs/preregistrations/PR-D-05b.md`
 - **Alvo**: mart gold `contract_amendments` (uma linha por contrato silver)
   com flags de aditivo computadas das **observações bronze** do contrato
   (payload de `/v1/contratos`, já ingerido em `raw_pncp`, mais a nova fonte

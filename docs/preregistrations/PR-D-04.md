@@ -2,8 +2,9 @@
 
 - **Pré-registro**: bateria D-04
 - **Criado em**: 2026-08-19
-- **Última atualização**: 2026-08-19
-- **Status**: registrado, aprovado em 2026-08-19, não executado
+- **Última atualização**: 2026-08-21
+- **Status**: executado — bateria completa (P1–P8): sintético 5/5 e
+  etapa real P6–P8 satisfeitas (`docs/results/R-D-04.md` § 4)
 - **Alvo**: mart gold de red flags por contrato e CRI composto
   **determinístico** (média das flags não nulas), materializado via dbt a
   partir do `payload_json` do bronze (`raw_pncp`) e dos contratos silver.

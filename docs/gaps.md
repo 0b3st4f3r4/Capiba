@@ -180,8 +180,10 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    referência em `detection/red_flags.py` (3 flags — modalidade não
    competitiva, janela curta de submissão, razão valor final/estimado —
    1/0/NULL, CRI = média das não nulas) e mart gold `contract_red_flags`
-   (+ agregados por fornecedor/órgão) com data tests dbt dos invariantes
-   reais P6–P8, pendentes da conclusão do backfill. O `compute_cri`
+   (+ agregados por fornecedor/órgão). **Etapa real concluída em
+   2026-08-21** (R-D-04 § 4): P6–P8 satisfeitas sobre 205.349 contratos
+   (P6 exigiu rebuild do mart — staleness mid-backfill; nenhum contrato
+   com CRI ≥ 0,5 no volume real, insumo para PR-D-04b). O `compute_cri`
    supervisionado segue sem uso (gap de ML supervisionado); proposta
    única real aguarda a fonte `contratacoes/propostas` do PNCP.
 4. (em andamento) **Red flags de aditivos (O2).** Pré-registrado e
@@ -191,8 +193,13 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    `detection/amendments.py` (aditivo de valor via `valorAcumulado` >
    `valorInicial`, aditivo de prazo via extensão de vigência — última
    observação soberana) e mart gold `contract_amendments` (+ agregados
-   por fornecedor/órgão) com data tests dbt dos invariantes reais P6–P8,
-   pendentes da conclusão do backfill.
+   por fornecedor/órgão). **Etapa real executada em 2026-08-21**
+   (R-D-05 § 4): P6 satisfeita; P7 refutada por arredondamento do
+   descritor `value_ratio` (corrigido — precisão plena no módulo e no
+   mart, cast double antes da divisão DECIMAL do Trino); **P8 refutada**
+   (campo `valorAcumulado` computável em 23,54% < 50%) → forma corrigida
+   com plano B (endpoint de termos por contrato, verificado ao vivo) em
+   `docs/preregistrations/PR-D-05b.md`, aguardando revisão humana.
 5. (em andamento) **Screening de sanções e PEPs (O3).** Match exato por
    CNPJ/CPF contra CEIS/CNEP validado (PR-D-06/R-D-06, 5/5): sinal
    `sanctioned_supplier` (`detection/screening.py`, score binário, vigência
@@ -232,16 +239,19 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    satisfeita em 3 amostras novas, precisão 1,00).
    Pendente: invariante P8 no grafo real (após o reload pós-backfill) e
    screening fuzzy de sanções (PR-D-06b).
-8. (feito) **Diários oficiais municipais via Querido Diário (O7).** Source
+8. (em andamento) **Diários oficiais municipais via Querido Diário (O7).** Source
    `querido_diario` no registry (crawler
    `src/capiba/ingestion/crawler_querido_diario.py`), fórmula nova
    `documents_collect` (crawl windowed + `download_<fonte>_texts` com
    skip-existing no retry + validação declarada `gazette_rules`, bronze-only)
    e pipeline diário `daily_querido_diario` do município-piloto Recife
    (IBGE 2611606): metadados no bronze (`raw_querido_diario`) + texto
-   extraído de cada diário como arquivo bronze. Pendente: primeira run real
-   no cluster (após publish/rollout) e alimentar os sinais de NLP
-   (`semantic_gap`, `detect_clone`) com o corpus.
+   extraído de cada diário como arquivo bronze. **Primeira run real
+   executada em 2026-08-20** (sucesso; janela de 19/08 legitimamente
+   vazia — o diário de 18/08 é o mais recente raspado pelo QD; run com
+   janela de 18/08 disparada para exercitar o download de textos).
+   Pendente: alimentar os sinais de NLP (`semantic_gap`, `detect_clone`)
+   com o corpus — depende de pré-registro (NLP segue sem PR).
 9. (em andamento) **TSE: doações × contratos (O8).** Pré-registrado e
    validado no regime sintético (PR-D-08/R-D-08): pipeline mensal
    `monthly_tse` (snapshot da prestação de contas, silvers
@@ -251,8 +261,14 @@ Itens dimensionados e com critério de aceitação em `docs/oportunidades.md`
    do município na janela do mandato; emitido best-effort no `task_detect`)
    e mart gold `political_connections` (CPF mascarado na origem, chave
    `signal_id` sha256, já na allowlist da exportação pública —
-   `pipeline/public_export.py`). P8/volume real pendente; calibração dos
-   placeholders exige PR-D-08b.
+   `pipeline/public_export.py`). **P8/volume real bloqueado por causa
+   externa**: o CDN do TSE (Akamai) recusa os downloads com 403 a partir
+   do IP de saída deste host (geo/bot restriction, verificado com e sem
+   User-Agent de browser em 2026-08-21; o crawler já prevê a página de
+   erro do CDN); as runs da `monthly_tse` falham com "No files
+   downloaded". Destravar exige rede com egresso brasileiro ou espelho
+   alternativo (decisão de PR-D-08b). Calibração dos placeholders exige
+   PR-D-08b.
 10. (implementado) **Saída pública para a comunidade (O11).** Marts gold
     baixáveis (CSV/Parquet) sem auth: post step `export_public_marts` da
     `gold_detection` exporta a allowlist LGPD (fail-closed) para o bucket
