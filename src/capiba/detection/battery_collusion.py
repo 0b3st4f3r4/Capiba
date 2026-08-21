@@ -13,7 +13,12 @@ calibration block) and ``docs/preregistrations/PR-D-03c.md`` (config
 derivation, bit-a-bit equivalence against the unblocked path,
 before/after arithmetic projections, per-path time/heap and the
 deterministic ordered emission; detected by ``blocking`` in the
-calibration block).
+calibration block). ``docs/preregistrations/PR-D-03d.md`` (config
+``experiments/detect/D-03d.json`` — declared top-K ranked emission over
+the blocked derivation with an explicit editorial budget, prefix
+equivalence against the full ordered set and evidence reproduction with
+declared truncation; detected by ``emission`` in the calibration block,
+which takes precedence over ``blocking``).
 
 Part A/C (synthetic): plants the collusion population — with the
 pre-registered 30-day date windows — into a disposable ArangoDB database
@@ -65,6 +70,7 @@ from capiba.detection.graphs import (
     pair_buyers_from_eligibility_blocked,
     pairs_from_eligibility,
     projected_pair_count,
+    ranked_emission,
 )
 from capiba.detection.signals import collusion_signals
 from capiba.evidence import packages as evidence_packages
@@ -1278,21 +1284,11 @@ def ranked_pair_emission(
     the wins of both suppliers over the pair's co-eligible buyers), pair
     ascending as the lexicographic tiebreak. Ordering descriptor for
     triage priority only — the emitted set is unchanged (no truncation).
+    Thin wrapper over ``graphs.ranked_emission`` (PR-D-03d) without
+    truncation.
     """
-    wins = {(row["buyer"], row["supplier"]): int(row["wins"]) for row in rows}
-    descriptors: list[dict[str, Any]] = []
-    for (s1, s2), buyers in pair_buyers:
-        wins_sum = sum(wins.get((buyer, s), 0) for buyer in buyers for s in (s1, s2))
-        descriptors.append(
-            {
-                "pair": [s1, s2],
-                "buyers": list(buyers),
-                "buyer_count": len(buyers),
-                "wins_sum": wins_sum,
-            }
-        )
-    descriptors.sort(key=lambda d: (-d["buyer_count"], -d["wins_sum"], d["pair"]))
-    return descriptors
+    emission: list[dict[str, Any]] = ranked_emission(pair_buyers, rows)["emission"]
+    return emission
 
 
 def _signal_score(signals: list[dict[str, Any]], key: str) -> float | None:
@@ -1876,6 +1872,668 @@ def evaluate_real_blocked(
     }
 
 
+# ---------------------------------------------------------------------------
+# Emission mode (PR-D-03d): declared top-K ranked emission over the blocked
+# derivation
+# ---------------------------------------------------------------------------
+
+
+def is_emission(config: dict[str, Any]) -> bool:
+    """True when the config declares the PR-D-03d emission block."""
+    return "emission" in config["calibration"]
+
+
+def _emission_points(config: dict[str, Any]) -> list[tuple[int, int]]:
+    """Pre-registered control points of Part A: {(min_w,1), (min_w,min_n),
+    (min_w+1,min_n), (control_w,control_n)}."""
+    calibration = config["calibration"]
+    min_w = min(int(w) for w in calibration["candidates_min_wins"])
+    min_n = min(int(n) for n in calibration["candidates_min_buyers"])
+    control_w = int(calibration.get("control_min_wins", 2))
+    control_n = int(calibration.get("control_min_buyers", 2))
+    return [(min_w, 1), (min_w, min_n), (min_w + 1, min_n), (control_w, control_n)]
+
+
+def _emitted_pair_set(
+    rows: list[dict[str, Any]], min_wins: int, min_buyers: int, top_k: int
+) -> set[tuple[str, str]]:
+    """Emitted top-K pair set from raw export rows (increment delta, PR §4).
+
+    ``rows`` carries the raw ``wins`` counts (already window-adjusted by
+    the caller when measuring the "old" snapshot); the eligibility filter
+    is applied here.
+    """
+    eligible = [row for row in rows if int(row["wins"]) >= min_wins]
+    pair_buyers = pair_buyers_from_eligibility_blocked(eligible, min_buyers)
+    return {
+        tuple(entry["pair"])
+        for entry in ranked_emission(pair_buyers, eligible, top_k)["emission"]
+    }
+
+
+def _evidence_check_emission(
+    db: StandardDatabase, min_wins: int, min_buyers: int, top_k: int
+) -> dict[str, Any]:
+    """Part C (emission): graph_batch package with declared top_k (PR-D-03d).
+
+    Every emitted signal must reproduce with ``match = true`` (the
+    reproduction re-derives, re-ranks and re-truncates deterministically);
+    removing one snapshot row must break integrity and the match; legacy
+    packages (``top_k = null``) reproduce unchanged (T3).
+    """
+    rows = collusion_eligibility(db, min_wins=min_wins)
+    pair_buyers = pair_buyers_from_eligibility_blocked(rows, min_buyers)
+    emission = ranked_emission(pair_buyers, rows, top_k)
+    emitted = emission["emission"]
+    signals = collusion_signals(
+        [set(entry["pair"]) for entry in emitted],
+        min_wins,
+        min_buyers,
+        {tuple(entry["pair"]): entry["buyers"] for entry in emitted},
+    )
+    package = evidence_packages.build_graph_batch_package(
+        rows,
+        signals,
+        min_wins,
+        None,
+        min_buyers,
+        top_k=top_k,
+        qualified_count=emission["qualified_count"],
+    )
+
+    keys = [
+        signal_key(
+            str(signal["entity_type"]),
+            str(signal["entity_id"]),
+            str(signal["signal_type"]),
+        )
+        for signal in package["signals"]
+    ]
+    matches = [
+        evidence_packages.reproduce_signal(package, key)["match"] for key in keys
+    ]
+
+    tampered = json.loads(json.dumps(package))
+    tampered["snapshot_rows"] = tampered["snapshot_rows"][1:]
+    tampered_outcome = (
+        evidence_packages.reproduce_signal(tampered, keys[0]) if keys else None
+    )
+
+    # Legacy retrocompatibility: a package without top_k over the full
+    # signal set reproduces unchanged (T3).
+    legacy_signals = collusion_signals(
+        [set(pair) for pair, _ in pair_buyers],
+        min_wins,
+        min_buyers,
+        dict(pair_buyers),
+    )
+    legacy_package = evidence_packages.build_graph_batch_package(
+        rows, legacy_signals, min_wins, None, min_buyers
+    )
+    legacy_matches = [
+        evidence_packages.reproduce_signal(
+            legacy_package,
+            signal_key(
+                str(signal["entity_type"]),
+                str(signal["entity_id"]),
+                str(signal["signal_type"]),
+            ),
+        )["match"]
+        for signal in legacy_package["signals"]
+    ]
+    return {
+        "signals": len(signals),
+        "matches": matches,
+        "tampered": tampered_outcome,
+        "legacy_matches": legacy_matches,
+    }
+
+
+def _stress_check_emission(
+    db: StandardDatabase,
+    config: dict[str, Any],
+    seed: int,
+    reference_date: date,
+    min_wins: int,
+    min_buyers: int,
+    top_k: int,
+) -> dict[str, Any]:
+    """Part A-stress (emission): scale anchors of the top-K emission (T4).
+
+    With ``BIG-B`` planted: blocked projection at (min_w, min_n); emission
+    at (min_w, min_n) with K (vacuous truncation under blocking); emission
+    at (min_w, 1) with K (active truncation over the big buyer's pairs).
+    """
+    started = time.monotonic()
+    plant(db, generate_stress(config, seed, reference_date))
+    rows = collusion_eligibility(db, min_wins=min_wins)
+    emission_n = ranked_emission(
+        pair_buyers_from_eligibility_blocked(rows, min_buyers), rows, top_k
+    )
+    pair_buyers_1 = pair_buyers_from_eligibility_blocked(rows, 1)
+    emission_1 = ranked_emission(pair_buyers_1, rows, top_k)
+    full_1 = ranked_emission(pair_buyers_1, rows)
+    return {
+        "projection_blocked": blocked_projection(rows, min_buyers),
+        "emission_min_buyers": [entry["pair"] for entry in emission_n["emission"]],
+        "emission_min_buyers_1_count": len(emission_1["emission"]),
+        "emission_min_buyers_1_first": (
+            emission_1["emission"][0]["pair"] if emission_1["emission"] else None
+        ),
+        "qualified_min_buyers_1": emission_1["qualified_count"],
+        "prefix_min_buyers_1": emission_1["emission"] == full_1["emission"][:top_k],
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+    }
+
+
+def run_seed_emission(
+    db: StandardDatabase, config: dict[str, Any], seed: int
+) -> dict[str, Any]:
+    """Parts A/A-stress/C for one seed (PR-D-03d).
+
+    Plants the base population (identical to D-03b/D-03c), measures the
+    pre-registered control points with the blocked derivation — vacuous
+    (K = ``top_k``) and active (K = ``synthetic_truncation_top_k``)
+    truncations —, checks the evidence reproduction with declared top_k
+    (Part C, target point) and then plants the stress buyer for the scale
+    anchors (T4).
+
+    Returns:
+        Per-seed record with control points, evidence and stress outcomes.
+    """
+    _clear_collections(db)
+    reference_date = date.today()
+    plant(db, generate(config, seed, reference_date))
+
+    calibration = config["calibration"]
+    emission_config = calibration["emission"]
+    top_k = int(emission_config["top_k"])
+    trunc_k = int(emission_config["synthetic_truncation_top_k"])
+    min_w = min(int(w) for w in calibration["candidates_min_wins"])
+    min_n = min(int(n) for n in calibration["candidates_min_buyers"])
+    truncated_points = {(min_w, 1), _emission_points(config)[3]}
+
+    control_points: dict[str, Any] = {}
+    for w, n in _emission_points(config):
+        rows = collusion_eligibility(db, min_wins=w)
+        pair_buyers = pair_buyers_from_eligibility_blocked(rows, n)
+        full = ranked_emission(pair_buyers, rows, top_k)
+        point: dict[str, Any] = {
+            "top_k": full["top_k"],
+            "qualified_count": full["qualified_count"],
+            "coverage": full["coverage"],
+            "emission": [entry["pair"] for entry in full["emission"]],
+            "equivalent": pair_buyers == pair_buyers_from_eligibility(rows, n),
+            "projection_blocked": blocked_projection(rows, n),
+            "incidences_blocked": sum(
+                len(buyers) for buyers in _blocked_buyers_by_pair(rows, n).values()
+            ),
+        }
+        if (w, n) in truncated_points:
+            truncated = ranked_emission(pair_buyers, rows, trunc_k)
+            point["truncated"] = {
+                "top_k": truncated["top_k"],
+                "qualified_count": truncated["qualified_count"],
+                "coverage": truncated["coverage"],
+                "emission": [entry["pair"] for entry in truncated["emission"]],
+                "is_prefix": truncated["emission"] == full["emission"][:trunc_k],
+            }
+        control_points[f"{w}:{n}"] = point
+
+    return {
+        "seed": seed,
+        "control_points": control_points,
+        "evidence": _evidence_check_emission(db, min_w, min_n, top_k),
+        "stress": _stress_check_emission(
+            db, config, seed, reference_date, min_w, min_n, top_k
+        ),
+    }
+
+
+def evaluate_synthetic_emission(
+    config: dict[str, Any], records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Evaluates the pre-registered predictions T1-T4 (PR-D-03d).
+
+    Pure (no ArangoDB): consumes the per-seed records produced by
+    ``run_seed_emission``. Control-point keys derive from the calibration
+    block; the exact anchors live in the same config file.
+    """
+    exp = config["expectations"]
+    calibration = config["calibration"]
+    min_w = min(int(w) for w in calibration["candidates_min_wins"])
+    min_n = min(int(n) for n in calibration["candidates_min_buyers"])
+    control_w = int(calibration.get("control_min_wins", 2))
+    control_n = int(calibration.get("control_min_buyers", 2))
+    stress_budget = float(calibration["stress"]["time_budget_seconds"])
+    k1 = f"{min_w}:1"
+    k2 = f"{min_w}:{min_n}"
+    k3 = f"{min_w + 1}:{min_n}"
+    kc = f"{control_w}:{control_n}"
+    failures: dict[str, list[str]] = {f"T{i}": [] for i in range(1, 5)}
+    monotonicity_failures: list[str] = []
+
+    for record in records:
+        seed = record["seed"]
+        points = record["control_points"]
+
+        # T1 — active truncation at the control point, wins_sum tiebreak
+        trunc_c = points[kc]["truncated"]
+        if trunc_c["emission"] != exp["emission_top1_min2_buyers2_exact"]:
+            failures["T1"].append(
+                f"seed {seed}: top-1 at {kc} {trunc_c['emission']}"
+                f" != {exp['emission_top1_min2_buyers2_exact']}"
+            )
+        if trunc_c["qualified_count"] != exp[
+            "emission_top1_min2_buyers2_qualified_count_exact"
+        ]:
+            failures["T1"].append(
+                f"seed {seed}: qualified at {kc} {trunc_c['qualified_count']}"
+                f" != {exp['emission_top1_min2_buyers2_qualified_count_exact']}"
+            )
+        if trunc_c["coverage"] != exp["emission_top1_min2_buyers2_coverage_exact"]:
+            failures["T1"].append(
+                f"seed {seed}: coverage at {kc} {trunc_c['coverage']}"
+                f" != {exp['emission_top1_min2_buyers2_coverage_exact']}"
+            )
+
+        # T2 — active truncation at (min_w, 1), buyer_count tiebreak
+        trunc_1 = points[k1]["truncated"]
+        if trunc_1["emission"] != exp["emission_top1_min3_buyers1_exact"]:
+            failures["T2"].append(
+                f"seed {seed}: top-1 at {k1} {trunc_1['emission']}"
+                f" != {exp['emission_top1_min3_buyers1_exact']}"
+            )
+        if trunc_1["qualified_count"] != exp[
+            "emission_top1_min3_buyers1_qualified_count_exact"
+        ]:
+            failures["T2"].append(
+                f"seed {seed}: qualified at {k1} {trunc_1['qualified_count']}"
+                f" != {exp['emission_top1_min3_buyers1_qualified_count_exact']}"
+            )
+
+        # T3 — vacuous truncation == full ordered set; evidence reproduction
+        if not trunc_c["is_prefix"] or not trunc_1["is_prefix"]:
+            failures["T3"].append(f"seed {seed}: truncated emission not a prefix")
+        if len(points[k1]["emission"]) != exp["emission_full_min3_buyers1_exact_count"]:
+            failures["T3"].append(
+                f"seed {seed}: emission {k1} count {len(points[k1]['emission'])}"
+                f" != {exp['emission_full_min3_buyers1_exact_count']}"
+            )
+        if points[k2]["emission"] != exp["emission_full_min3_buyers2_exact"]:
+            failures["T3"].append(
+                f"seed {seed}: emission {k2} {points[k2]['emission']}"
+                f" != {exp['emission_full_min3_buyers2_exact']}"
+            )
+        if len(points[k3]["emission"]) != exp["emission_full_min4_buyers2_exact_count"]:
+            failures["T3"].append(
+                f"seed {seed}: emission {k3} count {len(points[k3]['emission'])}"
+                f" != {exp['emission_full_min4_buyers2_exact_count']}"
+            )
+        if points[kc]["emission"] != exp["emission_full_min2_buyers2_exact"]:
+            failures["T3"].append(
+                f"seed {seed}: emission {kc} {points[kc]['emission']}"
+                f" != {exp['emission_full_min2_buyers2_exact']}"
+            )
+        evidence = record["evidence"]
+        if not evidence["matches"] or not all(evidence["matches"]):
+            failures["T3"].append(
+                f"seed {seed}: reproduction matches {evidence['matches']}"
+            )
+        tampered = evidence["tampered"]
+        if tampered is None or tampered["integrity"] or tampered["match"]:
+            failures["T3"].append(f"seed {seed}: tampered outcome {tampered}")
+        if not evidence["legacy_matches"] or not all(evidence["legacy_matches"]):
+            failures["T3"].append(
+                f"seed {seed}: legacy reproduction {evidence['legacy_matches']}"
+            )
+
+        # T4 — scale anchors of the stress population
+        stress = record["stress"]
+        if (
+            stress["projection_blocked"]
+            != exp["stress_blocked_projection_min3_buyers2_exact"]
+        ):
+            failures["T4"].append(
+                f"seed {seed}: stress blocked projection"
+                f" {stress['projection_blocked']}"
+                f" != {exp['stress_blocked_projection_min3_buyers2_exact']}"
+            )
+        if stress["emission_min_buyers"] != exp["stress_emission_min3_buyers2_exact"]:
+            failures["T4"].append(
+                f"seed {seed}: stress emission (3,2) {stress['emission_min_buyers']}"
+                f" != {exp['stress_emission_min3_buyers2_exact']}"
+            )
+        if (
+            stress["emission_min_buyers_1_count"]
+            != exp["stress_emission_min3_buyers1_top500_count_exact"]
+        ):
+            failures["T4"].append(
+                f"seed {seed}: stress top-500 count"
+                f" {stress['emission_min_buyers_1_count']}"
+                f" != {exp['stress_emission_min3_buyers1_top500_count_exact']}"
+            )
+        if (
+            stress["emission_min_buyers_1_first"]
+            != exp["stress_emission_min3_buyers1_first_exact"]
+        ):
+            failures["T4"].append(
+                f"seed {seed}: stress top-500 first"
+                f" {stress['emission_min_buyers_1_first']}"
+                f" != {exp['stress_emission_min3_buyers1_first_exact']}"
+            )
+        if stress["qualified_min_buyers_1"] != exp["stress_qualified_min3_buyers1_exact"]:
+            failures["T4"].append(
+                f"seed {seed}: stress qualified {stress['qualified_min_buyers_1']}"
+                f" != {exp['stress_qualified_min3_buyers1_exact']}"
+            )
+        if not stress["prefix_min_buyers_1"]:
+            failures["T4"].append(f"seed {seed}: stress top-500 not a prefix")
+        if stress["elapsed_seconds"] >= stress_budget:
+            failures["T4"].append(
+                f"seed {seed}: stress sweep {stress['elapsed_seconds']}s"
+                f" >= {stress_budget}s"
+            )
+
+        # Blocking regression: derivations stay bit-a-bit equivalent.
+        for key, point in points.items():
+            if not point["equivalent"]:
+                failures["T3"].append(
+                    f"seed {seed}: derivations diverge at {key} (blocking regression)"
+                )
+
+        # Monotonicity invariant: blocked projection non-increasing in
+        # min_wins (fixed min_buyers) and in min_buyers (fixed min_wins).
+        if points[k3]["projection_blocked"] > points[k2]["projection_blocked"]:
+            monotonicity_failures.append(
+                f"seed {seed}: blocked({k3})={points[k3]['projection_blocked']}"
+                f" > blocked({k2})={points[k2]['projection_blocked']}"
+            )
+        if points[k2]["projection_blocked"] > points[k1]["projection_blocked"]:
+            monotonicity_failures.append(
+                f"seed {seed}: blocked({k2})={points[k2]['projection_blocked']}"
+                f" > blocked({k1})={points[k1]['projection_blocked']}"
+            )
+
+    predictions = {
+        name: {"verdict": "refuted" if failed else "success", "failures": failed}
+        for name, failed in failures.items()
+    }
+    invariants = {
+        "monotonicity": {
+            "verdict": "refuted" if monotonicity_failures else "success",
+            "failures": monotonicity_failures,
+        }
+    }
+    verdict = (
+        "success"
+        if all(p["verdict"] == "success" for p in predictions.values())
+        and all(i["verdict"] == "success" for i in invariants.values())
+        else "refuted"
+    )
+    return {
+        "battery": config["id"],
+        "part": "synthetic",
+        "predictions": predictions,
+        "invariants": invariants,
+        "verdict": verdict,
+    }
+
+
+def measure_emission(
+    db: StandardDatabase, config: dict[str, Any], reference_date: date
+) -> dict[str, Any]:
+    """Part B: real sweep with declared top-K emission (PR-D-03d, read-only).
+
+    Per grid point ``{min_wins} × {min_buyers}``: arithmetic blocked
+    projections only (the non-materialization guard — the derivation is
+    materialized **only** at the selected point, the first whose
+    projection fits the guard). At the selected point: blocked derivation
+    materialized with ``tracemalloc``, top-K emission, prefix equivalence
+    against the full ordered set, incidence double counting, editorial
+    increment of the emitted set (30 days, robustness 60 days) and the
+    emission executed twice (determinism). The graph must be frozen: a
+    changed ``won`` count between the boundaries marks the run as
+    discarded (not a refutation).
+
+    Args:
+        db: ArangoDB connection (production graph).
+        config: Battery configuration (emission calibration block).
+        reference_date: Sweep date (anchor of the increment windows).
+
+    Returns:
+        Measurement dict (points, selected point, emission, coverage,
+        stability, elapsed).
+    """
+    calibration = config["calibration"]
+    emission_config = calibration["emission"]
+    blocking = calibration["blocking"]
+    candidates_w = sorted(int(w) for w in calibration["candidates_min_wins"])
+    candidates_n = sorted(int(n) for n in calibration["candidates_min_buyers"])
+    window = int(calibration["increment_window_days"])
+    robust_window = int(calibration["robustness_window_days"])
+    cutoff = (reference_date - timedelta(days=window)).isoformat()
+    cutoff_robust = (reference_date - timedelta(days=robust_window)).isoformat()
+    top_k = int(emission_config["top_k"])
+    guard = int(blocking["max_pairs_guard"])
+
+    started = time.monotonic()
+    won_before = cast("int", db.collection("won").count())
+
+    export_rows = execute_aql(
+        db, _EXPORT_QUERY, {"cutoff": cutoff, "cutoffRobust": cutoff_robust}
+    )
+    rows_by_w = {w: collusion_eligibility(db, min_wins=w) for w in candidates_w}
+
+    points: dict[str, Any] = {}
+    selected: tuple[int, int] | None = None
+    for w, n in grid_order(candidates_w, candidates_n):
+        rows = rows_by_w[w]
+        projection = blocked_projection(rows, n)
+        points[f"{w}:{n}"] = {
+            "projection_unblocked": projected_pair_count(rows),
+            "projection_blocked": projection,
+        }
+        if selected is None and projection < guard:
+            selected = (w, n)
+
+    emission_block: dict[str, Any] | None = None
+    if selected is not None:
+        w, n = selected
+        rows = rows_by_w[w]
+        pair_buyers, _elapsed, peak = _timed_derivation(
+            pair_buyers_from_eligibility_blocked, rows, n, traced=True
+        )
+        full = ranked_emission(pair_buyers, rows)
+        emitted = ranked_emission(pair_buyers, rows, top_k)
+        blobs = [
+            json.dumps(ranked_emission(pair_buyers, rows, top_k)["emission"], sort_keys=True)
+            for _ in range(int(emission_config["determinism_reruns"]))
+        ]
+
+        old_rows = [
+            {**row, "wins": int(row["wins"]) - int(row["recent_wins"])}
+            for row in export_rows
+        ]
+        robust_rows = [
+            {**row, "wins": int(row["wins"]) - int(row["robust_wins"])}
+            for row in export_rows
+        ]
+        emitted_now = _emitted_pair_set(export_rows, w, n, top_k)
+        increment = len(emitted_now - _emitted_pair_set(old_rows, w, n, top_k)) / window
+        increment_robust = (
+            len(emitted_now - _emitted_pair_set(robust_rows, w, n, top_k))
+            / robust_window
+        )
+
+        emission_block = {
+            "point": f"{w}:{n}",
+            "top_k": top_k,
+            "emitted_count": len(emitted["emission"]),
+            "qualified_count": emitted["qualified_count"],
+            "coverage": emitted["coverage"],
+            "prefix_ok": emitted["emission"] == full["emission"][:top_k],
+            "deterministic": len(set(blobs)) == 1,
+            "incidences_blocked": sum(
+                len(buyers)
+                for buyers in _blocked_buyers_by_pair(rows, n).values()
+            ),
+            "peak_blocked_bytes": peak,
+            "increment_daily": round(increment, 4),
+            "increment_daily_robust": round(increment_robust, 4),
+            "emitted_pairs": [entry["pair"] for entry in emitted["emission"]],
+        }
+
+    coverage_rows = execute_aql(db, _COVERAGE_QUERY, {})
+    eligible_won = cast("int", coverage_rows[0]) if coverage_rows else 0
+    won_after = cast("int", db.collection("won").count())
+    coverage = eligible_won / won_after if won_after else 1.0
+
+    return {
+        "reference_date": reference_date.isoformat(),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "candidates_min_wins": candidates_w,
+        "candidates_min_buyers": candidates_n,
+        "grid_order": [f"{w}:{n}" for w, n in grid_order(candidates_w, candidates_n)],
+        "exported_rows": len(export_rows),
+        "histogram": {str(k): v for k, v in histogram_from_rows(export_rows).items()},
+        "histogram_sum_wins": sum(int(row["wins"]) for row in export_rows),
+        "total_won_edges": won_after,
+        "eligible_won_edges": eligible_won,
+        "siafi_coverage": round(coverage, 6),
+        "graph_stable": won_before == won_after,
+        "points": points,
+        "selected_point": (
+            {"min_wins": selected[0], "min_buyers": selected[1]}
+            if selected is not None
+            else None
+        ),
+        "emission": emission_block,
+        "memory_budget_bytes": int(float(blocking["memory_budget_mb"]) * 1024 * 1024),
+        "max_pairs_guard": guard,
+        "time_budget_seconds": float(calibration["time_budget_seconds"]),
+        "budget": calibration["budget"],
+    }
+
+
+def evaluate_real_emission(
+    config: dict[str, Any], measurement: dict[str, Any]
+) -> dict[str, Any]:
+    """Evaluates the pre-registered real-sweep predictions T5-T9.
+
+    Pure: consumes the measurement produced by ``measure_emission`` over
+    the production graph. Degraded regime (low coverage, graph changed
+    during the measurement) yields ``inconclusive``, not ``refuted`` —
+    the run is discarded and reexecuted (PR-D-03d, sections 3 and 7).
+    """
+    points = measurement["points"]
+    emission = measurement["emission"]
+    budget = measurement["budget"]
+
+    t5_failures: list[str] = []
+    if measurement["selected_point"] is None:
+        t5_failures.append("no grid point with blocked projection below the guard")
+
+    t6_failures: list[str] = []
+    if measurement["elapsed_seconds"] >= measurement["time_budget_seconds"]:
+        t6_failures.append(
+            f"sweep took {measurement['elapsed_seconds']}s"
+            f" >= {measurement['time_budget_seconds']}s"
+        )
+    if emission is not None:
+        key = emission["point"]
+        if emission["peak_blocked_bytes"] >= measurement["memory_budget_bytes"]:
+            t6_failures.append(
+                f"blocked peak heap {emission['peak_blocked_bytes']}"
+                f" >= {measurement['memory_budget_bytes']} bytes"
+            )
+        if emission["incidences_blocked"] != points[key]["projection_blocked"]:
+            t6_failures.append(
+                f"projection {points[key]['projection_blocked']} != incidences"
+                f" {emission['incidences_blocked']} at {key}"
+            )
+
+    t7_failures: list[str] = []
+    if emission is not None:
+        if emission["emitted_count"] > int(budget["backlog_max_pairs"]):
+            t7_failures.append(
+                f"emitted {emission['emitted_count']} pairs above the backlog"
+                f" budget {budget['backlog_max_pairs']}"
+            )
+        if emission["increment_daily"] > float(budget["daily_max_pairs"]):
+            t7_failures.append(
+                f"daily increment {emission['increment_daily']}"
+                f" > {budget['daily_max_pairs']}"
+            )
+
+    t8_failures: list[str] = []
+    if emission is not None and not emission["prefix_ok"]:
+        t8_failures.append("emission is not the exact top-K prefix of the full set")
+
+    t9_failures: list[str] = []
+    if emission is not None and not emission["deterministic"]:
+        t9_failures.append("emission not byte-identical across reruns")
+
+    regime_failures: list[str] = []
+    if not measurement["graph_stable"]:
+        regime_failures.append(
+            "won edge count changed during the measurement — run discarded"
+        )
+    if measurement["histogram_sum_wins"] != measurement["eligible_won_edges"]:
+        regime_failures.append(
+            f"histogram sum {measurement['histogram_sum_wins']}"
+            f" != eligible won edges {measurement['eligible_won_edges']}"
+        )
+    coverage_min = float(config["calibration"]["siafi_coverage_min"])
+    if measurement["siafi_coverage"] < coverage_min:
+        regime_failures.append(
+            f"siafi coverage {measurement['siafi_coverage']} < {coverage_min}"
+        )
+
+    refuted = bool(
+        t5_failures or t6_failures or t7_failures or t8_failures or t9_failures
+    )
+    predictions = {
+        "T5": {
+            "verdict": "refuted" if t5_failures else "success",
+            "failures": t5_failures,
+        },
+        "T6": {
+            "verdict": "refuted" if t6_failures else "success",
+            "failures": t6_failures,
+        },
+        "T7": {
+            "verdict": "refuted" if t7_failures else "success",
+            "failures": t7_failures,
+        },
+        "T8": {
+            "verdict": "refuted" if t8_failures else "success",
+            "failures": t8_failures,
+        },
+        "T9": {
+            "verdict": "refuted" if t9_failures else "success",
+            "failures": t9_failures,
+        },
+    }
+    if refuted:
+        verdict = "refuted"
+    elif regime_failures:
+        verdict = "inconclusive"
+    else:
+        verdict = "success"
+    return {
+        "battery": config["id"],
+        "part": "real",
+        "measurement": measurement,
+        "predictions": predictions,
+        "regime": {
+            "verdict": "degraded" if regime_failures else "ok",
+            "failures": regime_failures,
+        },
+        "verdict": verdict,
+    }
+
+
 def _seed_lines(record: dict[str, Any]) -> list[str]:
     """Serializes the raw outputs of one seed, one JSON per line."""
     seed = record["seed"]
@@ -1955,6 +2613,28 @@ def _seed_lines_blocked(record: dict[str, Any]) -> list[str]:
     ]
 
 
+def _seed_lines_emission(record: dict[str, Any]) -> list[str]:
+    """Serializes the raw outputs of one emission seed, one JSON per line."""
+    seed = record["seed"]
+    aspects = [
+        ("sweep_control_points", record["control_points"]),
+        (
+            "evidence_reproduction",
+            {
+                "signals": record["evidence"]["signals"],
+                "matches": record["evidence"]["matches"],
+                "legacy_matches": record["evidence"]["legacy_matches"],
+                "tampered": record["evidence"]["tampered"],
+            },
+        ),
+        ("stress", record["stress"]),
+    ]
+    return [
+        json.dumps({"seed": seed, "operator": op, **payload}, default=str)
+        for op, payload in aspects
+    ]
+
+
 def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
     """Runs Part A/C: synthetic seeds against a disposable ArangoDB.
 
@@ -1970,8 +2650,9 @@ def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
         The per-seed records.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    emission = is_emission(config)
     refined = is_refined(config)
-    blocked = is_blocked(config)
+    blocked = is_blocked(config) and not emission
     db_name = battery_database_name(config)
     sys_db = get_system_db()
     if sys_db.has_database(db_name):
@@ -1986,7 +2667,10 @@ def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
         ensure_collections(db)
         records: list[dict[str, Any]] = []
         for seed in config["seeds"]:
-            if blocked:
+            if emission:
+                record = run_seed_emission(db, config, seed)
+                lines = _seed_lines_emission(record)
+            elif blocked:
                 record = run_seed_blocked(db, config, seed)
                 lines = _seed_lines_blocked(record)
             elif refined:
@@ -1999,7 +2683,9 @@ def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
                 for line in lines:
                     fh.write(line + "\n")
             records.append(record)
-        if blocked:
+        if emission:
+            summary = evaluate_synthetic_emission(config, records)
+        elif blocked:
             summary = evaluate_synthetic_blocked(config, records)
         elif refined:
             summary = evaluate_synthetic_refined(config, records)
@@ -2008,7 +2694,7 @@ def run_battery(config: dict[str, Any], out_dir: Path) -> list[dict[str, Any]]:
         (out_dir / "summary_synthetic.json").write_text(
             json.dumps(summary, indent=2) + "\n"
         )
-        if blocked:
+        if blocked or emission:
             # detect_battery.py reads summary.json even with --skip-real;
             # the real sweep (Part B) rewrites it when it runs.
             (out_dir / "summary.json").write_text(
@@ -2053,25 +2739,30 @@ def run_real_sweep(
         The merged summary dict.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    emission = is_emission(config)
     refined = is_refined(config)
-    blocked = is_blocked(config)
+    blocked = is_blocked(config) and not emission
     if db is None:
         db = get_capiba_db()
-    if blocked:
+    if emission:
+        measurement = measure_emission(db, config, date.today())
+    elif blocked:
         measurement = measure_blocked(db, config, date.today())
     elif refined:
         measurement = measure_refined(db, config, date.today())
     else:
         measurement = measure(db, config, date.today())
     (out_dir / "real_sweep.json").write_text(json.dumps(measurement, indent=2) + "\n")
-    if blocked:
+    if emission:
+        real_summary = evaluate_real_emission(config, measurement)
+    elif blocked:
         real_summary = evaluate_real_blocked(config, measurement)
     elif refined:
         real_summary = evaluate_real_refined(config, measurement)
     else:
         real_summary = evaluate_real(config, measurement)
 
-    if blocked:
+    if blocked or emission:
         pts = measurement["points"]
         mono_failures: list[str] = []
         for n in measurement["candidates_min_buyers"]:

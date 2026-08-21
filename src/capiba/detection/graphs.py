@@ -242,6 +242,57 @@ def pairs_from_eligibility(
     ]
 
 
+def ranked_emission(
+    pair_buyers: list[tuple[tuple[str, str], list[str]]],
+    rows: list[dict[str, Any]],
+    top_k: int | None = None,
+) -> dict[str, Any]:
+    """Ranked emission of collusion pairs with declared top-K truncation.
+
+    Emission semantics of PR-D-03d, section 4: the qualified pairs are
+    ranked by ``buyer_count`` descending, ``wins_sum`` descending (sum of
+    the wins of both suppliers over the pair's co-eligible buyers), pair
+    ascending as the lexicographic tiebreak — the ordering validated
+    byte-identical by R9 of D-03c — and only the ``top_k`` prefix is
+    emitted. The descriptor records ``top_k``, ``qualified_count`` and the
+    coverage ``emitted / qualified`` (the declared recall loss).
+    ``top_k = None`` means no truncation (retrocompatible default of the
+    pre-D-03d packages).
+
+    Args:
+        pair_buyers: Qualified pairs from ``pair_buyers_from_eligibility``
+            (blocked or unblocked derivation — the emission is agnostic).
+        rows: Eligibility rows with ``wins`` per (buyer, supplier).
+        top_k: Emission budget; None emits the full ordered set.
+
+    Returns:
+        ``{"emission": [...], "top_k", "qualified_count", "coverage"}`` —
+        each emission entry is ``{"pair", "buyers", "buyer_count",
+        "wins_sum"}``.
+    """
+    wins = {(row["buyer"], row["supplier"]): int(row["wins"]) for row in rows}
+    descriptors: list[dict[str, Any]] = []
+    for (s1, s2), buyers in pair_buyers:
+        wins_sum = sum(wins.get((buyer, s), 0) for buyer in buyers for s in (s1, s2))
+        descriptors.append(
+            {
+                "pair": [s1, s2],
+                "buyers": list(buyers),
+                "buyer_count": len(buyers),
+                "wins_sum": wins_sum,
+            }
+        )
+    descriptors.sort(key=lambda d: (-d["buyer_count"], -d["wins_sum"], d["pair"]))
+    qualified = len(descriptors)
+    emitted = descriptors[:top_k] if top_k is not None else descriptors
+    return {
+        "emission": emitted,
+        "top_k": top_k,
+        "qualified_count": qualified,
+        "coverage": (len(emitted) / qualified) if qualified else 1.0,
+    }
+
+
 def detect_collusion(
     db: StandardDatabase | None = None,
     min_wins: int = 3,

@@ -224,6 +224,8 @@ class TestGraphBatchPackage:
             "operator": "detect_collusion",
             "min_wins": 3,
             "min_buyers": 1,
+            "top_k": None,
+            "qualified_count": None,
         }
         assert package["snapshot_rows"] == SNAPSHOT_ROWS
         assert len(package["snapshot_sha256"]) == 64

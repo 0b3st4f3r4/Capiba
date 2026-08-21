@@ -5,7 +5,8 @@
   D-03 → D-03b → D-03c)
 - **Criado em**: 2026-08-21
 - **Última atualização**: 2026-08-21
-- **Status**: rascunho para revisão humana
+- **Status**: aprovado; executado — veredito `success`
+  (`docs/results/R-D-03d.md`)
 - **Alvo**: viabilidade **editorial e operacional** conjunta da emissão do
   sinal `collusion_network` em volume real — hoje inviável nos dois eixos:
   a derivação exata estoura a guarda de pares e a memória nos pontos
@@ -358,3 +359,15 @@ Após a aprovação humana deste registro, com TDD/BDD usual:
   como alternativas **não adotadas** (seção 1), com a justificativa da
   reintrodução do top-k contra a objeção registrada no PR-D-03c §2. A
   decisão final é humana.
+- 2026-08-21: aprovado e **executado** — veredito **success** em
+  `docs/results/R-D-03d.md`: T1–T4 exatas nas 5 seeds; T5–T9 satisfeitas
+  na varredura real (ponto selecionado **(5,2)** — projeção bloqueada
+  610.960 < 1M; (4,2) estourou a guarda com o crescimento do grafo para
+  693.261 arestas elegíveis —; varredura 63,5 s, pico 90,5 MiB, dupla
+  contagem exata, 500 emitidos sobre 86.957 qualificados — cobertura
+  declarada 0,575% —, incremento editorial 0,4333/dia ≤ 20, prefixo
+  bit a bit, emissão byte-idêntica em duas execuções). O caminho fica
+  **habilitado — não autorizado** — à promoção da semântica top-K ao
+  `task_detect` ((5,2), K = 500): pendente de **decisão humana
+  registrada**, que também decide o destino do backlog histórico
+  (seção 3). Defaults e guarda de produção inalterados.

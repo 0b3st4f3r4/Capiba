@@ -19,7 +19,10 @@ Two artifacts per detect run, stored via ``EvidenceStorage``:
 artifact (PR-D-03): a **graph batch package** (``kind: "graph_batch"``)
 with the eligibility snapshot — rows ``{buyer, supplier, wins}`` with
 ``wins >= min_wins`` — and ``snapshot_sha256``; the ``reproduction`` block
-also carries ``min_buyers`` (PR-D-03b, default 1 for older packages). Its
+also carries ``min_buyers`` (PR-D-03b, default 1 for older packages) and,
+for the declared top-K emission semantics, ``top_k``/``qualified_count``
+(PR-D-03d, ``top_k = null`` = no truncation — retrocompatible default).
+Its
 manifests reference ``graph_sha256`` and are ``reproducible: true``. When the graph snapshot
 is unavailable (ArangoDB down, best-effort path), the manifest falls back
 to ``reproducible: false``.
@@ -40,7 +43,11 @@ from datetime import date
 from typing import Any
 
 from capiba.db.triage import signal_key
-from capiba.detection.graphs import pairs_from_eligibility
+from capiba.detection.graphs import (
+    pair_buyers_from_eligibility,
+    pairs_from_eligibility,
+    ranked_emission,
+)
 from capiba.detection.signals import SignalType, collusion_signals
 
 logger = logging.getLogger(__name__)
@@ -115,6 +122,8 @@ def build_graph_batch_package(
     min_wins: int,
     run_date: date | None,
     min_buyers: int = 1,
+    top_k: int | None = None,
+    qualified_count: int | None = None,
 ) -> dict[str, Any]:
     """Builds the graph batch package: eligibility snapshot + signals + hash.
 
@@ -126,6 +135,12 @@ def build_graph_batch_package(
         run_date: Run partition date (None for ad-hoc runs).
         min_buyers: Distinct-buyer threshold applied to the pairs
             (PR-D-03b; 1 = single-buyer semantics of D-03).
+        top_k: Declared emission truncation (PR-D-03d; None = no
+            truncation — the default of packages written before D-03d).
+            The snapshot stays **complete**: any truncated pair is
+            re-derivable from the package.
+        qualified_count: Size of the qualified pair set before truncation
+            (with ``top_k``, defines the declared coverage).
 
     Returns:
         Graph batch package payload (schema ``capiba.signal-package/1``).
@@ -140,6 +155,8 @@ def build_graph_batch_package(
             "operator": "detect_collusion",
             "min_wins": min_wins,
             "min_buyers": min_buyers,
+            "top_k": top_k,
+            "qualified_count": qualified_count,
         },
         "signals": [_signal_view(signal) for signal in signals],
         "snapshot_rows": rows,
@@ -382,16 +399,32 @@ def _reproduce_graph_signal(
     ``pairs_from_eligibility`` at the package ``min_buyers`` (default 1 —
     packages written before PR-D-03b) and converted back into signals —
     the same composition the detect task runs against the live graph.
+    When the package declares ``top_k`` (PR-D-03d), the derivation is
+    re-ranked and re-truncated deterministically before the comparison;
+    ``top_k = null`` reproduces the untruncated semantics (legacy
+    packages).
     """
     rows = graph_package.get("snapshot_rows", [])
     integrity = _sha256(rows) == graph_package.get("snapshot_sha256")
-    min_wins = int(graph_package.get("reproduction", {}).get("min_wins", 3))
-    min_buyers = int(graph_package.get("reproduction", {}).get("min_buyers", 1))
+    reproduction = graph_package.get("reproduction", {})
+    min_wins = int(reproduction.get("min_wins", 3))
+    min_buyers = int(reproduction.get("min_buyers", 1))
+    top_k = reproduction.get("top_k")
 
     eligible = [row for row in rows if int(row.get("wins", 0)) >= min_wins]
-    recomputed = collusion_signals(
-        pairs_from_eligibility(eligible, min_buyers), min_wins, min_buyers
-    )
+    if top_k is None:
+        recomputed = collusion_signals(
+            pairs_from_eligibility(eligible, min_buyers), min_wins, min_buyers
+        )
+    else:
+        pair_buyers = pair_buyers_from_eligibility(eligible, min_buyers)
+        emitted = ranked_emission(pair_buyers, eligible, int(top_k))["emission"]
+        recomputed = collusion_signals(
+            [set(entry["pair"]) for entry in emitted],
+            min_wins,
+            min_buyers,
+            {tuple(entry["pair"]): entry["buyers"] for entry in emitted},
+        )
 
     expected = _score(graph_package.get("signals", []), signal_key_)
     actual = _score(recomputed, signal_key_)
