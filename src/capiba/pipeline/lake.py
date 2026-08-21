@@ -1084,6 +1084,13 @@ def load_municipalities(run_date: date | None = None) -> str:
 def read_fraud_signals() -> list[dict[str, Any]]:
     """Reads every row of the gold ``fraud_signals`` Iceberg table.
 
+    In the cluster the read goes through Trino: ``write_fraud_signals``
+    deletes the day's partition before appending, and the positional
+    delete files written by Trino break the pyiceberg scan on the pinned
+    pyarrow ("DecodeArrow of DictAccumulator" — see
+    ``read_silver_contracts``). Offline (SQLite catalog) there are no
+    Trino-side deletes, so the local scan stands.
+
     Returns:
         Signal rows as dicts (empty when the table does not exist yet).
     """
@@ -1093,6 +1100,10 @@ def read_fraud_signals() -> list[dict[str, Any]]:
     except NoSuchTableError:
         logger.info("Gold fraud_signals table not found; nothing to read")
         return []
+    if not ICEBERG_CATALOG_URI.startswith("sqlite"):
+        return trino.run_query(
+            f"SELECT * FROM {GOLD_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.fraud_signals"  # nosec: B608
+        )
     rows = table.scan().to_pandas().to_dict("records")
     return cast(list[dict[str, Any]], rows)
 
@@ -1114,10 +1125,50 @@ def count_fraud_signals() -> int:
     return int(rows[0]["n"]) if rows else 0
 
 
+def delete_fraud_signals_partition(run_date: date) -> None:
+    """Deletes the gold ``fraud_signals`` rows of one partition day (Trino).
+
+    Idempotency half of ``write_fraud_signals``: a detect attempt that
+    dies after writing (OOMKills of 2026-08-21) is requeued and would
+    re-append the same signals on retry. Deleting the partition before
+    appending makes every retry start clean. A failure here propagates —
+    no append is attempted, so signals are never duplicated.
+
+    No-op with the offline SQLite catalog (no Trino to DELETE through)
+    and when the table does not exist yet (first detect run).
+
+    Args:
+        run_date: Partition day to delete.
+    """
+    if ICEBERG_CATALOG_URI.startswith("sqlite"):
+        logger.info("Offline catalog; skipping fraud_signals partition delete")
+        return
+    catalog = get_catalog(ICEBERG_WAREHOUSE_GOLD)
+    try:
+        catalog.load_table(f"{ICEBERG_NAMESPACE}.fraud_signals")
+    except NoSuchTableError:
+        logger.info("Gold fraud_signals table not found; nothing to delete")
+        return
+    partition = _partition_day(run_date)
+    trino.run_query(
+        f"DELETE FROM {GOLD_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.fraud_signals"  # nosec: B608
+        f" WHERE dt = DATE '{partition.isoformat()}'"
+    )
+    logger.info("Gold fraud_signals partition dt=%s deleted", partition)
+
+
 def write_fraud_signals(
     signals: list[dict[str, Any]], run_date: date | None = None
 ) -> str:
     """Appends detected fraud signals to the gold Iceberg table.
+
+    The write replaces the day's partition: before appending, the rows of
+    ``dt = run_date`` are deleted through Trino
+    (``delete_fraud_signals_partition``), so re-runs and retried attempts
+    of the same day replace the previous signals instead of duplicating
+    them (same failure semantics as ``write_silver``: a DELETE failure
+    aborts before any append). With the offline SQLite catalog there is
+    no Trino, so the write degrades to a pure append.
 
     Args:
         signals: Signal rows (entity_type, entity_id, signal_type, score,
@@ -1140,6 +1191,10 @@ def write_fraud_signals(
         {**signal, "dt": partition, "computed_at": computed_at} for signal in signals
     ]
     if rows:
+        if not ICEBERG_CATALOG_URI.startswith("sqlite"):
+            # Delete-half first: a failure here aborts before the append,
+            # so rows are never duplicated (see the docstring).
+            delete_fraud_signals_partition(partition)
         table.append(pa.Table.from_pylist(rows, schema=_arrow_schema(table)))
     logger.info("Gold Iceberg table appended: fraud_signals (%d rows)", len(rows))
     return f"{ICEBERG_NAMESPACE}.fraud_signals"

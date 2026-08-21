@@ -432,6 +432,121 @@ def test_write_fraud_signals_empty_creates_table(local_catalog: Path) -> None:
     assert table.scan().to_arrow().num_rows == 0
 
 
+def _gold_cluster_mocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[MagicMock, MagicMock, list[str]]:
+    """Wires the cluster-path mocks of the gold fraud_signals writes.
+
+    Returns the table mock, the Trino query mock and a call-order log
+    (``"delete"``/``"append"`` entries).
+    """
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+    order: list[str] = []
+    mock_table = MagicMock()
+    mock_table.schema.return_value = lake.FRAUD_SIGNALS_SCHEMA
+    mock_table.append.side_effect = lambda _pa: order.append("append")
+    mock_catalog = MagicMock()
+    mock_catalog.load_table.return_value = mock_table
+    mock_catalog.create_table_if_not_exists.return_value = mock_table
+    monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+    mock_query = MagicMock(side_effect=lambda _sql: order.append("delete") or [])
+    monkeypatch.setattr(lake.trino, "run_query", mock_query)
+    return mock_table, mock_query, order
+
+
+def test_write_fraud_signals_replaces_partition_in_cluster(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cluster path: the day's partition is deleted before the append.
+
+    A detect attempt that dies after writing (OOMKills of 2026-08-21) is
+    requeued; without the delete, each retry would re-append duplicates.
+    """
+    mock_table, mock_query, order = _gold_cluster_mocks(monkeypatch)
+    signals = [
+        {
+            "entity_type": "supplier",
+            "entity_id": "12345678000199",
+            "signal_type": "single_bid",
+            "score": 0.9,
+            "details": None,
+        }
+    ]
+
+    lake.write_fraud_signals(signals, run_date=RUN_DATE)
+
+    assert order == ["delete", "append"]
+    sql = mock_query.call_args.args[0]
+    assert sql == (
+        "DELETE FROM gold.capiba.fraud_signals WHERE dt = DATE "
+        f"'{RUN_DATE.isoformat()}'"
+    )
+    mock_table.append.assert_called_once()
+
+
+def test_write_fraud_signals_delete_failure_aborts_append(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DELETE failure propagates before any append — never duplicates."""
+    mock_table, mock_query, _order = _gold_cluster_mocks(monkeypatch)
+    mock_query.side_effect = RuntimeError("trino down")
+    signals = [
+        {
+            "entity_type": "supplier",
+            "entity_id": "12345678000199",
+            "signal_type": "single_bid",
+            "score": 0.9,
+            "details": None,
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="trino down"):
+        lake.write_fraud_signals(signals, run_date=RUN_DATE)
+
+    mock_table.append.assert_not_called()
+
+
+def test_delete_fraud_signals_partition_offline_and_missing_table(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The partition delete is a no-op offline and without the table."""
+    from pyiceberg.exceptions import NoSuchTableError
+
+    mock_query = MagicMock()
+    monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+    lake.delete_fraud_signals_partition(RUN_DATE)  # sqlite catalog: no-op
+
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+    mock_catalog = MagicMock()
+    mock_catalog.load_table.side_effect = NoSuchTableError("nope")
+    monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+
+    lake.delete_fraud_signals_partition(RUN_DATE)
+
+    mock_query.assert_not_called()
+
+
+def test_read_fraud_signals_trino(
+    local_catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cluster path: the read goes through Trino, not the pyiceberg scan.
+
+    The partition delete writes Trino positional delete files that the
+    pinned pyarrow cannot decode (see read_silver_contracts).
+    """
+    monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+    mock_catalog = MagicMock()
+    monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
+    expected = [{"entity_id": "12345678000199", "signal_type": "single_bid"}]
+    mock_query = MagicMock(return_value=expected)
+    monkeypatch.setattr(lake.trino, "run_query", mock_query)
+
+    assert lake.read_fraud_signals() == expected
+    sql = mock_query.call_args.args[0]
+    assert "FROM gold.capiba.fraud_signals" in sql
+
+
 def _company_row(cnpj_basico: str = "12345678") -> dict[str, Any]:
     """Builds a minimal Company-valid serializable record."""
     return {
