@@ -828,11 +828,40 @@ def read_silver_contracts() -> list[dict[str, Any]]:
         logger.info("Silver contracts table not found; nothing to read")
         return []
     if not ICEBERG_CATALOG_URI.startswith("sqlite"):
-        return trino.run_query(
-            f"SELECT * FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contracts"  # nosec: B608
-        )
+        return [
+            _coerce_struct_fields(row)
+            for row in trino.run_query(
+                f"SELECT * FROM {SILVER_TRINO_CATALOG}.{ICEBERG_NAMESPACE}.contracts"  # nosec: B608
+            )
+        ]
     rows = table.scan().to_pandas().to_dict("records")
     return cast(list[dict[str, Any]], rows)
+
+
+def _struct_field_names(field_name: str) -> list[str]:
+    """Field order of a struct column of ``CONTRACTS_SCHEMA``."""
+    field = next(f for f in CONTRACTS_SCHEMA.fields if f.name == field_name)
+    return [nested.name for nested in cast(StructType, field.field_type).fields]
+
+
+_CONTRACT_STRUCTS = {
+    name: _struct_field_names(name) for name in ("buyer", "supplier")
+}
+
+
+def _coerce_struct_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Maps positionally-encoded ROW fields back to dicts.
+
+    Trino's JSON protocol serializes struct values as positional arrays
+    (the minimal ``trino.run_query`` client does not apply the type
+    signature), so ``buyer``/``supplier`` arrive as lists; the Iceberg
+    schema gives the field order for the zip.
+    """
+    for name, fields in _CONTRACT_STRUCTS.items():
+        value = row.get(name)
+        if isinstance(value, list):
+            row[name] = dict(zip(fields, value, strict=False))
+    return row
 
 
 def count_silver_contracts() -> int:

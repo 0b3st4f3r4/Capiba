@@ -281,13 +281,33 @@ def test_read_silver_contracts_trino(
     monkeypatch.setattr(lake, "ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
     mock_catalog = MagicMock()
     monkeypatch.setattr(lake, "get_catalog", lambda *_a: mock_catalog)
-    expected = [{"id": "C001", "buyer": {"siafi_code": "26000"}}]
-    mock_query = MagicMock(return_value=expected)
+    # Trino's JSON protocol returns ROW fields positionally (lists); the
+    # reader maps them back to dicts using the Iceberg schema field order.
+    mock_query = MagicMock(
+        return_value=[
+            {
+                "id": "C001",
+                "buyer": ["26000", "City Hall", "municipal", "PE", "Recife"],
+                "supplier": ["12345678000199", None, "Supplier Ltda", None,
+                             None, "PE", None],
+            }
+        ]
+    )
     monkeypatch.setattr(lake.trino, "run_query", mock_query)
 
     rows = lake.read_silver_contracts()
 
-    assert rows == expected
+    assert rows == [
+        {
+            "id": "C001",
+            "buyer": {"siafi_code": "26000", "name": "City Hall",
+                      "government_level": "municipal", "uf": "PE",
+                      "city": "Recife"},
+            "supplier": {"cnpj": "12345678000199", "cpf": None,
+                         "legal_name": "Supplier Ltda", "trade_name": None,
+                         "primary_cnae": None, "state": "PE", "city": None},
+        }
+    ]
     sql = mock_query.call_args.args[0]
     assert "FROM silver.capiba.contracts" in sql
 
